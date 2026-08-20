@@ -33,7 +33,7 @@ export const en: Dictionary = {
     languageSwitcher: 'Choose site language',
     openMenu: 'Open menu',
     closeMenu: 'Close menu',
-    heroSculpture: 'Abstract 3D sculpture representing Dilshodjon’s digital identity',
+    heroSculpture: '3D sculpture of Dilshodjon’s brand: a tyrannosaur circled by drifting turtles',
     techUniverse: 'Interactive 3D universe of technologies',
     socialLinks: 'Social links',
     contributionGraph: 'GitHub contribution graph for the last year',

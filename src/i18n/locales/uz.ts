@@ -33,7 +33,7 @@ export const uz: Dictionary = {
     languageSwitcher: 'Sayt tilini tanlash',
     openMenu: 'Menyuni ochish',
     closeMenu: 'Menyuni yopish',
-    heroSculpture: 'Dilshodjonning raqamli identifikatsiyasini ifodalovchi abstrakt 3D haykal',
+    heroSculpture: 'Dilshodjonning brendini ifodalovchi 3D haykal: tiranozavr va uning atrofida suzayotgan toshbaqalar',
     techUniverse: 'Texnologiyalarning interaktiv 3D olami',
     socialLinks: 'Ijtimoiy tarmoqlar',
     contributionGraph: 'So‘nggi bir yildagi GitHub hissalari grafigi',

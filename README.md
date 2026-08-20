@@ -40,6 +40,7 @@ src/
     ui/           Button, SplitText, Reveal, Magnetic, TiltCard, Marquee, icons…
     layout/       Navigation, MobileMenu, Footer, LanguageSwitcher, ThemeToggle
     three/        HeroScene, UniverseScene, ThemedEnvironment (all lazy)
+                  creatures.ts — procedural tyrannosaur + turtle geometry
     cursor/       custom cursor (desktop only)
     loader/       cinematic preloader
     seo/          localized meta / OG / hreflang / JSON-LD

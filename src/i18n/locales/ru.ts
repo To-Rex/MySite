@@ -33,7 +33,7 @@ export const ru: Dictionary = {
     languageSwitcher: 'Выбрать язык сайта',
     openMenu: 'Открыть меню',
     closeMenu: 'Закрыть меню',
-    heroSculpture: 'Абстрактная 3D-скульптура, отражающая цифровую идентичность Дилшоджона',
+    heroSculpture: '3D-скульптура бренда Дилшоджона: тираннозавр, вокруг которого плывут черепахи',
     techUniverse: 'Интерактивная 3D-вселенная технологий',
     socialLinks: 'Социальные сети',
     contributionGraph: 'График вкладов на GitHub за последний год',

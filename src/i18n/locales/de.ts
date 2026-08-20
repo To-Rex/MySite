@@ -33,7 +33,7 @@ export const de: Dictionary = {
     languageSwitcher: 'Sprache der Website wählen',
     openMenu: 'Menü öffnen',
     closeMenu: 'Menü schließen',
-    heroSculpture: 'Abstrakte 3D-Skulptur, die Dilshodjons digitale Identität darstellt',
+    heroSculpture: '3D-Skulptur von Dilshodjons Marke: ein Tyrannosaurus, umkreist von treibenden Schildkröten',
     techUniverse: 'Interaktives 3D-Universum der Technologien',
     socialLinks: 'Soziale Netzwerke',
     contributionGraph: 'GitHub-Beitragsgrafik des letzten Jahres',
