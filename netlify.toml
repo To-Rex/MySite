@@ -1,0 +1,11 @@
+# Netlify deployment configuration.
+# Response headers are NOT defined here — they are generated into dist/_headers
+# by scripts/generate-headers.mjs during the build, so the CSP script hash always
+# matches the shipped HTML. See that file for details.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"

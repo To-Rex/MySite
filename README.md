@@ -76,6 +76,27 @@ Dark is primary; light is a dedicated warm-white theme (not an inversion). All c
 - Update the hard-coded domain in `public/robots.txt` and `public/sitemap.xml` if it isn't `https://torexdev.uz`.
 - Static output — any static host works (`dist/`).
 
+### Netlify
+
+`netlify.toml` holds the build config; response headers are generated into `dist/_headers`
+by `scripts/generate-headers.mjs` on every build (part of `npm run build`).
+
+That file ships a strict Content-Security-Policy. `script-src` deliberately omits
+`'unsafe-inline'` and instead pins the SHA-256 of the inline pre-paint theme script,
+which is recomputed from the built HTML each time — so it can never go stale.
+
+**"Powered by Netlify" badge.** Netlify enables this badge by default on Free-plan
+projects created on or after 19 August 2026, injecting it from their edge servers.
+Turn it off permanently in the dashboard: **Project configuration → General →
+Powered by Netlify badge → off** (takes effect on the next request, no redeploy).
+As a second layer, the CSP above also stops the injected inline script from running —
+[documented behaviour](https://docs.netlify.com/manage/projects/powered-by-netlify-badge/),
+not a workaround.
+
+If you ever need to relax the policy, edit the directive list in
+`scripts/generate-headers.mjs`; new third-party origins must be added to
+`connect-src` / `img-src` explicitly.
+
 ## Content honesty
 
 Per the brand brief: no invented achievements, stats, or clients. Missing data renders as clean placeholders driven by the data model, ready to be filled with real information.
