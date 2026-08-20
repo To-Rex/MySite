@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="uz" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070708" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f5f1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <title>Dilshodjon Haydarov — Dasturchi · Ijodkor · Bunyodkor</title>
+    <meta name="description" content="Dilshodjon Haydarov (To-Rex) — mobil dasturchi, ijodkor va bunyodkor. Men g‘oyalarni haqiqiy raqamli mahsulotlarga aylantiraman." />
+    <meta name="author" content="Dilshodjon Haydarov" />
+    <meta name="robots" content="index,follow" />
+    <script>
+      // Apply persisted theme + language before first paint to avoid flashes.
+      (function () {
+        try {
+          var t = localStorage.getItem('dh.theme');
+          var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = t === 'light' || t === 'dark' ? t : (dark ? 'dark' : 'light');
+          var sp = new URLSearchParams(location.search);
+          var qt = sp.get('theme');
+          if (qt === 'light' || qt === 'dark') theme = qt;
+          document.documentElement.setAttribute('data-theme', theme);
+          var q = sp.get('lang');
+          var l = q || localStorage.getItem('dh.lang');
+          if (l === 'uz' || l === 'en' || l === 'de' || l === 'ru') document.documentElement.lang = l;
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <div style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">
+        Dilshodjon Haydarov — Developer · Creator · Builder. Saytni ko‘rish uchun JavaScript yoqilgan bo‘lishi kerak.
+      </div>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

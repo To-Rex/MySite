@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://torexdev.uz/</loc>
+    <xhtml:link rel="alternate" hreflang="uz-Latn" href="https://torexdev.uz/?lang=uz"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://torexdev.uz/?lang=en"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://torexdev.uz/?lang=de"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://torexdev.uz/?lang=ru"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://torexdev.uz/"/>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
