@@ -1,13 +1,15 @@
 import { Canvas, useFrame } from '@react-three/fiber'
 import { PerformanceMonitor, Sparkles } from '@react-three/drei'
 import type { MotionValue } from 'motion/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { MathUtils, type BufferGeometry, type Group, type Mesh } from 'three'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { Bone, MathUtils, Matrix4, Skeleton, type Group, type SkinnedMesh } from 'three'
 import { pointer } from '@/lib/pointer'
 import type { Theme } from '@/theme/context'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { qualityFor } from '@/hooks/useDeviceTier'
-import { createDinosaurGeometry, createTurtleGeometry, type CreatureDetail } from './creatures'
+import type { BoneSpec, CreatureDetail, CreatureKind } from './creatures'
+import { useCreatureGeometry } from './useCreature'
+import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 
 export interface HeroSceneProps {
@@ -22,36 +24,27 @@ export interface HeroSceneProps {
   active: boolean
 }
 
-/**
- * Surface treatment per theme. Dark reads as machined, dark-chrome metal;
- * light as a glazed ceramic figurine.
- */
-const MATERIAL = {
-  dark: {
-    color: '#17171b',
-    metalness: 0.9,
-    roughness: 0.18,
-    clearcoat: 0.9,
-    clearcoatRoughness: 0.14,
-    envMapIntensity: 1.9,
-    sheen: 0,
-  },
-  light: {
-    color: '#f2eee7',
-    metalness: 0.06,
-    roughness: 0.32,
-    clearcoat: 1,
-    clearcoatRoughness: 0.24,
-    envMapIntensity: 1.15,
-    sheen: 0.45,
-  },
-} as const
-
 const DETAIL_BY_TIER: Record<DeviceTier, CreatureDetail> = { high: 'high', medium: 'medium', low: 'low' }
 
-/** Each turtle rides one of the orbit rings. */
+/** Nudges the arrangement up and right so the head clears the headline. */
+const BASE_OFFSET: [number, number] = [0.2, 0.5]
+
+/** World-space width the arrangement needs before it starts getting cropped. */
+const ARRANGEMENT_SPAN = 3.7
+
+/**
+ * Orbit planes are yawed around Y only: that gives depth while leaving world
+ * "up" untouched, so the turtles stay upright as they drift.
+ */
+const ORBIT_YAW = [0.55, -0.95]
+
+/** Wide, flat ellipses [x, y] so turtles glide across frame instead of above it. */
+const ORBIT_RADIUS: [number, number][] = [
+  [3.05, 1.45],
+  [3.6, 1.75],
+]
+
 interface TurtleOrbit {
-  /** Index of the ring it travels along. */
   ring: 0 | 1
   /** Starting angle in radians. */
   phase: number
@@ -63,120 +56,197 @@ interface TurtleOrbit {
 }
 
 const TURTLES: readonly TurtleOrbit[] = [
-  { ring: 0, phase: 2.5, speed: 0.05, scale: 0.66, facing: -0.5 },
-  { ring: 0, phase: 5.6, speed: 0.05, scale: 0.46, facing: 0.7 },
-  { ring: 1, phase: 3.4, speed: -0.036, scale: 0.56, facing: 2.4 },
+  { ring: 0, phase: 2.5, speed: 0.05, scale: 0.82, facing: -0.5 },
+  { ring: 0, phase: 5.6, speed: 0.05, scale: 0.58, facing: 0.7 },
+  { ring: 1, phase: 3.4, speed: -0.036, scale: 0.7, facing: 2.4 },
 ]
 
-/** Nudges the arrangement up and right so the head clears the headline. */
-const BASE_OFFSET: [number, number] = [0.2, 0.5]
+/** Realises a bone spec tree as three.js Bones plus the Skeleton that drives them. */
+function buildSkeleton(specs: BoneSpec[]) {
+  const byName = new Map<string, Bone>()
+  const bones = specs.map((spec) => {
+    const bone = new Bone()
+    bone.name = spec.name
+    byName.set(spec.name, bone)
+    return bone
+  })
 
-/** World-space width the arrangement needs before it starts getting cropped. */
-const ARRANGEMENT_SPAN = 3.7
+  specs.forEach((spec, i) => {
+    const bone = bones[i]!
+    const [x, y, z] = spec.head
+    const parentSpec = spec.parent ? specs.find((s) => s.name === spec.parent) : undefined
+    if (parentSpec) {
+      byName.get(parentSpec.name)!.add(bone)
+      bone.position.set(x - parentSpec.head[0], y - parentSpec.head[1], z - parentSpec.head[2])
+    } else {
+      bone.position.set(x, y, z)
+    }
+  })
 
-/** Orbit planes are yawed around Y only: that gives depth while leaving world
- * "up" untouched, so the turtles stay upright as they drift. */
-const ORBIT_YAW = [0.55, -0.95]
-/** Orbits are wide, flat ellipses [x, y] so the turtles glide across frame
- * instead of spending most of the loop above and below the viewport. */
-const ORBIT_RADIUS: [number, number][] = [
-  [3.05, 1.45],
-  [3.6, 1.75],
-]
-
-function useCreatureGeometry(make: (detail: CreatureDetail) => BufferGeometry, detail: CreatureDetail) {
-  const geometry = useMemo(() => make(detail), [make, detail])
-  useEffect(() => () => geometry.dispose(), [geometry])
-  return geometry
+  const root = bones[0]!
+  // Skeleton derives its bind inverses from world matrices, so they must be current.
+  root.updateMatrixWorld(true)
+  return { root, skeleton: new Skeleton(bones), byName }
 }
 
-function SharedMaterial({ theme }: { theme: Theme }) {
-  const m = MATERIAL[theme]
-  return (
-    <meshPhysicalMaterial
-      color={m.color}
-      metalness={m.metalness}
-      roughness={m.roughness}
-      clearcoat={m.clearcoat}
-      clearcoatRoughness={m.clearcoatRoughness}
-      envMapIntensity={m.envMapIntensity}
-      sheen={m.sheen}
-      sheenColor="#ffffff"
-    />
-  )
+/**
+ * Resolves a creature's shared geometry (generated in a worker) and gives this
+ * instance its own skeleton, so three turtles animate independently off one
+ * cached mesh. Returns null until the geometry arrives.
+ */
+function useCreature(kind: CreatureKind, detail: CreatureDetail) {
+  const resolved = useCreatureGeometry(kind, detail)
+  const rigged = useMemo(() => (resolved ? buildSkeleton(resolved.bones) : null), [resolved])
+  useEffect(() => () => rigged?.skeleton.dispose(), [rigged])
+  return resolved && rigged ? { geometry: resolved.geometry, ...rigged } : null
 }
 
-/** The tyrannosaur centrepiece — a still sculpture with a slow breathing sway. */
-function Dinosaur({ theme, detail, reducedMotion }: { theme: Theme; detail: CreatureDetail; reducedMotion: boolean }) {
-  const mesh = useRef<Mesh>(null)
-  const geometry = useCreatureGeometry(createDinosaurGeometry, detail)
+/** Binds a skinned mesh in its own local space, where geometry and bones agree. */
+function useBind(mesh: RefObject<SkinnedMesh | null>, skeleton: Skeleton) {
+  useLayoutEffect(() => {
+    mesh.current?.bind(skeleton, new Matrix4())
+  }, [mesh, skeleton])
+}
+
+type Rig = NonNullable<ReturnType<typeof useCreature>>
+
+interface CreatureProps {
+  theme: Theme
+  detail: CreatureDetail
+  /** Skin bump strength; 0 disables the effect on weak devices. */
+  bump: number
+  reducedMotion: boolean
+}
+
+/**
+ * The tyrannosaur centrepiece. Nothing here is a canned clip: the idle is built
+ * from a travelling tail wave, a breathing ribcage and a slow head scan on
+ * different periods, so it never visibly loops.
+ */
+function Dinosaur({ theme, detail, bump, reducedMotion }: CreatureProps) {
+  const rig = useCreature('dino', detail)
+  if (!rig) return null
+  return <DinosaurBody rig={rig} theme={theme} bump={bump} reducedMotion={reducedMotion} />
+}
+
+function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, 'detail'> & { rig: Rig }) {
+  const mesh = useRef<SkinnedMesh>(null)
+  const { geometry, root, skeleton, byName } = rig
+  useBind(mesh, skeleton)
+
+  const tail = useMemo(() => ['tail1', 'tail2', 'tail3', 'tail4', 'tail5'].map((n) => byName.get(n)!), [byName])
 
   useFrame(({ clock }) => {
-    const m = mesh.current
-    if (!m || reducedMotion) return
+    if (reducedMotion) return
     const t = clock.elapsedTime
-    // Weight shifting from foot to foot, plus a slow head-height drift.
-    m.position.y = Math.sin(t * 0.55) * 0.05
-    m.rotation.z = Math.sin(t * 0.4) * 0.022
-    m.rotation.x = Math.sin(t * 0.31 + 1.2) * 0.018
+
+    // Tail: a wave travelling outward, each joint lagging the one before it.
+    tail.forEach((bone, i) => {
+      bone.rotation.y = Math.sin(t * 1.05 - i * 0.72) * (0.045 + i * 0.022)
+      bone.rotation.z = Math.sin(t * 0.72 - i * 0.5) * (0.02 + i * 0.012)
+    })
+
+    // Ribcage breathing — a slow swell rather than a bounce.
+    const breath = Math.sin(t * 0.85)
+    byName.get('spine1')!.scale.set(1, 1 + breath * 0.02, 1 + breath * 0.028)
+    byName.get('spine2')!.scale.set(1, 1 + breath * 0.014, 1 + breath * 0.02)
+
+    // Head scanning the horizon, with counter-motion down the neck.
+    const scan = Math.sin(t * 0.21) + Math.sin(t * 0.37 + 1.7) * 0.4
+    const neck1 = byName.get('neck1')!
+    neck1.rotation.y = scan * 0.1
+    neck1.rotation.z = Math.sin(t * 0.45) * 0.03
+    byName.get('neck2')!.rotation.y = scan * 0.14
+    const head = byName.get('head')!
+    head.rotation.y = scan * 0.2
+    head.rotation.z = Math.sin(t * 0.55 + 0.6) * 0.05 - 0.02
+
+    // Weight shifting between the legs, and the odd small-arm twitch.
+    const shift = Math.sin(t * 0.38)
+    byName.get('thighL')!.rotation.z = shift * 0.035
+    byName.get('thighR')!.rotation.z = -shift * 0.035
+    const twitch = Math.sin(t * 1.7) * 0.5 + Math.sin(t * 0.9) * 0.5
+    byName.get('armL')!.rotation.z = twitch * 0.06
+    byName.get('armR')!.rotation.z = twitch * 0.06 + 0.02
   })
 
   return (
-    <mesh ref={mesh} geometry={geometry} scale={3.4} rotation={[0, -0.42, 0]}>
-      <SharedMaterial theme={theme} />
-    </mesh>
+    <group scale={3.4} rotation={[0, -0.42, 0]}>
+      <skinnedMesh ref={mesh} geometry={geometry} frustumCulled={false}>
+        <SkinMaterial theme={theme} texScale={3.6} bump={bump} />
+      </skinnedMesh>
+      <primitive object={root} />
+    </group>
   )
 }
 
-/** A turtle drifting along one of the orbit rings, tilting as it "swims". */
-function Turtle({
-  orbit,
-  theme,
-  detail,
-  reducedMotion,
-}: {
+interface TurtleProps extends CreatureProps {
   orbit: TurtleOrbit
-  theme: Theme
-  detail: CreatureDetail
-  reducedMotion: boolean
-}) {
+}
+
+/** A turtle drifting along an orbit, front flippers rowing like a sea turtle. */
+function Turtle({ orbit, theme, detail, bump, reducedMotion }: TurtleProps) {
+  const rig = useCreature('turtle', detail)
+  if (!rig) return null
+  return <TurtleBody rig={rig} orbit={orbit} theme={theme} bump={bump} reducedMotion={reducedMotion} />
+}
+
+function TurtleBody({ rig, orbit, theme, bump, reducedMotion }: Omit<TurtleProps, 'detail'> & { rig: Rig }) {
   const group = useRef<Group>(null)
-  const geometry = useCreatureGeometry(createTurtleGeometry, detail)
+  const mesh = useRef<SkinnedMesh>(null)
+  const { geometry, root, skeleton, byName } = rig
+  useBind(mesh, skeleton)
   const [rx, ry] = ORBIT_RADIUS[orbit.ring] ?? [3, 1.5]
 
   useFrame(({ clock }) => {
     const g = group.current
     if (!g) return
     const t = reducedMotion ? 0 : clock.elapsedTime
+
     const angle = orbit.phase + t * orbit.speed * Math.PI * 2
     g.position.set(Math.cos(angle) * rx, Math.sin(angle) * ry, 0)
-    // Stay upright — only a slow paddling drift, never tumbling along the orbit.
+    // Stay upright — only a slow drift, never tumbling along the orbit.
     g.rotation.y = orbit.facing + Math.sin(t * 0.45 + orbit.phase) * 0.3
     g.rotation.z = Math.sin(t * 0.38 + orbit.phase) * 0.1
     g.rotation.x = Math.sin(t * 0.31 + orbit.phase) * 0.12
+
+    if (reducedMotion) return
+
+    // Front flippers row together; the pair mirrors so they beat symmetrically.
+    const stroke = Math.sin(t * 1.45 + orbit.phase)
+    const glide = Math.sin(t * 1.45 + orbit.phase - 0.9)
+    byName.get('flipperFL')!.rotation.x = stroke * 0.55
+    byName.get('flipperFR')!.rotation.x = -stroke * 0.55
+    byName.get('flipperFL')!.rotation.y = glide * 0.22
+    byName.get('flipperFR')!.rotation.y = -glide * 0.22
+
+    // Rear flippers steer, lagging behind the main stroke.
+    const rear = Math.sin(t * 1.45 + orbit.phase - 1.8)
+    byName.get('flipperRL')!.rotation.x = rear * 0.28
+    byName.get('flipperRR')!.rotation.x = -rear * 0.28
+
+    // Head reaching forward and looking around.
+    byName.get('neck')!.rotation.z = Math.sin(t * 0.7 + orbit.phase) * 0.12 - 0.04
+    const head = byName.get('head')!
+    head.rotation.y = Math.sin(t * 0.33 + orbit.phase) * 0.3
+    head.rotation.z = Math.sin(t * 0.6 + orbit.phase) * 0.08
+    byName.get('tail')!.rotation.y = Math.sin(t * 1.1 + orbit.phase) * 0.18
   })
 
   return (
     <group ref={group}>
-      <mesh geometry={geometry} scale={orbit.scale}>
-        <SharedMaterial theme={theme} />
-      </mesh>
+      <group scale={orbit.scale}>
+        <skinnedMesh ref={mesh} geometry={geometry} frustumCulled={false}>
+          <SkinMaterial theme={theme} texScale={2.6} bump={bump} />
+        </skinnedMesh>
+        <primitive object={root} />
+      </group>
     </group>
   )
 }
 
 /** An invisible orbit plane carrying the turtles assigned to it. */
-function Orbit({
-  index,
-  theme,
-  detail,
-  reducedMotion,
-}: {
-  index: 0 | 1
-  theme: Theme
-  detail: CreatureDetail
-  reducedMotion: boolean
-}) {
+function Orbit({ index, theme, detail, bump, reducedMotion }: CreatureProps & { index: 0 | 1 }) {
   const group = useRef<Group>(null)
   const yaw = ORBIT_YAW[index] ?? 0
 
@@ -184,7 +254,6 @@ function Orbit({
     const g = group.current
     if (!g || reducedMotion) return
     const t = clock.elapsedTime
-    // The whole orbit plane breathes very slightly, so the rings never look static.
     g.rotation.y = yaw + Math.cos(t * 0.15 + index) * 0.08
     g.rotation.x = Math.sin(t * 0.18 + index) * 0.03
   })
@@ -192,7 +261,7 @@ function Orbit({
   return (
     <group ref={group} rotation={[0, yaw, 0]}>
       {TURTLES.filter((o) => o.ring === index).map((o, i) => (
-        <Turtle key={i} orbit={o} theme={theme} detail={detail} reducedMotion={reducedMotion} />
+        <Turtle key={i} orbit={o} theme={theme} detail={detail} bump={bump} reducedMotion={reducedMotion} />
       ))}
     </group>
   )
@@ -203,6 +272,10 @@ function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<H
   const group = useRef<Group>(null)
   const entrance = useRef(reducedMotion ? 1 : 0)
   const detail = DETAIL_BY_TIER[tier]
+  // Triplanar bump costs three texture fetches plus derivatives per fragment;
+  // weak devices get the plain surface instead. The magnitude is small because
+  // the height map spans 0..1 over a few pixels, so its screen gradient is large.
+  const bump = tier === 'high' ? 0.03 : tier === 'medium' ? 0.022 : 0
 
   useFrame((state, dt) => {
     const g = group.current
@@ -234,17 +307,16 @@ function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<H
 
   return (
     <group ref={group} scale={0.0001}>
-      <Dinosaur theme={theme} detail={detail} reducedMotion={reducedMotion} />
-      <Orbit index={0} theme={theme} detail={detail} reducedMotion={reducedMotion} />
-      <Orbit index={1} theme={theme} detail={detail} reducedMotion={reducedMotion} />
+      <Dinosaur theme={theme} detail={detail} bump={bump} reducedMotion={reducedMotion} />
+      <Orbit index={0} theme={theme} detail={detail} bump={bump} reducedMotion={reducedMotion} />
+      <Orbit index={1} theme={theme} detail={detail} bump={bump} reducedMotion={reducedMotion} />
     </group>
   )
 }
 
 /**
- * The hero identity sculpture: a tyrannosaur ("To-Rex") circled by turtles from
- * Dilshodjon's avatar — dark chrome at night, glazed ceramic by day, reacting to
- * pointer, scroll and theme.
+ * The hero identity sculpture: a living tyrannosaur ("To-Rex") circled by turtles
+ * from Dilshodjon's avatar, reacting to pointer, scroll and theme.
  */
 export default function HeroScene(props: HeroSceneProps) {
   const { theme, tier, active, reducedMotion } = props

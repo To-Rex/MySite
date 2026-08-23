@@ -40,7 +40,9 @@ src/
     ui/           Button, SplitText, Reveal, Magnetic, TiltCard, Marquee, icons…
     layout/       Navigation, MobileMenu, Footer, LanguageSwitcher, ThemeToggle
     three/        HeroScene, UniverseScene, ThemedEnvironment (all lazy)
-                  creatures.ts — procedural tyrannosaur + turtle geometry
+                  skinMaterial.tsx — procedural reptile hide + baked AO
+                  sdf.ts / creatures.ts — procedural creature meshing (three-free)
+                  creatures.worker.ts — runs that meshing off the main thread
     cursor/       custom cursor (desktop only)
     loader/       cinematic preloader
     seo/          localized meta / OG / hreflang / JSON-LD
@@ -64,6 +66,56 @@ Dark is primary; light is a dedicated warm-white theme (not an inversion). All c
 2. `src/i18n/locales/*.ts` → `projects.items[<id>]` — add `tagline`/`description` in all four languages.
    Empty descriptions render an honest "details coming soon" note — nothing is invented.
 3. New project id? Add it to `ProjectId` in `src/i18n/types.ts` — the compiler then walks you through every file that needs copy.
+
+### The hero creatures
+
+The tyrannosaur ("To-Rex") and the turtles (from the GitHub avatar) are generated
+in code — there are no model files to download or license.
+
+**Shape.** Anatomy is authored in `creatures.ts` as ellipsoid masses plus tapering
+tubes, and shapes flagged `negative` are carved back out (eye sockets, nostrils,
+the mouth line, the seam around the shell). Those are *not* meshed as separate
+shells, which would leave visible intersection creases; they are blended into one
+signed distance field and `sdf.ts` extracts a single continuous surface from it
+(surface nets). Vertex normals come from the field gradient, so shading is smooth
+everywhere, and ambient occlusion is baked per vertex from the same field — that
+is what makes a carved socket read as a recessed eye.
+
+**Motion.** Each creature is skinned to a small procedurally built skeleton, which
+lets the tail travel a wave and the head turn without the surface tearing. The
+idle is composed from several periods (tail wave, breathing ribcage, head scan)
+so it never visibly loops. Still one draw call per creature.
+
+**Surface.** `skinMaterial.tsx` adds reptile hide on top of MeshPhysicalMaterial:
+a procedural Worley scale/wrinkle height map, triplanar-sampled in bind space so
+the pattern stays glued to the body while it animates, plus surface-gradient
+(Mikkelsen) bump mapping — which needs neither UVs nor tangents, and the mesh has
+neither.
+
+Four things here are easy to get wrong, and each cost a debugging round:
+
+- **Bump magnitude is not intuitive.** The height map spans 0..1 across a few
+  pixels, so its screen-space gradient is enormous; useful values are ~0.03, not
+  ~0.5. Too high and the normals scatter into speckle that erases every highlight.
+- **Texture frequency must be set from on-screen size.** Aim for scales around
+  6–10 px. Finer than that and the bump derivative aliases into noise.
+- **`DataTexture` defaults to `NearestFilter` on _both_ filters.** Setting only
+  `minFilter` leaves the pattern rendering as hard texel blocks.
+- **Generation cost lands on the main thread.** A sin-based hash with tuple
+  returns made the skin texture take ~2 s and visibly stalled the intro; an
+  allocation-free integer hash brought it under 100 ms.
+
+Field `spacing` and blend radius are likewise coupled: a blend much smaller than
+the spacing cannot be resolved and joints look like hard creases again, while a
+blend near the size of a real feature (a flipper, a toe) dissolves that feature.
+Keep anatomy comfortably thicker than the blend.
+
+Meshing itself costs several hundred milliseconds, so it runs in
+`creatures.worker.ts`. `sdf.ts` and `creatures.ts` are deliberately three.js-free
+so that worker stays ~11 kB instead of bundling a second copy of three; the main
+thread only turns the returned typed arrays into a `BufferGeometry`. Results are
+cached per (creature, quality tier) and shared by every instance, and the hero
+simply renders nothing until its geometry arrives.
 
 ### Performance
 
