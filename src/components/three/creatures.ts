@@ -76,6 +76,31 @@ export interface BoneSpec {
   tip?: Vec3
 }
 
+/**
+ * Where to hang an eyeball. A carved socket plus occlusion reads as a hollow;
+ * what makes a creature look alive is a glossy sphere sitting in it, and that
+ * cannot live in the SDF because the socket would carve it straight back out.
+ */
+export interface CreatureEye {
+  /** Position relative to the bone it hangs from, in normalised units. */
+  offset: Vec3
+  radius: number
+}
+
+/**
+ * One tooth, ready to become an instance. Teeth cannot live in the SDF either:
+ * the gape is carved *after* the union, so anything sitting in the mouth would
+ * be carved away with it.
+ */
+export interface CreatureTooth {
+  /** Centre of the tooth, relative to the head bone, in normalised units. */
+  offset: Vec3
+  radius: number
+  length: number
+  /** Upper jaw teeth point down; lower jaw teeth point up. */
+  down: boolean
+}
+
 /** Everything needed to build a SkinnedMesh, in transferable form. */
 export interface CreaturePayload {
   positions: Float32Array
@@ -86,6 +111,10 @@ export interface CreaturePayload {
   skinIndices: Uint16Array
   skinWeights: Float32Array
   bones: BoneSpec[]
+  /** Bone the eyes and teeth are parented to. */
+  eyeBone: string
+  eyes: CreatureEye[]
+  teeth: CreatureTooth[]
 }
 
 const blob = (at: Vec3, size: Vec3, yaw?: number, pitch?: number): Blob => ({ kind: 'blob', at, size, yaw, pitch })
@@ -276,7 +305,61 @@ function computeSkinning(positions: Float32Array, bones: BoneSpec[]) {
   return { skinIndices, skinWeights }
 }
 
-function build(parts: Part[], boneSpecs: BoneSpec[], detail: CreatureDetail): CreaturePayload {
+/** Raw-space tooth row, laid along the jaw before normalisation. */
+interface ToothRow {
+  /** Start and end of the row along +x. */
+  fromX: number
+  toX: number
+  /** Gum line height at each end. */
+  fromY: number
+  toY: number
+  /** Half-width of the jaw at each end; teeth sit just inside it. */
+  fromZ: number
+  toZ: number
+  count: number
+  /** Longest tooth in the row; the rest taper toward both ends. */
+  length: number
+  radius: number
+  down: boolean
+}
+
+/**
+ * Lays a row of teeth along one jaw, mirrored to both sides. Length follows a
+ * bell curve, the way a tyrannosaur's mid-maxilla teeth dwarf the front and back.
+ */
+function buildToothRow(row: ToothRow): { at: Vec3; radius: number; length: number; down: boolean }[] {
+  const out: { at: Vec3; radius: number; length: number; down: boolean }[] = []
+  for (let i = 0; i < row.count; i++) {
+    const t = row.count === 1 ? 0.5 : i / (row.count - 1)
+    const bell = 0.55 + 0.45 * Math.sin(Math.PI * t)
+    const length = row.length * bell
+    const x = row.fromX + (row.toX - row.fromX) * t
+    const gum = row.fromY + (row.toY - row.fromY) * t
+    const z = row.fromZ + (row.toZ - row.fromZ) * t
+    // Centre the cone so its base sits exactly on the gum line.
+    const y = row.down ? gum - length / 2 : gum + length / 2
+    for (const side of [1, -1]) {
+      out.push({ at: [x, y, z * side], radius: row.radius * (0.75 + 0.25 * bell), length, down: row.down })
+    }
+  }
+  return out
+}
+
+/** Raw-space eye description, before normalisation. */
+interface EyeSpec {
+  bone: string
+  /** Centre of one eye; the other is mirrored across z. */
+  at: Vec3
+  radius: number
+}
+
+function build(
+  parts: Part[],
+  boneSpecs: BoneSpec[],
+  eye: EyeSpec,
+  toothRows: ToothRow[],
+  detail: CreatureDetail,
+): CreaturePayload {
   const { spacing, blend } = QUALITY[detail]
   const { positions, normals, indices, ao } = meshSdf(toPrimitives(parts), { spacing, blend })
 
@@ -318,7 +401,32 @@ function build(parts: Part[], boneSpecs: BoneSpec[], detail: CreatureDetail): Cr
   }))
 
   const { skinIndices, skinWeights } = computeSkinning(positions, bones)
-  return { positions, normals, indices, ao, skinIndices, skinWeights, bones }
+
+  // Eyes hang off a bone, so only the scale part of the normalisation applies to
+  // the offset — the translation cancels out in the subtraction.
+  const socket = boneSpecs.find((b) => b.name === eye.bone)
+  if (!socket) throw new Error(`creature eye references unknown bone "${eye.bone}"`)
+  const eyes: CreatureEye[] = [1, -1].map((side) => ({
+    offset: [
+      (eye.at[0] - socket.head[0]) * k,
+      (eye.at[1] - socket.head[1]) * k,
+      (eye.at[2] - socket.head[2]) * k * side,
+    ],
+    radius: eye.radius * k,
+  }))
+
+  const teeth: CreatureTooth[] = toothRows.flatMap(buildToothRow).map((tooth) => ({
+    offset: [
+      (tooth.at[0] - socket.head[0]) * k,
+      (tooth.at[1] - socket.head[1]) * k,
+      (tooth.at[2] - socket.head[2]) * k,
+    ],
+    radius: tooth.radius * k,
+    length: tooth.length * k,
+    down: tooth.down,
+  }))
+
+  return { positions, normals, indices, ao, skinIndices, skinWeights, bones, eyeBone: eye.bone, eyes, teeth }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -335,10 +443,10 @@ function build(parts: Part[], boneSpecs: BoneSpec[], detail: CreatureDetail): Cr
  */
 const DINOSAUR_PARTS: Part[] = [
   // --- Trunk: ribcage tapering into narrow hips, with a slung belly ---------
-  blob([0.05, 0.02, 0], [0.9, 0.66, 0.56]),
+  blob([0.05, 0.03, 0], [0.9, 0.64, 0.53]),
   blob([0.6, 0.1, 0], [0.58, 0.58, 0.51]),
   blob([-0.55, -0.04, 0], [0.6, 0.55, 0.5]),
-  blob([0.16, -0.24, 0], [0.72, 0.42, 0.46]),
+  blob([0.16, -0.2, 0], [0.68, 0.37, 0.43]),
   // Shoulder and hip muscle, so limbs emerge from mass rather than sockets.
   ...mirrored(blob([0.5, -0.02, 0.34], [0.34, 0.36, 0.24])),
   ...mirrored(blob([-0.48, 0.02, 0.33], [0.36, 0.4, 0.24])),
@@ -368,39 +476,39 @@ const DINOSAUR_PARTS: Part[] = [
   // Caudofemoral muscle: the heavy wedge where tail meets hip.
   blob([-0.95, -0.04, 0], [0.45, 0.34, 0.34]),
 
-  // --- Neck ------------------------------------------------------------------
+  // --- Neck: thicker and carried lower, the way a hunting animal stalks ----
   tube(
     [
-      [0.52, 0.16, 0],
-      [0.84, 0.38, 0],
-      [1.1, 0.55, 0],
-      [1.32, 0.62, 0],
+      [0.52, 0.14, 0],
+      [0.86, 0.32, 0],
+      [1.14, 0.42, 0],
+      [1.36, 0.45, 0],
     ],
-    [0.38, 0.28, 0.23, 0.2],
+    [0.42, 0.34, 0.3, 0.27],
   ),
-  blob([0.86, 0.46, 0], [0.26, 0.18, 0.22]), // nape muscle
+  blob([0.9, 0.42, 0], [0.3, 0.23, 0.26]), // nape muscle
 
-  // --- Skull -----------------------------------------------------------------
-  blob([1.58, 0.68, 0], [0.33, 0.27, 0.24]), // cranium
-  ...mirrored(blob([1.62, 0.72, 0.16], [0.22, 0.15, 0.09])), // cheek arch
-  blob([1.9, 0.68, 0], [0.32, 0.19, 0.17]), // maxilla
+  // --- Skull: deep and boxy, brow overhanging the eye, jaws parted ---------
+  blob([1.62, 0.52, 0], [0.36, 0.31, 0.26]), // cranium
+  ...mirrored(blob([1.66, 0.5, 0.17], [0.26, 0.2, 0.1])), // cheek arch
+  blob([1.94, 0.5, 0], [0.34, 0.22, 0.19]), // maxilla
   tube(
     [
-      [1.7, 0.68, 0],
-      [2.02, 0.65, 0],
-      [2.26, 0.6, 0],
+      [1.74, 0.5, 0],
+      [2.06, 0.47, 0],
+      [2.3, 0.43, 0],
     ],
-    [0.23, 0.17, 0.1],
+    [0.25, 0.19, 0.11],
   ),
-  ...mirrored(blob([1.7, 0.87, 0.13], [0.19, 0.075, 0.085])), // lacrimal brow horns
-  blob([1.95, 0.5, 0], [0.3, 0.1, 0.155]), // lower jaw
-  blob([1.66, 0.47, 0], [0.16, 0.11, 0.15]), // jaw muscle at the hinge
+  ...mirrored(blob([1.74, 0.73, 0.14], [0.23, 0.09, 0.1])), // lacrimal brow horns
+  blob([2.0, 0.27, 0], [0.34, 0.13, 0.17]), // lower jaw, dropped into a gape
+  blob([1.68, 0.3, 0], [0.2, 0.16, 0.17]), // jaw muscle at the hinge
 
-  // Carved detail: eye sockets, nostrils and the mouth line. Baked occlusion
-  // does the rest — a recessed orbit reads as a dark eye without any texture.
-  ...mirrored(cut([1.63, 0.76, 0.2], [0.085, 0.075, 0.07])),
-  ...mirrored(cut([2.06, 0.7, 0.075], [0.05, 0.035, 0.035])),
-  cut([2.0, 0.585, 0], [0.42, 0.028, 0.2]),
+  // Carved detail: sockets, nostrils and the gape. Baked occlusion does the
+  // rest — a recessed orbit under a heavy brow reads as a glowering eye.
+  ...mirrored(cut([1.68, 0.6, 0.22], [0.09, 0.08, 0.075])),
+  ...mirrored(cut([2.14, 0.52, 0.08], [0.05, 0.035, 0.035])),
+  cut([2.04, 0.39, 0], [0.46, 0.055, 0.22]),
 
   // --- Legs ------------------------------------------------------------------
   ...mirrored(blob([-0.46, -0.2, 0.37], [0.36, 0.52, 0.3])), // thigh
@@ -443,9 +551,9 @@ const DINOSAUR_BONES: BoneSpec[] = [
   { name: 'root', parent: null, head: [-0.35, -0.02, 0] },
   { name: 'spine1', parent: 'root', head: [0.1, 0.02, 0] },
   { name: 'spine2', parent: 'spine1', head: [0.55, 0.1, 0] },
-  { name: 'neck1', parent: 'spine2', head: [0.85, 0.38, 0] },
-  { name: 'neck2', parent: 'neck1', head: [1.15, 0.58, 0] },
-  { name: 'head', parent: 'neck2', head: [1.54, 0.67, 0], tip: [2.26, 0.57, 0] },
+  { name: 'neck1', parent: 'spine2', head: [0.86, 0.32, 0] },
+  { name: 'neck2', parent: 'neck1', head: [1.18, 0.43, 0] },
+  { name: 'head', parent: 'neck2', head: [1.6, 0.5, 0], tip: [2.32, 0.42, 0] },
 
   { name: 'tail1', parent: 'root', head: [-0.75, 0.0, 0] },
   { name: 'tail2', parent: 'tail1', head: [-1.25, 0.02, 0] },
@@ -536,8 +644,19 @@ const TURTLE_BONES: BoneSpec[] = [
 ]
 
 /** Generates one creature. Pure computation — safe to call from a worker. */
+/** Sits just inside each carved socket so only the wet outer cap shows. */
+const DINOSAUR_EYE: EyeSpec = { bone: 'head', at: [1.686, 0.604, 0.215], radius: 0.072 }
+const TURTLE_EYE: EyeSpec = { bone: 'head', at: [1.362, 0.092, 0.178], radius: 0.06 }
+
+/** Upper and lower rows, sized to interlock across the carved gape. */
+const DINOSAUR_TEETH: ToothRow[] = [
+  { fromX: 1.78, toX: 2.3, fromY: 0.45, toY: 0.42, fromZ: 0.15, toZ: 0.062, count: 8, length: 0.1, radius: 0.027, down: true },
+  { fromX: 1.82, toX: 2.28, fromY: 0.335, toY: 0.36, fromZ: 0.132, toZ: 0.055, count: 7, length: 0.078, radius: 0.023, down: false },
+]
+
 export function createCreature(kind: CreatureKind, detail: CreatureDetail): CreaturePayload {
+  // Turtles have a beak, not teeth.
   return kind === 'dino'
-    ? build(DINOSAUR_PARTS, DINOSAUR_BONES, detail)
-    : build(TURTLE_PARTS, TURTLE_BONES, detail)
+    ? build(DINOSAUR_PARTS, DINOSAUR_BONES, DINOSAUR_EYE, DINOSAUR_TEETH, detail)
+    : build(TURTLE_PARTS, TURTLE_BONES, TURTLE_EYE, [], detail)
 }

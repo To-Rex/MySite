@@ -1,14 +1,15 @@
 import { Canvas, useFrame } from '@react-three/fiber'
 import { PerformanceMonitor, Sparkles } from '@react-three/drei'
 import type { MotionValue } from 'motion/react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { Bone, MathUtils, Matrix4, Skeleton, type Group, type SkinnedMesh } from 'three'
+import { useMemo, useRef, useState } from 'react'
+import { MathUtils, type Bone, type Group, type SkinnedMesh } from 'three'
 import { pointer } from '@/lib/pointer'
 import type { Theme } from '@/theme/context'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { qualityFor } from '@/hooks/useDeviceTier'
-import type { BoneSpec, CreatureDetail, CreatureKind } from './creatures'
-import { useCreatureGeometry } from './useCreature'
+import type { CreatureDetail } from './creatures'
+import { DETAIL_BY_TIER, animateTurtleSwim, useBind, useCreature, type Rig } from './creatureRig'
+import { Eyes, Teeth } from './creatureFittings'
 import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 
@@ -23,8 +24,6 @@ export interface HeroSceneProps {
   /** Pauses rendering when the hero is off-screen. */
   active: boolean
 }
-
-const DETAIL_BY_TIER: Record<DeviceTier, CreatureDetail> = { high: 'high', medium: 'medium', low: 'low' }
 
 /** Nudges the arrangement up and right so the head clears the headline. */
 const BASE_OFFSET: [number, number] = [0.2, 0.5]
@@ -55,60 +54,16 @@ interface TurtleOrbit {
   facing: number
 }
 
-const TURTLES: readonly TurtleOrbit[] = [
-  { ring: 0, phase: 2.5, speed: 0.05, scale: 0.82, facing: -0.5 },
-  { ring: 0, phase: 5.6, speed: 0.05, scale: 0.58, facing: 0.7 },
-  { ring: 1, phase: 3.4, speed: -0.036, scale: 0.7, facing: 2.4 },
-]
-
-/** Realises a bone spec tree as three.js Bones plus the Skeleton that drives them. */
-function buildSkeleton(specs: BoneSpec[]) {
-  const byName = new Map<string, Bone>()
-  const bones = specs.map((spec) => {
-    const bone = new Bone()
-    bone.name = spec.name
-    byName.set(spec.name, bone)
-    return bone
-  })
-
-  specs.forEach((spec, i) => {
-    const bone = bones[i]!
-    const [x, y, z] = spec.head
-    const parentSpec = spec.parent ? specs.find((s) => s.name === spec.parent) : undefined
-    if (parentSpec) {
-      byName.get(parentSpec.name)!.add(bone)
-      bone.position.set(x - parentSpec.head[0], y - parentSpec.head[1], z - parentSpec.head[2])
-    } else {
-      bone.position.set(x, y, z)
-    }
-  })
-
-  const root = bones[0]!
-  // Skeleton derives its bind inverses from world matrices, so they must be current.
-  root.updateMatrixWorld(true)
-  return { root, skeleton: new Skeleton(bones), byName }
-}
-
 /**
- * Resolves a creature's shared geometry (generated in a worker) and gives this
- * instance its own skeleton, so three turtles animate independently off one
- * cached mesh. Returns null until the geometry arrives.
+ * Speeds are deliberately all different — sharing one made two turtles hold the
+ * same relative angle forever, so they overlapped in projection permanently
+ * rather than drifting past each other.
  */
-function useCreature(kind: CreatureKind, detail: CreatureDetail) {
-  const resolved = useCreatureGeometry(kind, detail)
-  const rigged = useMemo(() => (resolved ? buildSkeleton(resolved.bones) : null), [resolved])
-  useEffect(() => () => rigged?.skeleton.dispose(), [rigged])
-  return resolved && rigged ? { geometry: resolved.geometry, ...rigged } : null
-}
-
-/** Binds a skinned mesh in its own local space, where geometry and bones agree. */
-function useBind(mesh: RefObject<SkinnedMesh | null>, skeleton: Skeleton) {
-  useLayoutEffect(() => {
-    mesh.current?.bind(skeleton, new Matrix4())
-  }, [mesh, skeleton])
-}
-
-type Rig = NonNullable<ReturnType<typeof useCreature>>
+const TURTLES: readonly TurtleOrbit[] = [
+  { ring: 0, phase: 2.5, speed: 0.05, scale: 1.15, facing: -0.5 },
+  { ring: 1, phase: 5.4, speed: 0.036, scale: 0.85, facing: 0.7 },
+  { ring: 0, phase: 5.9, speed: -0.028, scale: 0.98, facing: 2.4 },
+]
 
 interface CreatureProps {
   theme: Theme
@@ -129,53 +84,147 @@ function Dinosaur({ theme, detail, bump, reducedMotion }: CreatureProps) {
   return <DinosaurBody rig={rig} theme={theme} bump={bump} reducedMotion={reducedMotion} />
 }
 
+/** Seconds per full two-step stride. Slow enough to read as a walk, not a jog. */
+const STRIDE = 1.7
+
+/** Base yaw of the tyrannosaur, kept here because the walk also writes rotation. */
+const DINO_YAW = -0.42
+
+/** Deterministic 0..1 value per integer — picks which accent fires, and where. */
+function noiseAt(index: number, seed: number): number {
+  let h = (Math.imul(index, 374761393) + Math.imul(seed, 668265263)) | 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
+  h ^= h >>> 16
+  return (h >>> 0) / 4294967296
+}
+
+/**
+ * Poses one leg for a phase of the stride.
+ *
+ * Bones sit unrotated in bind pose, so their local axes are the creature's:
+ * +Z rotation swings a downward-pointing bone forward, −Z folds the knee back
+ * the way a digitigrade leg actually folds.
+ */
+function poseLeg(thigh: Bone, shin: Bone, foot: Bone, phase: number, gait: number) {
+  const a = phase * Math.PI * 2
+  // Hip reaches furthest forward a quarter into the cycle, furthest back at three quarters.
+  const hip = Math.sin(a) * 0.44 * gait
+  // The knee folds hardest just after toe-off, with a smaller dip absorbing weight at mid-stance.
+  const swing = -0.85 * (0.5 + 0.5 * Math.cos(a - 0.5)) * gait
+  const absorb = -0.16 * (0.5 - 0.5 * Math.cos(2 * a)) * gait
+  const knee = swing + absorb
+  // Ankle keeps the sole roughly level, then pushes off as the leg passes behind.
+  const ankle = -(hip + knee) * 0.6 + 0.26 * Math.sin(a + 1.2) * gait
+
+  thigh.rotation.z = hip
+  shin.rotation.z = knee
+  foot.rotation.z = ankle
+}
+
 function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, 'detail'> & { rig: Rig }) {
   const mesh = useRef<SkinnedMesh>(null)
+  const body = useRef<Group>(null)
   const { geometry, root, skeleton, byName } = rig
   useBind(mesh, skeleton)
 
   const tail = useMemo(() => ['tail1', 'tail2', 'tail3', 'tail4', 'tail5'].map((n) => byName.get(n)!), [byName])
+  const legs = useMemo(
+    () =>
+      (['L', 'R'] as const).map((side) => ({
+        thigh: byName.get(`thigh${side}`)!,
+        shin: byName.get(`shin${side}`)!,
+        foot: byName.get(`foot${side}`)!,
+      })),
+    [byName],
+  )
 
   useFrame(({ clock }) => {
     if (reducedMotion) return
     const t = clock.elapsedTime
 
-    // Tail: a wave travelling outward, each joint lagging the one before it.
+    // ---- Walk cycle ---------------------------------------------------------
+    // Legs are half a stride apart; everything else in the body is driven from
+    // the same clock so the bob, sway and tail counter-swing stay in step.
+    const cycle = t / STRIDE
+    const step = cycle * Math.PI * 2
+    // Ease the gait in so the creature starts from its rest pose rather than
+    // snapping into mid-stride when the geometry lands.
+    const gait = Math.min(1, t / 1.6)
+    legs.forEach((leg, i) => poseLeg(leg.thigh, leg.shin, leg.foot, cycle + i * 0.5, gait))
+
+    // Hips rise twice per stride and roll toward whichever leg is carrying.
+    const bob = Math.sin(step * 2 - 0.6) * 0.058 * gait
+    const sway = Math.sin(step) * 0.055 * gait
+    const roll = Math.sin(step) * 0.045 * gait
+    const b = body.current
+    if (b) {
+      b.position.set(0, bob, sway)
+      b.rotation.set(roll, DINO_YAW, Math.sin(step * 2) * 0.012 * gait)
+    }
+
+    // ---- Occasional accents -------------------------------------------------
+    // Every few seconds one accent fires — a longer look around, or a heavier
+    // tail swish — so the idle never settles into an obvious loop.
+    // Head and tail accents alternate rather than being picked at random: pure
+    // noise left one of them unused for the first half-minute, which a visitor
+    // would simply never see. Noise still sets direction, strength and the
+    // occasional slot where both fire together.
+    const ACCENT_EVERY = 5.5
+    const accentClock = (t - 2) / ACCENT_EVERY
+    const slot = Math.floor(accentClock)
+    const local = accentClock - slot
+    const envelope = slot < 0 || local >= 0.5 ? 0 : Math.sin((local / 0.5) * Math.PI)
+    const both = noiseAt(slot, 3) < 0.22
+    const strength = envelope * (0.75 + noiseAt(slot, 4) * 0.5)
+    const direction = noiseAt(slot, 2) < 0.5 ? -1 : 1
+    const headAccent = both || slot % 2 === 0 ? strength * direction : 0
+    const tailAccent = both || slot % 2 !== 0 ? strength : 0
+
+    // ---- Tail ---------------------------------------------------------------
+    // Idle travelling wave, plus the counter-swing that balances each step, plus
+    // the occasional swish. Later joints carry more of everything.
+    const counter = Math.sin(step + Math.PI) * 0.075 * gait
     tail.forEach((bone, i) => {
-      bone.rotation.y = Math.sin(t * 1.05 - i * 0.72) * (0.045 + i * 0.022)
-      bone.rotation.z = Math.sin(t * 0.72 - i * 0.5) * (0.02 + i * 0.012)
+      const reach = 0.4 + i * 0.16
+      bone.rotation.y =
+        Math.sin(t * 1.05 - i * 0.72) * (0.045 + i * 0.022) +
+        counter * reach +
+        tailAccent * Math.sin(t * 2.1 - i * 0.6) * 0.14 * reach
+      bone.rotation.z = Math.sin(t * 0.72 - i * 0.5) * (0.02 + i * 0.012) + tailAccent * 0.05 * reach
     })
 
-    // Ribcage breathing — a slow swell rather than a bounce.
+    // ---- Ribcage breathing — a slow swell rather than a bounce --------------
     const breath = Math.sin(t * 0.85)
     byName.get('spine1')!.scale.set(1, 1 + breath * 0.02, 1 + breath * 0.028)
     byName.get('spine2')!.scale.set(1, 1 + breath * 0.014, 1 + breath * 0.02)
 
-    // Head scanning the horizon, with counter-motion down the neck.
+    // ---- Head and neck ------------------------------------------------------
+    // Slow horizon scan, a nod locked to the stride, and the accent turn.
     const scan = Math.sin(t * 0.21) + Math.sin(t * 0.37 + 1.7) * 0.4
+    const nod = Math.sin(step * 2 + 0.9) * 0.035 * gait
     const neck1 = byName.get('neck1')!
-    neck1.rotation.y = scan * 0.1
-    neck1.rotation.z = Math.sin(t * 0.45) * 0.03
-    byName.get('neck2')!.rotation.y = scan * 0.14
+    neck1.rotation.y = scan * 0.1 - counter * 0.5 + headAccent * 0.16
+    neck1.rotation.z = Math.sin(t * 0.45) * 0.03 + nod
+    byName.get('neck2')!.rotation.y = scan * 0.14 - counter * 0.35 + headAccent * 0.22
     const head = byName.get('head')!
-    head.rotation.y = scan * 0.2
-    head.rotation.z = Math.sin(t * 0.55 + 0.6) * 0.05 - 0.02
+    head.rotation.y = scan * 0.2 + headAccent * 0.34
+    head.rotation.z = Math.sin(t * 0.55 + 0.6) * 0.05 - 0.02 + nod * 1.4 - Math.abs(headAccent) * 0.12
 
-    // Weight shifting between the legs, and the odd small-arm twitch.
-    const shift = Math.sin(t * 0.38)
-    byName.get('thighL')!.rotation.z = shift * 0.035
-    byName.get('thighR')!.rotation.z = -shift * 0.035
+    // ---- Arms ---------------------------------------------------------------
+    // Small counter-swing with the stride, plus the odd twitch.
     const twitch = Math.sin(t * 1.7) * 0.5 + Math.sin(t * 0.9) * 0.5
-    byName.get('armL')!.rotation.z = twitch * 0.06
-    byName.get('armR')!.rotation.z = twitch * 0.06 + 0.02
+    byName.get('armL')!.rotation.z = twitch * 0.06 - Math.sin(step) * 0.07 * gait
+    byName.get('armR')!.rotation.z = twitch * 0.06 + 0.02 + Math.sin(step) * 0.07 * gait
   })
 
   return (
-    <group scale={3.4} rotation={[0, -0.42, 0]}>
+    <group ref={body} scale={3.4} rotation={[0, DINO_YAW, 0]}>
       <skinnedMesh ref={mesh} geometry={geometry} frustumCulled={false}>
-        <SkinMaterial theme={theme} texScale={3.6} bump={bump} />
+        <SkinMaterial theme={theme} species="dino" texScale={2.6} bump={bump} halfHeight={0.22} />
       </skinnedMesh>
       <primitive object={root} />
+      <Eyes rig={rig} theme={theme} />
+      <Teeth rig={rig} theme={theme} />
     </group>
   )
 }
@@ -212,34 +261,17 @@ function TurtleBody({ rig, orbit, theme, bump, reducedMotion }: Omit<TurtleProps
 
     if (reducedMotion) return
 
-    // Front flippers row together; the pair mirrors so they beat symmetrically.
-    const stroke = Math.sin(t * 1.45 + orbit.phase)
-    const glide = Math.sin(t * 1.45 + orbit.phase - 0.9)
-    byName.get('flipperFL')!.rotation.x = stroke * 0.55
-    byName.get('flipperFR')!.rotation.x = -stroke * 0.55
-    byName.get('flipperFL')!.rotation.y = glide * 0.22
-    byName.get('flipperFR')!.rotation.y = -glide * 0.22
-
-    // Rear flippers steer, lagging behind the main stroke.
-    const rear = Math.sin(t * 1.45 + orbit.phase - 1.8)
-    byName.get('flipperRL')!.rotation.x = rear * 0.28
-    byName.get('flipperRR')!.rotation.x = -rear * 0.28
-
-    // Head reaching forward and looking around.
-    byName.get('neck')!.rotation.z = Math.sin(t * 0.7 + orbit.phase) * 0.12 - 0.04
-    const head = byName.get('head')!
-    head.rotation.y = Math.sin(t * 0.33 + orbit.phase) * 0.3
-    head.rotation.z = Math.sin(t * 0.6 + orbit.phase) * 0.08
-    byName.get('tail')!.rotation.y = Math.sin(t * 1.1 + orbit.phase) * 0.18
+    animateTurtleSwim(byName, t, orbit.phase)
   })
 
   return (
     <group ref={group}>
       <group scale={orbit.scale}>
         <skinnedMesh ref={mesh} geometry={geometry} frustumCulled={false}>
-          <SkinMaterial theme={theme} texScale={2.6} bump={bump} />
+          <SkinMaterial theme={theme} species="turtle" texScale={1.7} bump={bump} halfHeight={0.17} plateMix={0.8} />
         </skinnedMesh>
         <primitive object={root} />
+        <Eyes rig={rig} theme={theme} />
       </group>
     </group>
   )

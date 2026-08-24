@@ -15,6 +15,9 @@ import type { CreatureRequest, CreatureResponse } from './creatures.worker'
 export interface CreatureGeometry {
   geometry: BufferGeometry
   bones: CreaturePayload['bones']
+  eyeBone: string
+  eyes: CreaturePayload['eyes']
+  teeth: CreaturePayload['teeth']
 }
 
 const cache = new Map<string, CreatureGeometry>()
@@ -29,7 +32,7 @@ function toGeometry(payload: CreaturePayload): CreatureGeometry {
   geometry.setAttribute('skinWeight', new BufferAttribute(payload.skinWeights, 4))
   geometry.setIndex(new BufferAttribute(payload.indices, 1))
   geometry.computeBoundingSphere()
-  return { geometry, bones: payload.bones }
+  return { geometry, bones: payload.bones, eyeBone: payload.eyeBone, eyes: payload.eyes, teeth: payload.teeth }
 }
 
 let worker: Worker | null = null

@@ -3,6 +3,7 @@ import {
   DataTexture,
   LinearFilter,
   LinearMipmapLinearFilter,
+  Color,
   RGBAFormat,
   RepeatWrapping,
   type MeshPhysicalMaterial,
@@ -190,18 +191,37 @@ uniform float uBump;
 uniform float uAo;
 uniform float uAoRough;
 uniform float uGrooveTint;
+uniform float uPlateMix;
+uniform float uCountershade;
+uniform float uHalfHeight;
+uniform vec3 uHideDorsal;
+uniform vec3 uHideVentral;
+uniform float uMottle;
 varying vec3 vSkinPos;
 varying vec3 vSkinNormal;
 varying float vSkinAo;
 
 // Triplanar so the pattern needs no UVs and shows no seams on a closed body.
+// R holds the fine scales, G the coarse plates; uPlateMix chooses between them,
+// which is how one texture serves both fine hide and a turtle's shell scutes.
 float dhSkinHeight(vec3 p, vec3 n) {
   vec3 w = pow(abs(normalize(n)), vec3(4.0));
   w /= (w.x + w.y + w.z + 1e-5);
-  float hx = texture2D(uSkinMap, p.zy).r;
-  float hy = texture2D(uSkinMap, p.xz).r;
-  float hz = texture2D(uSkinMap, p.xy).r;
-  return hx * w.x + hy * w.y + hz * w.z;
+  vec2 hx = texture2D(uSkinMap, p.zy).rg;
+  vec2 hy = texture2D(uSkinMap, p.xz).rg;
+  vec2 hz = texture2D(uSkinMap, p.xy).rg;
+  vec2 h = hx * w.x + hy * w.y + hz * w.z;
+  return mix(h.x, h.y, uPlateMix);
+}
+
+/** Low-frequency blotching, so the hide is not one flat colour. */
+float dhSkinMottle(vec3 p, vec3 n) {
+  vec3 w = pow(abs(normalize(n)), vec3(4.0));
+  w /= (w.x + w.y + w.z + 1e-5);
+  float mx = texture2D(uSkinMap, p.zy).g;
+  float my = texture2D(uSkinMap, p.xz).g;
+  float mz = texture2D(uSkinMap, p.xy).g;
+  return mx * w.x + my * w.y + mz * w.z;
 }
 `
 
@@ -231,10 +251,18 @@ interface Uniforms {
   uAo: { value: number }
   uAoRough: { value: number }
   uGrooveTint: { value: number }
+  uPlateMix: { value: number }
+  uCountershade: { value: number }
+  uHalfHeight: { value: number }
+  uHideDorsal: { value: Color }
+  uHideVentral: { value: Color }
+  uMottle: { value: number }
 }
 
 export interface SkinMaterialProps {
   theme: Theme
+  /** Chooses the hide colours. */
+  species: CreatureSpecies
   /**
    * Pattern repeats per unit of bind space. Keep individual scales at roughly
    * 6-10 screen pixels: finer than that and the bump derivative turns the
@@ -243,6 +271,10 @@ export interface SkinMaterialProps {
   texScale: number
   /** Bump strength; pass 0 to skip the effect entirely on weak devices. */
   bump: number
+  /** Half the creature's height in bind space — the countershading gradient. */
+  halfHeight: number
+  /** 0 = fine scales, 1 = coarse plates. Turtles want plates for shell scutes. */
+  plateMix?: number
 }
 
 /**
@@ -250,9 +282,30 @@ export interface SkinMaterialProps {
  * near-black page simply disappears, so the dark theme keeps a wet sheen and a
  * lifted base value; the light theme can afford to be genuinely matte.
  */
+/**
+ * Real hide colours per species. Values are lifted in the dark theme so the
+ * animals still read against a near-black page — a genuinely dark olive
+ * disappears there — and kept muted in both, so an earthy palette still sits
+ * inside a restrained page rather than turning into a toy.
+ */
+const HIDE = {
+  dino: {
+    dark: { dorsal: '#6d6449', ventral: '#b9ac89' },
+    light: { dorsal: '#56503a', ventral: '#b2a482' },
+  },
+  turtle: {
+    // Greener and higher-contrast than the tyrannosaur, so the two species do
+    // not read as the same animal at two sizes — a green sea turtle's carapace
+    // against a distinctly pale plastron.
+    dark: { dorsal: '#55693f', ventral: '#d2c99a' },
+    light: { dorsal: '#414f31', ventral: '#cec495' },
+  },
+} as const
+
+export type CreatureSpecies = keyof typeof HIDE
+
 const PALETTE = {
   dark: {
-    color: '#4c4c58',
     metalness: 0.25,
     roughness: 0.44,
     clearcoat: 0.75,
@@ -262,9 +315,10 @@ const PALETTE = {
     sheenColor: '#9aa4bd',
     /** How hard baked occlusion bites into the albedo. */
     ao: 0.62,
+    /** How strongly the ventral hide takes over underneath. */
+    countershade: 0.55,
   },
   light: {
-    color: '#c9c0b0',
     metalness: 0.05,
     roughness: 0.64,
     clearcoat: 0.3,
@@ -273,10 +327,11 @@ const PALETTE = {
     sheen: 0.45,
     sheenColor: '#fff3e2',
     ao: 0.85,
+    countershade: 0.6,
   },
 } as const
 
-export function SkinMaterial({ theme, texScale, bump }: SkinMaterialProps) {
+export function SkinMaterial({ theme, species, texScale, bump, halfHeight, plateMix = 0 }: SkinMaterialProps) {
   const material = useRef<MeshPhysicalMaterial>(null)
   const texture = useMemo(() => getSkinTexture(), [])
 
@@ -291,8 +346,15 @@ export function SkinMaterial({ theme, texScale, bump }: SkinMaterialProps) {
       uAo: { value: PALETTE[theme].ao },
       uAoRough: { value: 0.22 },
       uGrooveTint: { value: 0.22 },
+      uPlateMix: { value: plateMix },
+      uCountershade: { value: PALETTE[theme].countershade },
+      uHalfHeight: { value: halfHeight },
+      uHideDorsal: { value: new Color(HIDE[species][theme].dorsal) },
+      uHideVentral: { value: new Color(HIDE[species][theme].ventral) },
+      // Blotching needs three more texture fetches, so it rides along with bump.
+      uMottle: { value: bump > 0 ? 0.5 : 0 },
     }),
-    [texture, texScale, bump, theme],
+    [texture, texScale, bump, theme, halfHeight, plateMix, species],
   )
 
   const onBeforeCompile = useMemo(
@@ -321,7 +383,16 @@ export function SkinMaterial({ theme, texScale, bump }: SkinMaterialProps) {
             '#include <color_fragment>',
             `#include <color_fragment>
   diffuseColor.rgb *= dhAo;
-  diffuseColor.rgb *= mix(1.0, 0.7 + 0.3 * dhHeight, uGrooveTint);`,
+  diffuseColor.rgb *= mix(1.0, 0.7 + 0.3 * dhHeight, uGrooveTint);
+  // Countershading: dark along the back, pale underneath. The two hides are
+  // absolute colours rather than a tint multiplied onto one base — a multiplier
+  // can only ever darken, so the belly came out darker than the back.
+  float dhVentral = 1.0 - smoothstep(-0.4, 0.45, vSkinPos.y / uHalfHeight);
+  diffuseColor.rgb *= mix(uHideDorsal, uHideVentral, dhVentral * uCountershade);
+  if (uMottle > 0.0) {
+    float dhBlotch = dhSkinMottle(vSkinPos * uTexScale * 0.3, vSkinNormal);
+    diffuseColor.rgb *= mix(1.0, 0.78 + 0.34 * dhBlotch, uMottle);
+  }`,
           )
           // Creases and seams are duller than the surrounding hide.
           .replace(
@@ -335,20 +406,27 @@ export function SkinMaterial({ theme, texScale, bump }: SkinMaterialProps) {
     [uniforms],
   )
 
-  // The injected program differs from stock physical material; give three a key
-  // so it never hands us a cached program compiled without these chunks.
+  /**
+   * The injected program differs from a stock physical material, so it needs its
+   * own cache key — and that key has to be in place *before* the first compile.
+   * Applied as a prop rather than from an effect: once the scene also contained
+   * plain physical materials (eyes, teeth), three matched their cache key first
+   * and handed this material their program, silently dropping the skin chunks.
+   */
+  const cacheKey = useMemo(() => {
+    const key = `dh-skin-${species}-${theme}-${plateMix}-${bump > 0 ? 'bump' : 'flat'}`
+    return () => key
+  }, [species, theme, plateMix, bump])
+
   useEffect(() => {
-    const m = material.current
-    if (!m) return
-    m.customProgramCacheKey = () => 'dh-skin-v1'
-    m.needsUpdate = true
-  }, [onBeforeCompile])
+    if (material.current) material.current.needsUpdate = true
+  }, [onBeforeCompile, cacheKey])
 
   const p = PALETTE[theme]
   return (
     <meshPhysicalMaterial
       ref={material}
-      color={p.color}
+      color="#ffffff"
       metalness={p.metalness}
       roughness={p.roughness}
       clearcoat={p.clearcoat}
@@ -357,6 +435,7 @@ export function SkinMaterial({ theme, texScale, bump }: SkinMaterialProps) {
       sheen={p.sheen}
       sheenColor={p.sheenColor}
       onBeforeCompile={onBeforeCompile}
+      customProgramCacheKey={cacheKey}
     />
   )
 }

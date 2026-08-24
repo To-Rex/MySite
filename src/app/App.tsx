@@ -11,6 +11,7 @@ import { Navigation } from '@/components/layout/Navigation'
 import { Footer } from '@/components/layout/Footer'
 import { CustomCursor } from '@/components/cursor/CustomCursor'
 import { Preloader } from '@/components/loader/Preloader'
+import { Companion } from '@/components/three/Companion'
 import { Hero } from '@/sections/Hero'
 import { About } from '@/sections/About'
 import { Philosophy } from '@/sections/Philosophy'
@@ -51,6 +52,7 @@ function Shell() {
         <Footer />
       </ReactLenis>
       <CustomCursor />
+      <Companion />
       <div className="grain" aria-hidden />
       <Preloader onRelease={release} />
     </IntroContext.Provider>

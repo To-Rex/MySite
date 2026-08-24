@@ -40,6 +40,9 @@ src/
     ui/           Button, SplitText, Reveal, Magnetic, TiltCard, Marquee, icons…
     layout/       Navigation, MobileMenu, Footer, LanguageSwitcher, ThemeToggle
     three/        HeroScene, UniverseScene, ThemedEnvironment (all lazy)
+                  Companion.tsx — gate for the scroll companion (three-free)
+                  CompanionTurtle.tsx — the turtle that follows the reader
+                  creatureRig.ts / creatureFittings.tsx — shared skeleton, eyes, teeth
                   skinMaterial.tsx — procedural reptile hide + baked AO
                   sdf.ts / creatures.ts — procedural creature meshing (three-free)
                   creatures.worker.ts — runs that meshing off the main thread
@@ -82,9 +85,32 @@ everywhere, and ambient occlusion is baked per vertex from the same field — th
 is what makes a carved socket read as a recessed eye.
 
 **Motion.** Each creature is skinned to a small procedurally built skeleton, which
-lets the tail travel a wave and the head turn without the surface tearing. The
-idle is composed from several periods (tail wave, breathing ribcage, head scan)
-so it never visibly loops. Still one draw call per creature.
+lets the body deform without the surface tearing. Still one draw call per creature.
+
+The tyrannosaur walks. A stride clock drives everything at once so the parts stay
+in step: hips swing and knees fold half a cycle apart, ankles keep the sole level
+then push off, the body rises twice per stride and rolls toward the carrying leg,
+the tail counter-swings against the hips, and the head nods on the same beat. The
+gait eases in over the first ~1.6 s so the creature does not snap into mid-stride
+the moment its geometry arrives from the worker.
+
+Layered on top: a travelling tail wave, a breathing ribcage, a slow horizon scan
+and small-arm twitches, all on unrelated periods so nothing visibly loops. Every
+5.5 s one *accent* fires — a longer head turn or a heavier tail swish. Those
+alternate rather than being chosen at random: pure noise happened to leave head
+turns unused for the first half-minute, which a visitor would simply never see.
+Noise still picks direction, strength, and the occasional slot where both fire.
+
+Bones sit unrotated in bind pose, so their local axes are the creature's: for a
+downward-pointing leg bone, +Z swings it forward and −Z folds the knee back the
+way a digitigrade leg actually folds. Worth remembering before editing `poseLeg`.
+
+**Eyes and teeth.** Neither can be part of the SDF: sockets and the gape are
+carved *after* the union, so anything sitting in them gets carved away too. Both
+are separate meshes portalled onto the head bone, which makes them track every
+head turn for free — eyeballs as small glossy spheres, teeth as a single
+instanced cone. Their positions ride along in the creature payload, already
+normalised, so the anatomy and the fittings can never drift apart.
 
 **Surface.** `skinMaterial.tsx` adds reptile hide on top of MeshPhysicalMaterial:
 a procedural Worley scale/wrinkle height map, triplanar-sampled in bind space so
@@ -92,11 +118,32 @@ the pattern stays glued to the body while it animates, plus surface-gradient
 (Mikkelsen) bump mapping — which needs neither UVs nor tangents, and the mesh has
 neither.
 
+Colour comes from two absolute hides per species — a dark dorsal and a pale
+ventral, blended by height so the animals are countershaded the way real ones
+are. They are absolute colours rather than a tint multiplied onto one base
+colour: a multiplier can only ever darken, so the first version came out with a
+belly *darker* than the back, which is backwards. Values are lifted in the dark
+theme, since a genuinely dark olive vanishes against a near-black page, and the
+turtle is pushed greener with a paler plastron so the two species do not read as
+the same animal at two sizes.
+
+On top of that: low-frequency blotching so the hide is never one flat colour, and
+a `plateMix` that chooses between the texture's fine scale channel and its coarse
+plate channel — which is how one texture serves both tyrannosaur hide and a
+turtle's shell scutes.
+
 Four things here are easy to get wrong, and each cost a debugging round:
 
 - **Bump magnitude is not intuitive.** The height map spans 0..1 across a few
   pixels, so its screen-space gradient is enormous; useful values are ~0.03, not
-  ~0.5. Too high and the normals scatter into speckle that erases every highlight.
+  ~0.5. At 0.15 the hide already turns into a harsh crust that breaks up every
+  highlight and flattens the form.
+- **The bump is off on `low`-tier devices — including headless browsers.**
+  Headless Chrome reports `pointer: coarse` and four cores, so `useDeviceTier`
+  classifies it as low and passes `bump = 0`. Screenshot tests therefore show a
+  surface no real desktop visitor sees. `scratchpad/verify/desktop.mjs` shims
+  `matchMedia` and `hardwareConcurrency` to make the test browser representative;
+  without that shim, tuning the bump from screenshots is meaningless.
 - **Texture frequency must be set from on-screen size.** Aim for scales around
   6–10 px. Finer than that and the bump derivative aliases into noise.
 - **`DataTexture` defaults to `NearestFilter` on _both_ filters.** Setting only
@@ -117,9 +164,52 @@ thread only turns the returned typed arrays into a `BufferGeometry`. Results are
 cached per (creature, quality tier) and shared by every instance, and the hero
 simply renders nothing until its geometry arrives.
 
+### The scroll companion
+
+Past the hero, one turtle follows the reader down the page. It cannot live in
+the hero scene — that canvas scrolls away with its section — so it gets its own
+fixed, pointer-transparent canvas. Leaving the hero fades the layer back out
+rather than unmounting it: tearing a WebGL context down and rebuilding it on
+every scroll reversal costs far more than one idle canvas.
+
+It reuses the hero's cached geometry and rigs its own skeleton, so it adds no
+meshing work. That is why `DETAIL_BY_TIER` lives in `creatureRig.ts` and is
+shared: geometry is cached per (creature, detail), and asking for a different
+detail would quietly mesh the same animal twice.
+
+Three things here are load-bearing:
+
+- **`Companion.tsx` must stay free of three.js imports.** It decides only
+  *whether* the companion exists; the turtle is a `lazy()` chunk behind it.
+  Importing `CompanionTurtle` straight from the app shell took the entry bundle
+  from 136 kB to 372 kB, because a static import of the 3D module pulls the whole
+  renderer in with it.
+- **Scroll is read from `window.scrollY` inside the frame loop**, not through a
+  motion value. The first version fed `useScroll`/`useVelocity` into the damping
+  chain, and on the first frames those produced a NaN. A single NaN reaching a
+  rotation invalidates the object's matrix and three then draws *nothing* — no
+  warning, no error, while the object still reports `visible: true` and a sane
+  position. Every value that feeds a transform now goes through a `finite()`
+  guard; keep it that way.
+- **Where it swims is a legibility decision.** On a wide screen it rides the
+  right margin — the column is capped at 84rem, so past ~0.8 of half-width the
+  turtle is over empty page and only clips the ends of lines. A phone has no
+  margin to hide in, so it drops into the bottom corner instead. Its size is a
+  fraction of the *smaller* of viewport width and height rather than a fixed
+  world scale, otherwise the same turtle is a thumbnail on an ultrawide monitor
+  and covers half a phone screen.
+
+Its cubemap is baked at 64px against the hero's 128–256: baking one is a visible
+main-thread stall, and at this size it feeds reflections a few pixels wide. Night
+lighting is also brighter than the hero's, because a small creature over a
+near-black page reads as a silhouette under the hero's key light.
+
+`prefers-reduced-motion` removes it entirely — a creature that chases the reader
+is exactly the motion that preference asks us to drop.
+
 ### Performance
 
-- The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only.
+- The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only (~140 kB, 42 kB gzipped).
 - Scenes render only while on screen (`frameloop="never"` off-screen), DPR adapts via `PerformanceMonitor`, and a device-tier estimate (`useDeviceTier`) scales geometry/particles; WebGL-less browsers get a designed 2D fallback.
 - `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor.
 
