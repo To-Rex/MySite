@@ -192,12 +192,48 @@ Three things here are load-bearing:
   position. Every value that feeds a transform now goes through a `finite()`
   guard; keep it that way.
 - **Where it swims is a legibility decision.** On a wide screen it rides the
-  right margin — the column is capped at 84rem, so past ~0.8 of half-width the
-  turtle is over empty page and only clips the ends of lines. A phone has no
-  margin to hide in, so it drops into the bottom corner instead. Its size is a
-  fraction of the *smaller* of viewport width and height rather than a fixed
-  world scale, otherwise the same turtle is a thumbnail on an ultrawide monitor
-  and covers half a phone screen.
+  right margin — the column is capped at 84rem, so the turtle is over empty page
+  and only clips the ends of lines. A phone has no margin to hide in, so it drops
+  into the bottom corner instead. Its size is a fraction of the *smaller* of
+  viewport width and height rather than a fixed world scale, otherwise the same
+  turtle is a thumbnail on an ultrawide monitor and covers half a phone screen.
+
+**Staying in frame.** The lane is not a position, it is a distance in from a
+limit recomputed every frame, so the body can never be half off the edge. The
+limit comes from the geometry's bounding *sphere* — `centre.length() + radius`,
+which bounds the body at any orientation, mid-somersault included — divided by
+half the viewport, and it shrinks again by the perspective factor whenever a
+stunt pushes the turtle toward the camera, since that magnifies both the body and
+its distance from the centre. Screen positions and lane targets are both clamped
+to it. The first version placed the turtle at a fixed fraction of the viewport
+and hung a third of its body off the right edge on a narrow window.
+
+**Stunts.** The turtle answers what the reader just did, in its own axes — the
+head sits at +X and the flippers at ±Z, so X rolls it along its length, Z
+somersaults it nose over tail and Y pirouettes it flat:
+
+| Trigger | Stunt |
+| --- | --- |
+| Hurrying down the page | a full barrel roll, alternating with a dart at the camera |
+| Hurrying back up | a full somersault |
+| Crossing into a new quarter of the page | a flat pirouette |
+| Nobody has scrolled for 7 s | turns to the reader and waves a flipper |
+
+Two rules keep this from becoming noise. A crossing is *remembered* rather than
+acted on at once: a hurried scroll crosses a quarter too, and the damped speed
+needs a moment before it can say which this is, so the pirouette waits half a
+second and any stunt that fires meanwhile consumes it. And the greeting keeps a
+long cooldown of its own, separate from the 2.5 s between scroll stunts — sharing
+one cooldown meant a wave could leave a real scroll unanswered for thirteen
+seconds. If the reader moves while it is waving, the run is rewound so it lands
+on its own ramp-down within 0.3 s instead of the pose snapping away; that rewind
+must happen *once* per run, since re-cutting an already-cut run every frame
+leaves it stuck just short of finished, holding a tenth of the pose.
+
+Velocities divide by the true frame time while the damping uses a capped one.
+They looked interchangeable and are not: a capped clock makes a damped signal lag
+in proportion to how slow the device is, so on a 15 fps phone the turtle noticed
+a hurried scroll only after the reader had stopped.
 
 Its cubemap is baked at 64px against the hero's 128–256: baking one is a visible
 main-thread stall, and at this size it feeds reflections a few pixels wide. Night
