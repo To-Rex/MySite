@@ -8,8 +8,9 @@ import type { MascotKind } from '@/components/three/mascots'
  * The hero's easter egg, shared between the headline and the 3D scene.
  *
  * Double-clicking the name summons one of the language mascots where the words
- * were, the tyrannosaur hunts it down, and what is left of it grows back into
- * the name. The 3D scene owns the timeline — it is the only thing here with a
+ * were. The tyrannosaur runs it down and eats it, walks off, and a tree grows
+ * from what it left behind; the fruit ripens, falls, splits, and the name comes
+ * out of it as the tyrannosaur walks back. The 3D scene owns the timeline — it is the only thing here with a
  * frame clock — and publishes each act through this store; the headline just
  * watches which act is running and shows or hides itself.
  *
@@ -22,16 +23,28 @@ export type SpectacleAct =
   | 'idle'
   /** The words fall away and the animal materialises in their place. */
   | 'summon'
-  /** It wanders, oblivious, towards the only other thing on stage. */
-  | 'panic'
-  /** The lunge and the snap. */
-  | 'bite'
+  /** It spots the tyrannosaur; the tyrannosaur spots it. */
+  | 'stalk'
+  /** It bolts. The tyrannosaur runs it down. */
+  | 'chase'
+  /** The lunge, the snap, and the shake. */
+  | 'catch'
   /** A head-toss and a lump travelling down the throat. */
   | 'swallow'
   /** What comes out the other end, and lands. */
   | 'drop'
-  /** A shoot rises from it, and the name grows back. */
-  | 'sprout'
+  /** The tyrannosaur walks off the stage. */
+  | 'leave'
+  /** A tree rises from what it left. */
+  | 'grow'
+  /** One fruit swells and colours. */
+  | 'ripen'
+  /** It drops. */
+  | 'fall'
+  /** It splits, and the name comes out of it. */
+  | 'crack'
+  /** The tyrannosaur walks back to where it started. */
+  | 'return'
 
 export interface SpectacleState {
   act: SpectacleAct

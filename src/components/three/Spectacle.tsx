@@ -1,6 +1,15 @@
 import { useFrame, type RootState } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, type RefObject } from 'react'
-import { MathUtils, Vector3, type Bone, type Group, type SkinnedMesh } from 'three'
+import {
+  Color,
+  DoubleSide,
+  MathUtils,
+  MeshStandardMaterial,
+  Vector3,
+  type Bone,
+  type Group,
+  type SkinnedMesh,
+} from 'three'
 import type { Theme } from '@/theme/context'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { setSpectacleAct, setSpectacleMascot, useSpectacle, type SpectacleAct } from '@/lib/spectacle'
@@ -11,25 +20,32 @@ import { clearStage, stage } from './stage'
 import { MASCOT_KINDS, type MascotKind } from './mascots'
 
 /**
- * The hero's easter egg, staged in 3D.
+ * The hero's easter egg: a hunt, staged in 3D.
  *
  * Double-clicking the name drops the letters and leaves one of the language
- * mascots standing where they were. It wanders towards the only other thing on
- * stage, the tyrannosaur eats it, and what comes out the other end sprouts the
- * name back.
+ * mascots standing where they were. It sees the tyrannosaur, bolts, and is run
+ * down and killed. The tyrannosaur leaves something behind and walks off stage;
+ * a tree grows out of it, fruits, drops the fruit, and the name comes out of the
+ * split fruit as the tyrannosaur walks back to where it started.
  *
- * Nothing here mounts until a performance starts, so the six animals cost
- * nothing: no mesh is generated until one is actually summoned.
+ * Nothing here mounts until a performance starts, so the six animals cost a
+ * normal visit nothing: no mesh is generated until one is actually summoned.
  */
 
 /** Seconds each act runs for, in order. */
 const SCRIPT: readonly (readonly [Exclude<SpectacleAct, 'idle'>, number])[] = [
   ['summon', 1.0],
-  ['panic', 1.7],
-  ['bite', 0.75],
-  ['swallow', 1.3],
-  ['drop', 1.4],
-  ['sprout', 2.4],
+  ['stalk', 1.3],
+  ['chase', 3.2],
+  ['catch', 1.8],
+  ['swallow', 1.2],
+  ['drop', 1.3],
+  ['leave', 2.2],
+  ['grow', 2.6],
+  ['ripen', 1.7],
+  ['fall', 0.9],
+  ['crack', 1.8],
+  ['return', 2.6],
 ]
 
 /** Longest axis of the mascot, in arrangement units — the tyrannosaur is 3.4. */
@@ -37,6 +53,33 @@ const PREY_SIZE = 1.05
 
 /** Just past the teeth, in the head bone's own space. */
 const MOUTH = new Vector3(0.12, -0.015, 0)
+
+/**
+ * The tyrannosaur's resting heading, mirrored from `HeroScene`. Turning to face
+ * its prey means adding enough yaw to point its nose down −x; going the negative
+ * way round is the shorter turn from where it stands.
+ */
+const DINO_YAW = -0.42
+const FACE_PREY = -(Math.PI + DINO_YAW)
+
+/** How far off the right-hand side of the stage it walks before the tree grows. */
+const EXIT_X = 5.8
+
+const TREE_SCALE = 1.0
+/** Where the fruit hangs, in the tree's own units. */
+const FRUIT_BRANCH = new Vector3(0.3, 1.04, 0.07)
+const FRUIT_SIZE = 0.17
+
+const UNRIPE = new Color('#6f8f4a')
+const RIPE = new Color('#c0692b')
+
+/** Leaf clusters, in the tree's own units: x, y, z, radius. */
+const CANOPY: readonly (readonly [number, number, number, number])[] = [
+  [0, 1.26, 0, 0.36],
+  [0.29, 1.08, 0.09, 0.25],
+  [-0.27, 1.12, -0.07, 0.23],
+  [0.05, 1.47, -0.06, 0.21],
+]
 
 /** Skin tuning per mascot: pattern frequency, countershading, scales vs plates. */
 const SKIN: Record<MascotKind, { texScale: number; halfHeight: number; plateMix: number }> = {
@@ -49,6 +92,7 @@ const SKIN: Record<MascotKind, { texScale: number; halfHeight: number; plateMix:
 }
 
 const easeInOut = (u: number) => u * u * (3 - 2 * u)
+const easeOut = (u: number) => 1 - (1 - u) * (1 - u)
 const bell = (u: number) => Math.sin(MathUtils.clamp(u, 0, 1) * Math.PI)
 
 /**
@@ -61,25 +105,25 @@ function animateMascot(byName: Map<string, Bone>, t: number, fear: number): void
     const bone = byName.get(name)
     if (bone) bone.rotation.set(x, y, z)
   }
-  const quick = 1 + fear * 2.2
+  const quick = 1 + fear * 3
 
-  pose('head', 0, Math.sin(t * 2.1 * quick) * (0.2 + fear * 0.45), Math.sin(t * 1.4) * 0.1)
-  pose('tail', 0, Math.sin(t * 2.6 * quick) * (0.18 + fear * 0.3), 0)
-  pose('neck', 0, Math.sin(t * 1.7 * quick) * (0.12 + fear * 0.3), Math.sin(t * 1.1) * 0.08)
+  pose('head', 0, Math.sin(t * 2.1 * quick) * (0.2 + fear * 0.5), Math.sin(t * 1.4) * 0.1)
+  pose('tail', 0, Math.sin(t * 2.6 * quick) * (0.18 + fear * 0.4), 0)
+  pose('neck', 0, Math.sin(t * 1.7 * quick) * (0.12 + fear * 0.35), Math.sin(t * 1.1) * 0.08)
   // Snake: a wave travelling down the body.
   for (let i = 1; i <= 3; i++) {
-    pose(`body${i}`, 0, Math.sin(t * 2.4 * quick - i * 0.8) * (0.1 + fear * 0.22), 0)
+    pose(`body${i}`, 0, Math.sin(t * 2.4 * quick - i * 0.8) * (0.1 + fear * 0.3), 0)
   }
   // Bird: wingbeats, which get frantic.
   const beat = Math.sin(t * 6 * quick)
-  pose('wingL', beat * (0.25 + fear * 0.7), 0, 0)
-  pose('wingR', -beat * (0.25 + fear * 0.7), 0, 0)
+  pose('wingL', beat * (0.25 + fear * 0.8), 0, 0)
+  pose('wingR', -beat * (0.25 + fear * 0.8), 0, 0)
   // Crab: claws waving.
-  pose('clawL', 0, Math.sin(t * 3.4 * quick) * (0.2 + fear * 0.5), 0)
-  pose('clawR', 0, -Math.sin(t * 3.4 * quick + 0.7) * (0.2 + fear * 0.5), 0)
+  pose('clawL', 0, Math.sin(t * 3.4 * quick) * (0.2 + fear * 0.6), 0)
+  pose('clawR', 0, -Math.sin(t * 3.4 * quick + 0.7) * (0.2 + fear * 0.6), 0)
   // Elephant: the trunk curls and uncurls.
-  pose('trunk1', 0, 0, Math.sin(t * 1.6) * 0.18 - fear * 0.25)
-  pose('trunk2', 0, 0, Math.sin(t * 1.9 + 0.6) * 0.22 - fear * 0.3)
+  pose('trunk1', 0, 0, Math.sin(t * 1.6) * 0.18 - fear * 0.3)
+  pose('trunk2', 0, 0, Math.sin(t * 1.9 + 0.6) * 0.22 - fear * 0.35)
 }
 
 /** The headline's centre, cast from the page onto the arrangement's plane. */
@@ -99,7 +143,7 @@ function headlinePoint(frame: RootState, out: Vector3): Vector3 {
   return out.multiplyScalar(toward).add(camera.position)
 }
 
-/** Roughly where the tyrannosaur's feet are, so the dropping lands on its level. */
+/** Roughly where the tyrannosaur's feet are, so things land on its level. */
 function groundLevel(group: Group, tmp: Vector3): number {
   if (!stage.foot) return -1.2
   tmp.setFromMatrixPosition(stage.foot.matrixWorld)
@@ -121,17 +165,29 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
   const group = useRef<Group>(null)
   const prey = useRef<Group>(null)
   const dung = useRef<Group>(null)
-  const shoot = useRef<Group>(null)
+  const tree = useRef<Group>(null)
+  const canopy = useRef<Group>(null)
+  const fruit = useRef<Group>(null)
+  const fruitL = useRef<Group>(null)
+  const fruitR = useRef<Group>(null)
 
   const clock = useRef(0)
-  const spawn = useRef(new Vector3())
   const placed = useRef(false)
-  const ground = useRef(0)
-  const from = useRef(0)
   const dropped = useRef(false)
+  const spawn = useRef(new Vector3())
+  const catchAt = useRef(new Vector3())
+  const treeAt = useRef(new Vector3())
+  const ground = useRef(0)
+  const dropFrom = useRef(0)
+  const fruitFrom = useRef(0)
 
-  // Scratch vectors, so a frame allocates nothing.
+  // Scratch vectors and a shared fruit skin, so a frame allocates nothing.
   const tmp = useMemo(() => ({ a: new Vector3(), b: new Vector3(), mouth: new Vector3() }), [])
+  const skin = useMemo(
+    () => new MeshStandardMaterial({ color: UNRIPE.clone(), roughness: 0.42, metalness: 0.04, side: DoubleSide }),
+    [],
+  )
+  useEffect(() => () => skin.dispose(), [skin])
 
   // A performance cut short — the theme flipping, reduced motion switching on —
   // would otherwise leave the tyrannosaur crouched over prey that no longer exists.
@@ -143,9 +199,10 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
 
     // The letters are already falling; the animal only starts its entrance once
     // its mesh arrives from the worker — a few hundred milliseconds of
-    // arithmetic away — and once there is a tyrannosaur to aim it at.
+    // arithmetic away — and once there is a tyrannosaur to hunt it.
     if (!rig || !stage.head) return
-    clock.current += Math.min(dt, 0.25)
+    const step = Math.min(dt, 0.25)
+    clock.current += step
     const t = clock.current
 
     // Where the name was, worked out once. The headline is DOM, so the only way
@@ -155,6 +212,8 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
       placed.current = true
       spawn.current.copy(headlinePoint(frame, tmp.a))
       g.worldToLocal(spawn.current)
+      // It runs away from the tyrannosaur, which stands to the right of it.
+      catchAt.current.set(spawn.current.x - 1.15, spawn.current.y - 0.3, spawn.current.z + 0.25)
     }
 
     // --- which act, and how far into it --------------------------------------
@@ -178,98 +237,219 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
     tmp.mouth.copy(MOUTH).applyMatrix4(stage.head.matrixWorld)
     g.worldToLocal(tmp.mouth)
 
-    // --- the animal ----------------------------------------------------------
+    const after = (name: Exclude<SpectacleAct, 'idle'>) =>
+      SCRIPT.findIndex(([n]) => n === act) > SCRIPT.findIndex(([n]) => n === name)
+
+    /* --- the animal --------------------------------------------------------- */
     const p = prey.current
     if (p) {
-      const fear = act === 'panic' ? easeInOut(u) : act === 'bite' ? 1 : 0
+      const fear = act === 'stalk' ? easeInOut(u) : act === 'chase' || act === 'catch' ? 1 : 0
       animateMascot(rig.byName, t, fear)
 
       if (act === 'summon') {
-        // Condenses out of the letters rather than being dropped in: it turns
-        // into place as it grows, with a small overshoot at the end.
+        // Condenses out of the letters rather than being dropped in.
         const s = easeInOut(u)
         p.position.copy(spawn.current)
         p.position.y += (1 - s) * 0.35
         p.scale.setScalar(PREY_SIZE * s * (1 + bell(u) * 0.18))
         p.rotation.set(0, (1 - s) * Math.PI * 1.5 - 0.5, 0)
-      } else if (act === 'panic') {
-        // It wanders towards the only other thing on stage, with a nervous hop.
-        const bait = tmp.a.copy(tmp.mouth)
-        bait.x += 0.55
-        bait.y -= 0.12
-        const s = easeInOut(u)
-        p.position.lerpVectors(spawn.current, bait, s)
-        p.position.y += Math.abs(Math.sin(t * 6)) * 0.07 * (1 - s * 0.4)
+      } else if (act === 'stalk') {
+        // It has seen what is behind it, and starts backing away.
+        p.position.copy(spawn.current)
+        p.position.x -= easeInOut(u) * 0.22
+        p.position.y += Math.sin(t * 9) * 0.015 * u
         p.scale.setScalar(PREY_SIZE)
-        p.rotation.set(0, -0.5 + Math.sin(t * 3.1) * 0.35, Math.sin(t * 5) * 0.06)
-      } else if (act === 'bite') {
-        // Drawn in, then gone. The jaws land at 60%, which is where the animal
-        // has to disappear — after that the head is only tossing it back.
-        const s = easeInOut(Math.min(1, u / 0.6))
-        p.position.lerp(tmp.mouth, s * 0.35 + 0.05)
-        const shrink = Math.max(0, u < 0.6 ? 1 : 1 - (u - 0.6) / 0.4)
-        p.scale.setScalar(PREY_SIZE * shrink * (1 - s * 0.15))
-        p.rotation.set(0, -0.5, Math.sin(t * 24) * 0.25 * shrink)
+        p.rotation.set(0, MathUtils.lerp(-0.5, Math.PI * 0.86, easeInOut(u)), 0)
+      } else if (act === 'chase') {
+        // Bolting: a flat-out run with two panicked jinks and bounding strides.
+        const s = easeOut(u)
+        p.position.lerpVectors(spawn.current, catchAt.current, s)
+        p.position.y += Math.abs(Math.sin(u * Math.PI * 6)) * 0.2 * (1 - u * 0.5)
+        const jink = Math.sin(u * Math.PI * 3.2) * (1 - u * 0.55)
+        p.position.z += jink * 0.4
+        p.scale.setScalar(PREY_SIZE)
+        p.rotation.set(Math.sin(t * 13) * 0.08, Math.PI * 0.94 + jink * 0.45, Math.sin(t * 11) * 0.1)
+      } else if (act === 'catch') {
+        // Snatched, then shaken. Riding the mouth exactly is what makes the
+        // shake read as the tyrannosaur doing it to the animal.
+        const grab = easeInOut(Math.min(1, u / 0.32))
+        tmp.a.copy(catchAt.current).lerp(tmp.mouth, grab)
+        p.position.copy(tmp.a)
+        const shrink = u < 0.72 ? 1 : Math.max(0, 1 - (u - 0.72) / 0.28)
+        p.scale.setScalar(PREY_SIZE * shrink)
+        p.rotation.set(Math.sin(t * 34) * 0.5 * grab, Math.PI * 0.94, Math.sin(t * 29) * 0.4 * grab)
       } else {
         p.scale.setScalar(0)
       }
     }
 
-    // --- what the tyrannosaur is asked to do ---------------------------------
-    stage.crouch = act === 'panic' ? easeInOut(Math.min(1, u * 1.4)) : act === 'bite' ? 1 - u * 0.6 : 0
-    stage.lunge = act === 'bite' ? bell(u) : 0
-    // The jaws shut halfway through the lunge and stay shut into the swallow.
-    stage.snap =
-      act === 'bite'
-        ? MathUtils.smoothstep(u, 0.3, 0.55)
-        : act === 'swallow'
-          ? 1 - easeInOut(Math.min(1, u * 2))
-          : 0
-    stage.toss = act === 'swallow' ? bell(u) : 0
-    stage.gulp = act === 'swallow' ? MathUtils.clamp(u * 1.5, 0, 1) : 0
-    stage.shake = act === 'bite' ? Math.max(0, 1 - Math.abs(u - 0.55) * 8) : 0
+    /* --- what the tyrannosaur is asked to do -------------------------------- */
+    const chaseEnd = tmp.b.copy(catchAt.current)
+    chaseEnd.x += 1.55
+    chaseEnd.z -= 0.1
 
-    // --- the dropping --------------------------------------------------------
+    // The stage squares up as the animal arrives and is released at the very end.
+    stage.hold =
+      act === 'summon' ? easeInOut(u) : act === 'return' ? 1 - easeInOut(MathUtils.clamp((u - 0.4) / 0.6, 0, 1)) : 1
+
+    if (act === 'summon') {
+      stage.crouch = 0
+      stage.hurry = 0
+    } else if (act === 'stalk') {
+      // Turns onto it and drops its head. Nothing else moves yet.
+      stage.facing = MathUtils.damp(stage.facing, FACE_PREY, 3.2, step)
+      stage.crouch = easeInOut(u)
+      stage.hurry = u * 0.3
+    } else if (act === 'chase') {
+      stage.facing = MathUtils.damp(stage.facing, FACE_PREY, 4, step)
+      const s = easeInOut(u)
+      stage.travelX = chaseEnd.x * s
+      stage.travelY = chaseEnd.y * s * 0.35
+      stage.travelZ = chaseEnd.z * s
+      stage.crouch = 0.85
+      stage.lunge = 0.2 + u * 0.15
+      stage.hurry = 1
+      // Heavy footfalls: two spikes a second, and they land in the arrangement.
+      stage.shake = 0.35 * Math.pow(Math.abs(Math.sin(t * 6.2)), 6)
+    } else if (act === 'catch') {
+      stage.travelX = chaseEnd.x
+      stage.travelY = chaseEnd.y * 0.35
+      stage.travelZ = chaseEnd.z
+      stage.crouch = 0.85 * (1 - u * 0.5)
+      stage.lunge = bell(Math.min(1, u / 0.45))
+      stage.snap = MathUtils.smoothstep(u, 0.16, 0.3)
+      stage.thrash = u > 0.3 && u < 0.85 ? bell((u - 0.3) / 0.55) : 0
+      stage.hurry = 1 - u * 0.7
+      stage.shake = Math.max(0, 1 - Math.abs(u - 0.26) * 9) * 0.9 + stage.thrash * 0.25
+    } else if (act === 'swallow') {
+      stage.crouch = 0.4 * (1 - u)
+      stage.lunge = 0
+      stage.snap = 1 - easeInOut(Math.min(1, u * 2))
+      stage.thrash = 0
+      stage.toss = bell(u)
+      stage.gulp = MathUtils.clamp(u * 1.5, 0, 1)
+      stage.hurry = 0.3 * (1 - u)
+      stage.shake = 0
+    } else if (act === 'drop') {
+      stage.toss = 0
+      stage.gulp = 0
+      stage.crouch = 0
+      // Starts turning back to its usual heading before it walks off.
+      stage.facing = MathUtils.damp(stage.facing, 0, 2.2, step)
+      stage.hurry = u * 0.4
+    } else if (act === 'leave') {
+      stage.facing = MathUtils.damp(stage.facing, 0, 3, step)
+      stage.travelX = MathUtils.lerp(chaseEnd.x, EXIT_X, easeInOut(u))
+      stage.travelY = MathUtils.lerp(chaseEnd.y * 0.35, 0, easeInOut(u))
+      stage.travelZ = MathUtils.lerp(chaseEnd.z, 0, easeInOut(u))
+      stage.hurry = 0.55
+    } else if (act === 'return') {
+      stage.facing = 0
+      stage.travelX = MathUtils.lerp(EXIT_X, 0, easeInOut(u))
+      stage.travelY = 0
+      stage.travelZ = 0
+      stage.hurry = 0.45 * (1 - easeInOut(u))
+    } else {
+      // Off stage while the tree does its work.
+      stage.travelX = EXIT_X
+      stage.travelY = 0
+      stage.travelZ = 0
+      stage.facing = 0
+      stage.hurry = 0
+      stage.shake = 0
+    }
+
+    /* --- the dropping ------------------------------------------------------- */
     const d = dung.current
     if (d) {
       if (act === 'drop') {
         // Placed once, on a flag rather than inside a slice of the act: a window
         // a few hundredths wide is missed outright on a device drawing 3 fps, and
         // the dropping then falls from the origin — which is the middle of the
-        // tyrannosaur, so the shoot grew out of its back.
+        // tyrannosaur, so the tree grew out of its back.
         if (stage.vent && !dropped.current) {
           dropped.current = true
-          tmp.b.set(-0.03, -0.05, 0).applyMatrix4(stage.vent.matrixWorld)
-          g.worldToLocal(tmp.b)
-          d.position.copy(tmp.b)
-          from.current = tmp.b.y
-          ground.current = groundLevel(g, tmp.a)
+          tmp.a.set(-0.03, -0.05, 0).applyMatrix4(stage.vent.matrixWorld)
+          g.worldToLocal(tmp.a)
+          d.position.copy(tmp.a)
+          dropFrom.current = tmp.a.y
+          ground.current = groundLevel(g, tmp.b)
+          treeAt.current.set(tmp.a.x, ground.current, tmp.a.z)
         }
-        // Falls under something like gravity, then squashes on impact.
         const fall = Math.min(1, u / 0.55)
-        d.position.y = MathUtils.lerp(from.current, ground.current, fall * fall)
+        d.position.y = MathUtils.lerp(dropFrom.current, ground.current, fall * fall)
         const squash = u > 0.55 ? bell((u - 0.55) / 0.45) : 0
         d.scale.set(0.22 * (1 + squash * 0.35), 0.22 * (1 - squash * 0.4), 0.22 * (1 + squash * 0.35))
         d.rotation.y = t * 1.2
-      } else if (act === 'sprout') {
-        // Sinks away as the shoot takes over.
-        d.scale.setScalar(0.22 * (1 - easeInOut(Math.min(1, u / 0.5))))
+      } else if (act === 'leave') {
+        d.scale.setScalar(0.22)
+      } else if (act === 'grow') {
+        // Taken up by the tree.
+        d.scale.setScalar(0.22 * (1 - easeInOut(Math.min(1, u / 0.6))))
+      } else if (!after('drop')) {
+        d.scale.setScalar(0)
       } else {
         d.scale.setScalar(0)
       }
     }
 
-    // --- the shoot -----------------------------------------------------------
-    const sh = shoot.current
-    if (sh) {
-      if (act === 'sprout') {
-        const grow = easeInOut(Math.min(1, u / 0.7))
-        sh.position.copy(d ? d.position : spawn.current)
-        const fade = u > 0.8 ? 1 - (u - 0.8) / 0.2 : 1
-        sh.scale.set(grow * fade, grow * (0.6 + grow * 0.4) * fade, grow * fade)
-        sh.rotation.y = -0.4 + Math.sin(t * 1.4) * 0.12
+    /* --- the tree ----------------------------------------------------------- */
+    const tr = tree.current
+    const cp = canopy.current
+    if (tr && cp) {
+      if (act === 'grow' || act === 'ripen' || act === 'fall' || act === 'crack' || act === 'return') {
+        tr.position.copy(treeAt.current)
+        const grow = act === 'grow' ? easeInOut(Math.min(1, u / 0.75)) : 1
+        // The trunk goes up first and the crown fills in behind it.
+        const leaves = act === 'grow' ? easeInOut(MathUtils.clamp((u - 0.35) / 0.55, 0, 1)) : 1
+        const wither = act === 'return' ? easeInOut(MathUtils.clamp((u - 0.25) / 0.6, 0, 1)) : 0
+        tr.scale.setScalar(TREE_SCALE * grow * (1 - wither))
+        cp.scale.setScalar(leaves * (1 + Math.sin(t * 1.3) * 0.02))
+        tr.rotation.y = 0.35 + Math.sin(t * 0.6) * 0.03
+        tr.rotation.z = Math.sin(t * 0.9) * 0.012
       } else {
-        sh.scale.setScalar(0)
+        tr.scale.setScalar(0)
+      }
+    }
+
+    /* --- the fruit ---------------------------------------------------------- */
+    const fr = fruit.current
+    if (fr) {
+      if (act === 'ripen' || act === 'fall' || act === 'crack') {
+        tmp.a.copy(FRUIT_BRANCH).multiplyScalar(TREE_SCALE).add(treeAt.current)
+        if (act === 'ripen') {
+          const swell = easeInOut(Math.min(1, u / 0.6))
+          fr.position.copy(tmp.a)
+          fr.position.y -= swell * 0.02
+          fr.scale.setScalar(FRUIT_SIZE * swell)
+          skin.color.lerpColors(UNRIPE, RIPE, easeInOut(MathUtils.clamp((u - 0.25) / 0.7, 0, 1)))
+          fruitFrom.current = fr.position.y
+          fr.rotation.set(0, t * 0.5, Math.sin(t * 2) * 0.05 * swell)
+        } else if (act === 'fall') {
+          fr.position.x = tmp.a.x
+          fr.position.z = tmp.a.z
+          fr.position.y = MathUtils.lerp(fruitFrom.current, ground.current + FRUIT_SIZE * 0.6, u * u)
+          fr.scale.setScalar(FRUIT_SIZE)
+          fr.rotation.set(u * 3.4, t * 0.5, 0)
+        } else {
+          // Splits along its seam, and the name comes out of it.
+          fr.position.y = ground.current + FRUIT_SIZE * 0.6
+          fr.rotation.set(0, 0.2, 0)
+          const open = easeInOut(Math.min(1, u / 0.45))
+          // The halves linger open: they are the thing the name comes out of.
+          const gone = MathUtils.clamp((u - 0.72) / 0.28, 0, 1)
+          fr.scale.setScalar(FRUIT_SIZE * (1 - easeInOut(gone)))
+          const l = fruitL.current
+          const r = fruitR.current
+          if (l && r) {
+            l.rotation.z = open * 1.5
+            r.rotation.z = -open * 1.5
+            l.position.set(-open * 0.35, open * 0.5, 0)
+            r.position.set(open * 0.35, open * 0.45, 0)
+          }
+        }
+      } else {
+        fr.scale.setScalar(0)
       }
     }
   })
@@ -278,7 +458,8 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
     <group ref={group}>
       {rig ? <PreyBody rig={rig} mascot={mascot} theme={theme} bump={bump} bodyRef={prey} /> : null}
       <Dung groupRef={dung} theme={theme} />
-      <Shoot groupRef={shoot} theme={theme} />
+      <Tree groupRef={tree} canopyRef={canopy} theme={theme} />
+      <Fruit groupRef={fruit} leftRef={fruitL} rightRef={fruitR} skin={skin} />
     </group>
   )
 }
@@ -318,7 +499,7 @@ function PreyBody({ rig, mascot, theme, bump, bodyRef }: PreyBodyProps) {
   )
 }
 
-/** Three stacked lumps. Small, dark, and on screen for a second and a half. */
+/** Three stacked lumps. Small, dark, and on screen for a couple of seconds. */
 function Dung({ groupRef, theme }: { groupRef: RefObject<Group | null>; theme: Theme }) {
   const colour = theme === 'dark' ? '#4a3c2c' : '#3b2f22'
   return (
@@ -339,22 +520,72 @@ function Dung({ groupRef, theme }: { groupRef: RefObject<Group | null>; theme: T
   )
 }
 
-/** A stem and two leaves — the name grows out of this. */
-function Shoot({ groupRef, theme }: { groupRef: RefObject<Group | null>; theme: Theme }) {
-  const stem = theme === 'dark' ? '#6f8f4a' : '#587439'
-  const leaf = theme === 'dark' ? '#87ab58' : '#6b8c43'
+/** Trunk, two branches and a crown of leaf clusters that fills in behind it. */
+function Tree({
+  groupRef,
+  canopyRef,
+  theme,
+}: {
+  groupRef: RefObject<Group | null>
+  canopyRef: RefObject<Group | null>
+  theme: Theme
+}) {
+  const bark = theme === 'dark' ? '#5d4834' : '#4a3928'
+  const leaf = theme === 'dark' ? '#637a45' : '#4f6435'
   return (
     <group ref={groupRef} scale={0.0001}>
-      <mesh position={[0, 0.34, 0]}>
-        <cylinderGeometry args={[0.022, 0.05, 0.68, 7]} />
-        <meshStandardMaterial color={stem} roughness={0.8} metalness={0} />
+      <mesh position={[0, 0.5, 0]}>
+        <cylinderGeometry args={[0.045, 0.1, 1, 8]} />
+        <meshStandardMaterial color={bark} roughness={0.92} metalness={0} />
       </mesh>
-      {([1, -1] as const).map((side) => (
-        <mesh key={side} position={[side * 0.14, 0.52, 0]} rotation={[0, 0, side * -0.7]} scale={[0.22, 0.06, 0.13]}>
-          <sphereGeometry args={[1, 10, 8]} />
-          <meshStandardMaterial color={leaf} roughness={0.75} metalness={0} />
+      <mesh position={[0.18, 0.92, 0.04]} rotation={[0, 0, -0.75]}>
+        <cylinderGeometry args={[0.024, 0.045, 0.44, 6]} />
+        <meshStandardMaterial color={bark} roughness={0.92} metalness={0} />
+      </mesh>
+      <mesh position={[-0.16, 0.86, -0.05]} rotation={[0, 0, 0.8]}>
+        <cylinderGeometry args={[0.022, 0.04, 0.36, 6]} />
+        <meshStandardMaterial color={bark} roughness={0.92} metalness={0} />
+      </mesh>
+      <group ref={canopyRef} scale={0.0001}>
+        {CANOPY.map(([x, y, z, r], i) => (
+          <mesh key={i} position={[x, y, z]} scale={[r, r * 0.82, r]}>
+            <icosahedronGeometry args={[1, 1]} />
+            <meshStandardMaterial color={leaf} roughness={0.86} metalness={0} flatShading />
+          </mesh>
+        ))}
+      </group>
+    </group>
+  )
+}
+
+/**
+ * Two hemispheres sharing one skin, so ripening is a single colour to animate.
+ * Double-sided, which is what makes the halves read as a hollow shell once they
+ * swing apart rather than as two flat crescents.
+ */
+function Fruit({
+  groupRef,
+  leftRef,
+  rightRef,
+  skin,
+}: {
+  groupRef: RefObject<Group | null>
+  leftRef: RefObject<Group | null>
+  rightRef: RefObject<Group | null>
+  skin: MeshStandardMaterial
+}) {
+  return (
+    <group ref={groupRef} scale={0.0001}>
+      <group ref={leftRef}>
+        <mesh material={skin}>
+          <sphereGeometry args={[1, 16, 12, 0, Math.PI]} />
         </mesh>
-      ))}
+      </group>
+      <group ref={rightRef}>
+        <mesh material={skin}>
+          <sphereGeometry args={[1, 16, 12, Math.PI, Math.PI]} />
+        </mesh>
+      </group>
     </group>
   )
 }

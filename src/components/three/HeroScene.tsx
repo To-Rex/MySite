@@ -168,6 +168,9 @@ function poseLeg(thigh: Bone, shin: Bone, foot: Bone, phase: number, gait: numbe
 function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, 'detail'> & { rig: Rig }) {
   const mesh = useRef<SkinnedMesh>(null)
   const body = useRef<Group>(null)
+  // The stride is counted, not derived from the clock: a hunt shortens it, and
+  // `t / STRIDE` with a changing STRIDE would jump the legs mid-step.
+  const pace = useRef(0)
   const { geometry, root, skeleton, byName } = rig
   useBind(mesh, skeleton)
 
@@ -182,7 +185,7 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     [byName],
   )
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     // Published every frame rather than once, so the easter egg always aims at
     // live bones even if this rig is rebuilt at a different quality tier.
     stage.head = byName.get('head')!
@@ -190,29 +193,39 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     stage.foot = byName.get('footL')!
     if (reducedMotion) return
     const t = heroTime.t
+    const step = Math.min(dt, 0.25)
 
     // ---- Walk cycle ---------------------------------------------------------
     // Legs are half a stride apart; everything else in the body is driven from
     // the same clock so the bob, sway and tail counter-swing stay in step.
-    const cycle = t / STRIDE
-    const step = cycle * Math.PI * 2
+    // A hunt shortens the stride and lengthens the reach; at rest this is the
+    // same amble it always was.
+    const hurried = stage.hurry
+    pace.current += step / (STRIDE / (1 + hurried * 1.8))
+    const cycle = pace.current
+    const beat = cycle * Math.PI * 2
     // Ease the gait in so the creature starts from its rest pose rather than
     // snapping into mid-stride when the geometry lands.
-    const gait = Math.min(1, t / 1.6)
+    const gait = Math.min(1, t / 1.6) * (1 + hurried * 0.5)
     legs.forEach((leg, i) => poseLeg(leg.thigh, leg.shin, leg.foot, cycle + i * 0.5, gait))
 
     // Hips rise twice per stride and roll toward whichever leg is carrying.
-    const bob = Math.sin(step * 2 - 0.6) * 0.058 * gait
-    const sway = Math.sin(step) * 0.055 * gait
-    const roll = Math.sin(step) * 0.045 * gait
+    const bob = Math.sin(beat * 2 - 0.6) * 0.058 * gait
+    const sway = Math.sin(beat) * 0.055 * gait
+    const roll = Math.sin(beat) * 0.045 * gait
     // The easter egg's attack, blended over the idle: the spectacle only says
     // how hard to crouch, lunge, snap and swallow, so the walk keeps ownership
     // of the pose and the hunt eases in and out of it.
-    const { crouch, lunge, snap, toss, gulp } = stage
+    const { crouch, lunge, snap, toss, thrash, gulp } = stage
     const b = body.current
     if (b) {
-      b.position.set(lunge * 0.28, bob - crouch * 0.06, sway)
-      b.rotation.set(roll, DINO_YAW, Math.sin(step * 2) * 0.012 * gait)
+      // Travel and heading come from the hunt. The lunge is a step *forward*, so
+      // it has to follow wherever the creature is now pointing rather than +x.
+      const yaw = DINO_YAW + stage.facing
+      const reachX = Math.cos(yaw) * lunge * 0.28
+      const reachZ = -Math.sin(yaw) * lunge * 0.28
+      b.position.set(stage.travelX + reachX, stage.travelY + bob - crouch * 0.06, stage.travelZ + sway + reachZ)
+      b.rotation.set(roll, yaw, Math.sin(beat * 2) * 0.012 * gait)
     }
 
     // ---- Occasional accents -------------------------------------------------
@@ -236,7 +249,7 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     // ---- Tail ---------------------------------------------------------------
     // Idle travelling wave, plus the counter-swing that balances each step, plus
     // the occasional swish. Later joints carry more of everything.
-    const counter = Math.sin(step + Math.PI) * 0.075 * gait
+    const counter = Math.sin(beat + Math.PI) * 0.075 * gait
     tail.forEach((bone, i) => {
       const reach = 0.4 + i * 0.16
       bone.rotation.y =
@@ -259,17 +272,19 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     // ---- Head and neck ------------------------------------------------------
     // Slow horizon scan, a nod locked to the stride, and the accent turn.
     const scan = Math.sin(t * 0.21) + Math.sin(t * 0.37 + 1.7) * 0.4
-    const nod = Math.sin(step * 2 + 0.9) * 0.035 * gait
+    const nod = Math.sin(beat * 2 + 0.9) * 0.035 * gait
     // A bone pointing +x rotates +x toward +y about +z, so reaching *down* at
     // the prey is negative z and the head-toss that swallows it is positive.
     const reach = crouch * 0.18 + lunge * 0.42
     const neck1 = byName.get('neck1')!
     neck1.rotation.y = scan * 0.1 - counter * 0.5 + headAccent * 0.16
     neck1.rotation.z = Math.sin(t * 0.45) * 0.03 + nod - reach + toss * 0.3
-    byName.get('neck2')!.rotation.y = scan * 0.14 - counter * 0.35 + headAccent * 0.22
+    byName.get('neck2')!.rotation.y = scan * 0.14 - counter * 0.35 + headAccent * 0.22 + Math.sin(t * 38 + 0.6) * 0.24 * thrash
     byName.get('neck2')!.rotation.z = -lunge * 0.3 + toss * 0.18
     const head = byName.get('head')!
-    head.rotation.y = scan * 0.2 + headAccent * 0.34
+    // The kill: a fast, wide shake with the animal in its jaws.
+    head.rotation.x = Math.sin(t * 31) * 0.42 * thrash
+    head.rotation.y = scan * 0.2 + headAccent * 0.34 + Math.sin(t * 38) * 0.5 * thrash
     head.rotation.z =
       Math.sin(t * 0.55 + 0.6) * 0.05 -
       0.02 +
@@ -283,8 +298,8 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     // ---- Arms ---------------------------------------------------------------
     // Small counter-swing with the stride, plus the odd twitch.
     const twitch = Math.sin(t * 1.7) * 0.5 + Math.sin(t * 0.9) * 0.5
-    byName.get('armL')!.rotation.z = twitch * 0.06 - Math.sin(step) * 0.07 * gait
-    byName.get('armR')!.rotation.z = twitch * 0.06 + 0.02 + Math.sin(step) * 0.07 * gait
+    byName.get('armL')!.rotation.z = twitch * 0.06 - Math.sin(beat) * 0.07 * gait
+    byName.get('armR')!.rotation.z = twitch * 0.06 + 0.02 + Math.sin(beat) * 0.07 * gait
   })
 
   return (
@@ -373,6 +388,9 @@ function Orbit({ index, theme, detail, bump, reducedMotion }: CreatureProps & { 
 function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<HeroSceneProps, 'active'>) {
   const group = useRef<Group>(null)
   const entrance = useRef(reducedMotion ? 1 : 0)
+  // The turntable drift is counted rather than read off the clock, so the easter
+  // egg can pause it and hand it back without the sculpture swinging to catch up.
+  const spin = useRef(0)
   const detail = DETAIL_BY_TIER[tier]
   // Triplanar bump costs three texture fetches plus derivatives per fragment;
   // weak devices get the plain surface instead. The magnitude is small because
@@ -388,12 +406,15 @@ function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<H
 
     entrance.current = MathUtils.damp(entrance.current, introDone ? 1 : 0, 2.4, delta)
 
-    const mx = pointer.inside && !pointer.isTouch ? pointer.nx : 0
-    const my = pointer.inside && !pointer.isTouch ? pointer.ny : 0
+    // While the episode runs the stage squares up to the camera and stops
+    // listening to the pointer, then hands both back when it ends.
+    const hold = stage.hold
+    const mx = (pointer.inside && !pointer.isTouch ? pointer.nx : 0) * (1 - hold)
+    const my = (pointer.inside && !pointer.isTouch ? pointer.ny : 0) * (1 - hold)
 
-    const idle = reducedMotion ? 0 : t * 0.055
-    g.rotation.y = MathUtils.damp(g.rotation.y, mx * 0.45 + s * 1.2 + idle, 3, delta)
-    g.rotation.x = MathUtils.damp(g.rotation.x, -my * 0.22 + s * 0.4, 3, delta)
+    if (!reducedMotion) spin.current += delta * 0.055 * (1 - hold)
+    g.rotation.y = MathUtils.damp(g.rotation.y, MathUtils.lerp(mx * 0.45 + s * 1.2 + spin.current, 0, hold), 3, delta)
+    g.rotation.x = MathUtils.damp(g.rotation.x, MathUtils.lerp(-my * 0.22 + s * 0.4, 0, hold), 3, delta)
 
     // Shrink to fit narrow viewports: a cropped fragment of a dinosaur reads as nothing.
     const fit = Math.min(1, (state.viewport.width * 0.92) / ARRANGEMENT_SPAN)

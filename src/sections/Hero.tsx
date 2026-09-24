@@ -39,10 +39,11 @@ export function Hero() {
    * forwards, slower, to grow them back out of what the creature leaves behind.
    */
   const eggReady = webgl && !reduced
-  const nameShown = introDone && (act === 'idle' || act === 'sprout')
+  // Gone from the moment it is summoned until the fruit splits open.
+  const nameShown = introDone && (act === 'idle' || act === 'crack' || act === 'return')
   const nameMotion = (introDelay: number) =>
-    act === 'sprout'
-      ? { duration: 1.5, stagger: 0.06, delay: introDelay > 0.5 ? 0.55 : 0.12 }
+    act === 'crack' || act === 'return'
+      ? { duration: 1.5, stagger: 0.06, delay: introDelay > 0.5 ? 0.5 : 0.1 }
       : act === 'summon'
         ? { duration: 0.5, stagger: 0.026, delay: 0 }
         : { duration: 1.1, stagger: 0.032, delay: introDelay }

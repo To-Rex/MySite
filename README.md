@@ -245,13 +245,28 @@ is exactly the motion that preference asks us to drop.
 
 ### The hero's easter egg
 
-Double-click the name and it is handed to the tyrannosaur. The letters fall, one
-of six animals condenses where the words were — the snake, elephant, gopher,
-crab, swift and camel behind the languages in this stack — it wanders into
-range, and it is eaten. What comes out the other end lands, sprouts, and the name
-grows back out of it. Eight and a half seconds, then the page is exactly as it
-was. `prefers-reduced-motion` disables the whole thing, and so does a browser
-without WebGL.
+Double-click the name and it is handed to the tyrannosaur. Twenty seconds later
+the page is exactly as it was:
+
+| Act | What happens |
+| --- | --- |
+| `summon` | The letters fall and one of six animals condenses where the words were |
+| `stalk` | It sees what is behind it; the tyrannosaur turns onto it and drops its head |
+| `chase` | It bolts, jinking and bounding; the tyrannosaur runs it down, and the stage shakes under the strides |
+| `catch` | The lunge, the snap, and a shake with the animal in its jaws |
+| `swallow` | A head-toss, and a lump travelling down the throat |
+| `drop` | What comes out the other end, landing at its feet |
+| `leave` | It turns back to its usual heading and walks off the stage |
+| `grow` | A tree rises out of what it left |
+| `ripen` | One fruit swells and colours |
+| `fall` | The fruit drops |
+| `crack` | It splits, and the name comes out of it |
+| `return` | The tyrannosaur walks back to exactly where it started |
+
+The animals are the snake, elephant, gopher, crab, swift and camel behind the
+languages in this stack, and never the same one twice in a row.
+`prefers-reduced-motion` disables the whole thing, and so does a browser without
+WebGL.
 
 **The animals** are authored in `mascots.ts` with the same primitives as the
 brand creatures, and deliberately at the same *raw* scale — roughly four units
@@ -261,29 +276,36 @@ and beaks thinner than the blend radius dissolve into the body. Every radius in
 that file stays above ~0.1 for the same reason. Nothing is meshed until an animal
 is actually summoned, so six extra creatures cost a normal visit nothing.
 
-**The two halves of the performance live in different files** — the tyrannosaur
-is animated in `HeroScene`, the act is staged in `Spectacle` — and they talk
-through `stage.ts` as *numbers*, not poses: how much to crouch, lunge, snap and
-swallow. The idle animation stays the single owner of the skeleton, which is what
-lets an attack blend in and out of a walk cycle instead of fighting it for the
-same bones. The lump travelling down the throat is the breathing ribcage's trick
-again — a narrow bulge scaling each neck bone in turn, its centre sliding from
-jaw to chest.
+**The two halves of the episode live in different files** — the tyrannosaur is
+animated in `HeroScene`, the hunt is staged in `Spectacle` — and they talk
+through `stage.ts` as *numbers*, not poses: how much to crouch, run, lunge,
+thrash and swallow, and where to walk. The idle animation stays the single owner
+of the skeleton, which is what lets a hunt blend in and out of a walk cycle
+instead of fighting it for the same bones. The lump travelling down the throat is
+the breathing ribcage's trick again — a narrow bulge scaling each neck bone in
+turn, its centre sliding from jaw to chest.
+
+**The stride is counted, not derived from the clock.** A hunt shortens it and
+lengthens the reach, and `t / STRIDE` with a changing `STRIDE` jumps the legs
+mid-step. The lunge is a step *forward*, so it follows the creature's current
+heading rather than +x — it turns right around to chase, and +x is behind it then.
 
 **Standing the animal exactly where the words were** means crossing from DOM to
 3D: the headline's `getBoundingClientRect` becomes normalised device coordinates
 against the canvas, is unprojected, and is pushed along that ray until it crosses
-the plane the arrangement sits on.
+the plane the arrangement sits on. Everything downstream is anchored to that
+point, so the tree grows and the fruit splits where the name belongs.
 
 **The letters reuse the reveal they already have.** `SplitText` runs backwards to
-drop them, then forwards — slower, and with a longer stagger — to grow them back,
-so the easter egg adds no second text animation to keep in sync with the first.
+drop them, then forwards — slower, and with a longer stagger — to grow them out
+of the split fruit, so the easter egg adds no second text animation to keep in
+sync with the first.
 
 One rule when editing the script: place things on a flag, not inside a slice of
 an act. The dropping was first positioned during the opening 6% of its act, a
 window 84 ms wide — missed outright on a device drawing 3 fps, and it then fell
-from the origin, which is the middle of the tyrannosaur. The shoot grew out of
-its back.
+from the origin, which is the middle of the tyrannosaur. The tree grew out of its
+back.
 
 ### Parked canvases and the clock
 
