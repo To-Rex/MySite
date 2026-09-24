@@ -243,6 +243,48 @@ near-black page reads as a silhouette under the hero's key light.
 `prefers-reduced-motion` removes it entirely — a creature that chases the reader
 is exactly the motion that preference asks us to drop.
 
+### The hero's easter egg
+
+Double-click the name and it is handed to the tyrannosaur. The letters fall, one
+of six animals condenses where the words were — the snake, elephant, gopher,
+crab, swift and camel behind the languages in this stack — it wanders into
+range, and it is eaten. What comes out the other end lands, sprouts, and the name
+grows back out of it. Eight and a half seconds, then the page is exactly as it
+was. `prefers-reduced-motion` disables the whole thing, and so does a browser
+without WebGL.
+
+**The animals** are authored in `mascots.ts` with the same primitives as the
+brand creatures, and deliberately at the same *raw* scale — roughly four units
+nose to tail. Field spacing and fillet radius in `creatures.ts` are absolute
+numbers, so an animal drawn at half that size gets half the detail budget: legs
+and beaks thinner than the blend radius dissolve into the body. Every radius in
+that file stays above ~0.1 for the same reason. Nothing is meshed until an animal
+is actually summoned, so six extra creatures cost a normal visit nothing.
+
+**The two halves of the performance live in different files** — the tyrannosaur
+is animated in `HeroScene`, the act is staged in `Spectacle` — and they talk
+through `stage.ts` as *numbers*, not poses: how much to crouch, lunge, snap and
+swallow. The idle animation stays the single owner of the skeleton, which is what
+lets an attack blend in and out of a walk cycle instead of fighting it for the
+same bones. The lump travelling down the throat is the breathing ribcage's trick
+again — a narrow bulge scaling each neck bone in turn, its centre sliding from
+jaw to chest.
+
+**Standing the animal exactly where the words were** means crossing from DOM to
+3D: the headline's `getBoundingClientRect` becomes normalised device coordinates
+against the canvas, is unprojected, and is pushed along that ray until it crosses
+the plane the arrangement sits on.
+
+**The letters reuse the reveal they already have.** `SplitText` runs backwards to
+drop them, then forwards — slower, and with a longer stagger — to grow them back,
+so the easter egg adds no second text animation to keep in sync with the first.
+
+One rule when editing the script: place things on a flag, not inside a slice of
+an act. The dropping was first positioned during the opening 6% of its act, a
+window 84 ms wide — missed outright on a device drawing 3 fps, and it then fell
+from the origin, which is the middle of the tyrannosaur. The shoot grew out of
+its back.
+
 ### Parked canvases and the clock
 
 Every 3D scene here stops rendering once it scrolls off screen — that is what

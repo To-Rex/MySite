@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, type RefObject } from 'react'
 import { Bone, Matrix4, Skeleton, type SkinnedMesh } from 'three'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
-import type { BoneSpec, CreatureDetail, CreatureKind } from './creatures'
+import type { BoneSpec, CreatureDetail } from './creatures'
+import type { AnyCreatureKind } from './mascots'
 import { useCreatureGeometry } from './useCreature'
 
 /**
@@ -53,7 +54,7 @@ export function buildSkeleton(specs: BoneSpec[]) {
  * instance its own skeleton, so several creatures animate independently off one
  * cached mesh. Returns null until the geometry arrives.
  */
-export function useCreature(kind: CreatureKind, detail: CreatureDetail) {
+export function useCreature(kind: AnyCreatureKind, detail: CreatureDetail) {
   const resolved = useCreatureGeometry(kind, detail)
   const rigged = useMemo(() => (resolved ? buildSkeleton(resolved.bones) : null), [resolved])
   useEffect(() => () => rigged?.skeleton.dispose(), [rigged])

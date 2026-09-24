@@ -12,6 +12,7 @@ import { SplitText } from '@/components/ui/SplitText'
 import { Button } from '@/components/ui/Button'
 import { ArrowDown } from '@/components/ui/Icons'
 import { EASE } from '@/lib/motion'
+import { startSpectacle, useSpectacle } from '@/lib/spectacle'
 
 const HeroScene = lazy(() => import('@/components/three/HeroScene'))
 
@@ -25,11 +26,26 @@ export function Hero() {
   const ref = useRef<HTMLElement>(null)
   const inView = useInViewport(ref, '160px')
 
+  const { act } = useSpectacle()
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start start', 'end start'] })
   const textY = useTransform(scrollYProgress, [0, 1], [0, 140])
   const textOpacity = useTransform(scrollYProgress, [0, 0.55], [1, 0])
   const sceneOpacity = useTransform(scrollYProgress, [0.25, 0.9], [1, 0])
   const webgl = supportsWebGL()
+
+  /**
+   * The easter egg: double-clicking the name hands it to the tyrannosaur. The
+   * letters use the reveal they already have — run backwards to drop them, then
+   * forwards, slower, to grow them back out of what the creature leaves behind.
+   */
+  const eggReady = webgl && !reduced
+  const nameShown = introDone && (act === 'idle' || act === 'sprout')
+  const nameMotion = (introDelay: number) =>
+    act === 'sprout'
+      ? { duration: 1.5, stagger: 0.06, delay: introDelay > 0.5 ? 0.55 : 0.12 }
+      : act === 'summon'
+        ? { duration: 0.5, stagger: 0.026, delay: 0 }
+        : { duration: 1.1, stagger: 0.032, delay: introDelay }
 
   const reveal = (delay: number) => ({
     initial: reduced ? false : { opacity: 0, y: 18 },
@@ -79,26 +95,28 @@ export function Hero() {
         </motion.div>
 
         <div className="mt-auto">
-          <h1 id="hero-title" className="display-tight text-[clamp(3.6rem,13.6vw,12.8rem)] uppercase">
+          {/* `select-none` because a double-click on text otherwise selects a
+              word, and the name is about to be eaten rather than copied. */}
+          <h1
+            id="hero-title"
+            className="display-tight text-[clamp(3.6rem,13.6vw,12.8rem)] uppercase select-none"
+            onDoubleClick={eggReady ? () => startSpectacle() : undefined}
+          >
             <SplitText
               className="block"
               text={t.hero.firstName}
               mode="chars"
               trigger="manual"
-              show={introDone}
-              delay={0.35}
-              stagger={0.032}
-              duration={1.1}
+              show={nameShown}
+              {...nameMotion(0.35)}
             />
             <SplitText
               className="block text-fg-2"
               text={t.hero.lastName}
               mode="chars"
               trigger="manual"
-              show={introDone}
-              delay={0.62}
-              stagger={0.032}
-              duration={1.1}
+              show={nameShown}
+              {...nameMotion(0.62)}
             />
           </h1>
 

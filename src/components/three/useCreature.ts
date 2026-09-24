@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BufferAttribute, BufferGeometry } from 'three'
-import { createCreature, type CreatureDetail, type CreatureKind, type CreaturePayload } from './creatures'
+import type { CreatureDetail, CreaturePayload } from './creatures'
+import { createAnyCreature, type AnyCreatureKind } from './mascots'
 import type { CreatureRequest, CreatureResponse } from './creatures.worker'
 
 /**
@@ -59,7 +60,7 @@ function getWorker(): Worker | null {
   return worker
 }
 
-function request(kind: CreatureKind, detail: CreatureDetail): Promise<CreatureGeometry> {
+function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<CreatureGeometry> {
   const key = `${kind}:${detail}`
   const cached = cache.get(key)
   if (cached) return Promise.resolve(cached)
@@ -69,7 +70,7 @@ function request(kind: CreatureKind, detail: CreatureDetail): Promise<CreatureGe
   const promise = new Promise<CreatureGeometry>((resolve) => {
     const active = getWorker()
     if (!active) {
-      resolve(toGeometry(createCreature(kind, detail)))
+      resolve(toGeometry(createAnyCreature(kind, detail)))
       return
     }
     const id = nextId++
@@ -77,7 +78,7 @@ function request(kind: CreatureKind, detail: CreatureDetail): Promise<CreatureGe
       if (response.ok) resolve(toGeometry(response))
       // A failed worker run falls back to generating on the main thread: a brief
       // stall is still better than a hero with no creature in it.
-      else resolve(toGeometry(createCreature(kind, detail)))
+      else resolve(toGeometry(createAnyCreature(kind, detail)))
     })
     const message: CreatureRequest = { id, kind, detail }
     active.postMessage(message)
@@ -96,7 +97,7 @@ function request(kind: CreatureKind, detail: CreatureDetail): Promise<CreatureGe
  * Geometry is owned by the module cache and shared between instances, so it is
  * deliberately never disposed here.
  */
-export function useCreatureGeometry(kind: CreatureKind, detail: CreatureDetail): CreatureGeometry | null {
+export function useCreatureGeometry(kind: AnyCreatureKind, detail: CreatureDetail): CreatureGeometry | null {
   const key = `${kind}:${detail}`
   // Keyed state, so switching quality tiers reads as "not ready yet" during
   // render instead of needing a synchronous reset inside the effect.

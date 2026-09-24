@@ -300,6 +300,34 @@ const HIDE = {
     dark: { dorsal: '#55693f', ventral: '#d2c99a' },
     light: { dorsal: '#414f31', ventral: '#cec495' },
   },
+
+  // The language mascots. Each is the animal's real colouring rather than the
+  // brand's, because they stand next to a tyrannosaur built the same way and a
+  // flat logo palette next to hide would look like a sticker.
+  python: {
+    dark: { dorsal: '#6f7a43', ventral: '#cfd0a0' },
+    light: { dorsal: '#525c32', ventral: '#c6c79a' },
+  },
+  elephant: {
+    dark: { dorsal: '#7c7b79', ventral: '#b3b1ad' },
+    light: { dorsal: '#67655f', ventral: '#a9a6a0' },
+  },
+  gopher: {
+    dark: { dorsal: '#8a6f4c', ventral: '#d8c6a4' },
+    light: { dorsal: '#6d573a', ventral: '#cdb894' },
+  },
+  crab: {
+    dark: { dorsal: '#c1663a', ventral: '#efc6a0' },
+    light: { dorsal: '#a8552d', ventral: '#e7b892' },
+  },
+  swift: {
+    dark: { dorsal: '#5f5750', ventral: '#c6bdb0' },
+    light: { dorsal: '#4a443e', ventral: '#bbb2a4' },
+  },
+  camel: {
+    dark: { dorsal: '#b09062', ventral: '#e0cda6' },
+    light: { dorsal: '#96784c', ventral: '#d8c39a' },
+  },
 } as const
 
 export type CreatureSpecies = keyof typeof HIDE

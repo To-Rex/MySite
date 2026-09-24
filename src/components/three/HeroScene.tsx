@@ -10,6 +10,8 @@ import { qualityFor } from '@/hooks/useDeviceTier'
 import type { CreatureDetail } from './creatures'
 import { DETAIL_BY_TIER, animateTurtleSwim, useBind, useCreature, type Rig } from './creatureRig'
 import { Eyes, Teeth } from './creatureFittings'
+import { Spectacle } from './Spectacle'
+import { stage } from './stage'
 import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 
@@ -181,6 +183,11 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
   )
 
   useFrame(() => {
+    // Published every frame rather than once, so the easter egg always aims at
+    // live bones even if this rig is rebuilt at a different quality tier.
+    stage.head = byName.get('head')!
+    stage.vent = byName.get('tail1')!
+    stage.foot = byName.get('footL')!
     if (reducedMotion) return
     const t = heroTime.t
 
@@ -198,9 +205,13 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     const bob = Math.sin(step * 2 - 0.6) * 0.058 * gait
     const sway = Math.sin(step) * 0.055 * gait
     const roll = Math.sin(step) * 0.045 * gait
+    // The easter egg's attack, blended over the idle: the spectacle only says
+    // how hard to crouch, lunge, snap and swallow, so the walk keeps ownership
+    // of the pose and the hunt eases in and out of it.
+    const { crouch, lunge, snap, toss, gulp } = stage
     const b = body.current
     if (b) {
-      b.position.set(0, bob, sway)
+      b.position.set(lunge * 0.28, bob - crouch * 0.06, sway)
       b.rotation.set(roll, DINO_YAW, Math.sin(step * 2) * 0.012 * gait)
     }
 
@@ -236,21 +247,38 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     })
 
     // ---- Ribcage breathing — a slow swell rather than a bounce --------------
+    // Plus, mid-swallow, a lump travelling down the throat: the same trick, a
+    // narrow bulge whose centre slides from the jaw to the chest.
     const breath = Math.sin(t * 0.85)
+    const lump = (at: number) => (gulp > 0 ? Math.exp(-(((gulp - at) * 3.2) ** 2)) * 0.17 : 0)
     byName.get('spine1')!.scale.set(1, 1 + breath * 0.02, 1 + breath * 0.028)
-    byName.get('spine2')!.scale.set(1, 1 + breath * 0.014, 1 + breath * 0.02)
+    byName.get('spine2')!.scale.set(1, 1 + breath * 0.014 + lump(1), 1 + breath * 0.02 + lump(1))
+    byName.get('neck1')!.scale.set(1, 1 + lump(0.55), 1 + lump(0.55))
+    byName.get('neck2')!.scale.set(1, 1 + lump(0.1), 1 + lump(0.1))
 
     // ---- Head and neck ------------------------------------------------------
     // Slow horizon scan, a nod locked to the stride, and the accent turn.
     const scan = Math.sin(t * 0.21) + Math.sin(t * 0.37 + 1.7) * 0.4
     const nod = Math.sin(step * 2 + 0.9) * 0.035 * gait
+    // A bone pointing +x rotates +x toward +y about +z, so reaching *down* at
+    // the prey is negative z and the head-toss that swallows it is positive.
+    const reach = crouch * 0.18 + lunge * 0.42
     const neck1 = byName.get('neck1')!
     neck1.rotation.y = scan * 0.1 - counter * 0.5 + headAccent * 0.16
-    neck1.rotation.z = Math.sin(t * 0.45) * 0.03 + nod
+    neck1.rotation.z = Math.sin(t * 0.45) * 0.03 + nod - reach + toss * 0.3
     byName.get('neck2')!.rotation.y = scan * 0.14 - counter * 0.35 + headAccent * 0.22
+    byName.get('neck2')!.rotation.z = -lunge * 0.3 + toss * 0.18
     const head = byName.get('head')!
     head.rotation.y = scan * 0.2 + headAccent * 0.34
-    head.rotation.z = Math.sin(t * 0.55 + 0.6) * 0.05 - 0.02 + nod * 1.4 - Math.abs(headAccent) * 0.12
+    head.rotation.z =
+      Math.sin(t * 0.55 + 0.6) * 0.05 -
+      0.02 +
+      nod * 1.4 -
+      Math.abs(headAccent) * 0.12 -
+      crouch * 0.1 -
+      lunge * 0.2 -
+      snap * 0.26 +
+      toss * 0.5
 
     // ---- Arms ---------------------------------------------------------------
     // Small counter-swing with the stride, plus the odd twitch.
@@ -374,6 +402,13 @@ function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<H
     g.position.x = BASE_OFFSET[0] * fit
     g.position.y = BASE_OFFSET[1] * fit + s * 1.6 + (reducedMotion ? 0 : Math.sin(t * 0.6) * 0.05)
 
+    // The jolt as the jaws close. Applied after the damping so it is a jolt and
+    // not something the easing has to chase back.
+    if (stage.shake > 0) {
+      g.rotation.z += Math.sin(t * 92) * 0.022 * stage.shake
+      g.rotation.x += Math.cos(t * 77) * 0.016 * stage.shake
+    }
+
     state.camera.position.x = MathUtils.damp(state.camera.position.x, mx * 0.28, 2, delta)
     state.camera.position.y = MathUtils.damp(state.camera.position.y, my * 0.18, 2, delta)
     state.camera.lookAt(0, 0, 0)
@@ -382,6 +417,7 @@ function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<H
   return (
     <group ref={group} scale={0.0001}>
       <Dinosaur theme={theme} detail={detail} bump={bump} reducedMotion={reducedMotion} />
+      {!reducedMotion && <Spectacle theme={theme} tier={tier} bump={bump} />}
       <Orbit index={0} theme={theme} detail={detail} bump={bump} reducedMotion={reducedMotion} />
       <Orbit index={1} theme={theme} detail={detail} bump={bump} reducedMotion={reducedMotion} />
     </group>

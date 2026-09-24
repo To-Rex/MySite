@@ -60,7 +60,7 @@ interface Tube {
   radii: number[]
 }
 
-type Part = Blob | Tube
+export type Part = Blob | Tube
 
 /** One joint of a creature's skeleton, in bind pose. */
 export interface BoneSpec {
@@ -117,9 +117,9 @@ export interface CreaturePayload {
   teeth: CreatureTooth[]
 }
 
-const blob = (at: Vec3, size: Vec3, yaw?: number, pitch?: number): Blob => ({ kind: 'blob', at, size, yaw, pitch })
+export const blob = (at: Vec3, size: Vec3, yaw?: number, pitch?: number): Blob => ({ kind: 'blob', at, size, yaw, pitch })
 /** A shape carved out of the body: eye sockets, nostrils, the mouth line. */
-const cut = (at: Vec3, size: Vec3, yaw?: number, pitch?: number): Blob => ({
+export const cut = (at: Vec3, size: Vec3, yaw?: number, pitch?: number): Blob => ({
   kind: 'blob',
   at,
   size,
@@ -127,10 +127,10 @@ const cut = (at: Vec3, size: Vec3, yaw?: number, pitch?: number): Blob => ({
   pitch,
   negative: true,
 })
-const tube = (path: Vec3[], radii: number[]): Tube => ({ kind: 'tube', path, radii })
+export const tube = (path: Vec3[], radii: number[]): Tube => ({ kind: 'tube', path, radii })
 
 /** Mirrors a part across the z axis, for limbs that come in pairs. */
-function mirrored(part: Part): Part[] {
+export function mirrored(part: Part): Part[] {
   if (part.kind === 'blob') {
     const [x, y, z] = part.at
     return [part, { ...part, at: [x, y, -z], yaw: part.yaw === undefined ? undefined : -part.yaw }]
@@ -306,7 +306,7 @@ function computeSkinning(positions: Float32Array, bones: BoneSpec[]) {
 }
 
 /** Raw-space tooth row, laid along the jaw before normalisation. */
-interface ToothRow {
+export interface ToothRow {
   /** Start and end of the row along +x. */
   fromX: number
   toX: number
@@ -346,14 +346,20 @@ function buildToothRow(row: ToothRow): { at: Vec3; radius: number; length: numbe
 }
 
 /** Raw-space eye description, before normalisation. */
-interface EyeSpec {
+export interface EyeSpec {
   bone: string
   /** Centre of one eye; the other is mirrored across z. */
   at: Vec3
   radius: number
 }
 
-function build(
+/**
+ * Meshes an authored anatomy into a rigged, normalised payload. Exported so the
+ * language mascots in `mascots.ts` are built exactly the same way — same field
+ * settings, same normalisation, same skinning — without this module having to
+ * know they exist.
+ */
+export function buildCreature(
   parts: Part[],
   boneSpecs: BoneSpec[],
   eye: EyeSpec,
@@ -657,6 +663,6 @@ const DINOSAUR_TEETH: ToothRow[] = [
 export function createCreature(kind: CreatureKind, detail: CreatureDetail): CreaturePayload {
   // Turtles have a beak, not teeth.
   return kind === 'dino'
-    ? build(DINOSAUR_PARTS, DINOSAUR_BONES, DINOSAUR_EYE, DINOSAUR_TEETH, detail)
-    : build(TURTLE_PARTS, TURTLE_BONES, TURTLE_EYE, [], detail)
+    ? buildCreature(DINOSAUR_PARTS, DINOSAUR_BONES, DINOSAUR_EYE, DINOSAUR_TEETH, detail)
+    : buildCreature(TURTLE_PARTS, TURTLE_BONES, TURTLE_EYE, [], detail)
 }
