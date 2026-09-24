@@ -255,7 +255,8 @@ the page is exactly as it was:
 | `chase` | It bolts, jinking and bounding; the tyrannosaur runs it down, and the stage shakes under the strides |
 | `catch` | The lunge, the snap, and a shake with the animal in its jaws |
 | `swallow` | A head-toss, and a lump travelling down the throat |
-| `drop` | What comes out the other end, landing at its feet |
+| `turn` | It turns right around and presents its back to the room |
+| `drop` | It squats, hips down and tail lifted clear, and what comes out lands |
 | `leave` | It turns back to its usual heading and walks off the stage |
 | `grow` | A tree rises out of what it left |
 | `ripen` | One fruit swells and colours |
@@ -300,6 +301,15 @@ point, so the tree grows and the fruit splits where the name belongs.
 drop them, then forwards — slower, and with a longer stagger — to grow them out
 of the split fruit, so the easter egg adds no second text animation to keep in
 sync with the first.
+
+**The drop is its own act, after the turn is finished.** The first cut let the
+creature start walking away while the dropping was still being placed, so the one
+thing on stage nobody could see was the thing the rest of the episode grows out
+of. Now it completes its turn, stands still with its back quarter to the room,
+squats — hips down, tail lifted clear, with the tremble of an animal straining —
+and only then does anything come out. Lifting the tail is the *negative*
+direction: bones sit unrotated in bind pose, so a tail joint's local +x still
+points forward, and rotating it about +z drives the tip down.
 
 One rule when editing the script: place things on a flag, not inside a slice of
 an act. The dropping was first positioned during the opening 6% of its act, a

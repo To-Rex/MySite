@@ -38,8 +38,9 @@ const SCRIPT: readonly (readonly [Exclude<SpectacleAct, 'idle'>, number])[] = [
   ['stalk', 1.3],
   ['chase', 3.2],
   ['catch', 1.8],
-  ['swallow', 1.2],
-  ['drop', 1.3],
+  ['swallow', 1.1],
+  ['turn', 1.3],
+  ['drop', 1.8],
   ['leave', 2.2],
   ['grow', 2.6],
   ['ripen', 1.7],
@@ -61,6 +62,12 @@ const MOUTH = new Vector3(0.12, -0.015, 0)
  */
 const DINO_YAW = -0.42
 const FACE_PREY = -(Math.PI + DINO_YAW)
+/**
+ * A quarter past its resting heading, which swings the tail towards the camera.
+ * Facing the way it normally stands puts the vent on the far side of the body,
+ * and the whole point of the act is that you can see it happen.
+ */
+const FACE_VENT = 0.86 - DINO_YAW
 
 /** How far off the right-hand side of the stage it walks before the tree grows. */
 const EXIT_X = 5.8
@@ -92,6 +99,9 @@ const SKIN: Record<MascotKind, { texScale: number; halfHeight: number; plateMix:
 }
 
 const easeInOut = (u: number) => u * u * (3 - 2 * u)
+/** Rises over the first `edge` of a run, holds, then falls back over the last. */
+const plateau = (u: number, edge: number) =>
+  MathUtils.smoothstep(u, 0, edge) * (1 - MathUtils.smoothstep(u, 1 - edge, 1))
 const easeOut = (u: number) => 1 - (1 - u) * (1 - u)
 const bell = (u: number) => Math.sin(MathUtils.clamp(u, 0, 1) * Math.PI)
 
@@ -174,6 +184,7 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
   const clock = useRef(0)
   const placed = useRef(false)
   const dropped = useRef(false)
+  const spawnWorld = useRef(new Vector3())
   const spawn = useRef(new Vector3())
   const catchAt = useRef(new Vector3())
   const treeAt = useRef(new Vector3())
@@ -205,16 +216,19 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
     clock.current += step
     const t = clock.current
 
-    // Where the name was, worked out once. The headline is DOM, so the only way
-    // to stand the animal exactly where the words were is to take the element's
-    // rect and cast it back through the camera.
+    // Where the name is, in *world* space, measured once — the headline does not
+    // move, and reading its rect every frame would force a layout. Converting it
+    // into the arrangement's space every frame is what keeps it honest: the stage
+    // is still swinging square to the camera while the animal arrives, and a
+    // local point captured before that settles ends up somewhere else entirely.
     if (!placed.current) {
       placed.current = true
-      spawn.current.copy(headlinePoint(frame, tmp.a))
-      g.worldToLocal(spawn.current)
-      // It runs away from the tyrannosaur, which stands to the right of it.
-      catchAt.current.set(spawn.current.x - 1.15, spawn.current.y - 0.3, spawn.current.z + 0.25)
+      spawnWorld.current.copy(headlinePoint(frame, tmp.a))
     }
+    spawn.current.copy(spawnWorld.current)
+    g.worldToLocal(spawn.current)
+    // It runs away from the tyrannosaur, which stands to the right of it.
+    catchAt.current.set(spawn.current.x - 1.15, spawn.current.y - 0.3, spawn.current.z + 0.25)
 
     // --- which act, and how far into it --------------------------------------
     let act: SpectacleAct = 'idle'
@@ -297,11 +311,15 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
       stage.hurry = 0
     } else if (act === 'stalk') {
       // Turns onto it and drops its head. Nothing else moves yet.
-      stage.facing = MathUtils.damp(stage.facing, FACE_PREY, 3.2, step)
+      //
+      // Every turn in the episode is interpolated rather than damped: a damped
+      // turn advances by frame, so on a device drawing three of them a second it
+      // is still halfway round when the act it belongs to ends.
+      stage.facing = MathUtils.lerp(0, FACE_PREY, easeInOut(u))
       stage.crouch = easeInOut(u)
       stage.hurry = u * 0.3
     } else if (act === 'chase') {
-      stage.facing = MathUtils.damp(stage.facing, FACE_PREY, 4, step)
+      stage.facing = FACE_PREY
       const s = easeInOut(u)
       stage.travelX = chaseEnd.x * s
       stage.travelY = chaseEnd.y * s * 0.35
@@ -330,15 +348,22 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
       stage.gulp = MathUtils.clamp(u * 1.5, 0, 1)
       stage.hurry = 0.3 * (1 - u)
       stage.shake = 0
-    } else if (act === 'drop') {
+    } else if (act === 'turn') {
+      // The whole turn happens here, and finishes here. Dropping mid-turn is what
+      // the first cut did, and the one thing on stage nobody could see.
       stage.toss = 0
       stage.gulp = 0
       stage.crouch = 0
-      // Starts turning back to its usual heading before it walks off.
-      stage.facing = MathUtils.damp(stage.facing, 0, 2.2, step)
-      stage.hurry = u * 0.4
+      stage.facing = MathUtils.lerp(FACE_PREY, FACE_VENT, easeInOut(u))
+      stage.hurry = 0.3 * bell(u)
+    } else if (act === 'drop') {
+      // Stands still, hips down, tail clear.
+      stage.facing = FACE_VENT
+      stage.relieve = plateau(u, 0.3)
+      stage.crouch = stage.relieve * 0.5
+      stage.hurry = 0
     } else if (act === 'leave') {
-      stage.facing = MathUtils.damp(stage.facing, 0, 3, step)
+      stage.facing = MathUtils.lerp(FACE_VENT, 0, easeInOut(Math.min(1, u / 0.45)))
       stage.travelX = MathUtils.lerp(chaseEnd.x, EXIT_X, easeInOut(u))
       stage.travelY = MathUtils.lerp(chaseEnd.y * 0.35, 0, easeInOut(u))
       stage.travelZ = MathUtils.lerp(chaseEnd.z, 0, easeInOut(u))
@@ -363,24 +388,29 @@ function Show({ mascot, theme, tier, bump }: ShowProps) {
     const d = dung.current
     if (d) {
       if (act === 'drop') {
-        // Placed once, on a flag rather than inside a slice of the act: a window
-        // a few hundredths wide is missed outright on a device drawing 3 fps, and
-        // the dropping then falls from the origin — which is the middle of the
-        // tyrannosaur, so the tree grew out of its back.
-        if (stage.vent && !dropped.current) {
+        // Placed once the squat has actually developed, and on a flag rather than
+        // inside a slice of the act: a window a few hundredths wide is missed
+        // outright on a device drawing 3 fps, and the dropping then falls from the
+        // origin — which is the middle of the tyrannosaur, so the tree grew out of
+        // its back.
+        if (stage.vent && !dropped.current && u > 0.38) {
           dropped.current = true
-          tmp.a.set(-0.03, -0.05, 0).applyMatrix4(stage.vent.matrixWorld)
+          tmp.a.set(0.05, -0.07, 0).applyMatrix4(stage.vent.matrixWorld)
           g.worldToLocal(tmp.a)
           d.position.copy(tmp.a)
           dropFrom.current = tmp.a.y
           ground.current = groundLevel(g, tmp.b)
           treeAt.current.set(tmp.a.x, ground.current, tmp.a.z)
         }
-        const fall = Math.min(1, u / 0.55)
-        d.position.y = MathUtils.lerp(dropFrom.current, ground.current, fall * fall)
-        const squash = u > 0.55 ? bell((u - 0.55) / 0.45) : 0
-        d.scale.set(0.22 * (1 + squash * 0.35), 0.22 * (1 - squash * 0.4), 0.22 * (1 + squash * 0.35))
-        d.rotation.y = t * 1.2
+        if (!dropped.current) {
+          d.scale.setScalar(0)
+        } else {
+          const fall = MathUtils.clamp((u - 0.38) / 0.3, 0, 1)
+          d.position.y = MathUtils.lerp(dropFrom.current, ground.current, fall * fall)
+          const squash = u > 0.68 ? bell((u - 0.68) / 0.32) : 0
+          d.scale.set(0.22 * (1 + squash * 0.35), 0.22 * (1 - squash * 0.4), 0.22 * (1 + squash * 0.35))
+          d.rotation.y = t * 1.2
+        }
       } else if (act === 'leave') {
         d.scale.setScalar(0.22)
       } else if (act === 'grow') {

@@ -38,6 +38,14 @@ export interface Stage {
   facing: number
   /** 0 = its usual amble, 1 = a full run. Shortens the stride and lengthens it. */
   hurry: number
+  /**
+   * The squat: hips down, tail lifted clear, a slight strain.
+   *
+   * Its own signal rather than a slice of `crouch`, because the tail has to come
+   * *up* while the hips go down — and because the dropping is only believable if
+   * the animal visibly stops and does it, rather than leaving it behind mid-turn.
+   */
+  relieve: number
 
   /** A jolt for the whole arrangement: heavy footfalls, and the jaws closing. */
   shake: number
@@ -69,6 +77,7 @@ export const stage: Stage = {
   travelZ: 0,
   facing: 0,
   hurry: 0,
+  relieve: 0,
   shake: 0,
   hold: 0,
 }
@@ -86,6 +95,7 @@ export function clearStage(): void {
   stage.travelZ = 0
   stage.facing = 0
   stage.hurry = 0
+  stage.relieve = 0
   stage.shake = 0
   stage.hold = 0
 }

@@ -69,6 +69,15 @@ function HeroClock() {
   return null
 }
 
+/**
+ * How much each tail joint lifts when the creature squats, base first.
+ *
+ * Bones sit unrotated in bind pose, so a tail joint's local +x still points
+ * *forward*; rotating it about +z therefore drives the tail tip down, and
+ * lifting the tail clear is the negative direction.
+ */
+const TAIL_LIFT = [0.44, 0.32, 0.2, 0.12, 0.07] as const
+
 /** Nudges the arrangement up and right so the head clears the headline. */
 const BASE_OFFSET: [number, number] = [0.2, 0.5]
 
@@ -216,7 +225,7 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     // The easter egg's attack, blended over the idle: the spectacle only says
     // how hard to crouch, lunge, snap and swallow, so the walk keeps ownership
     // of the pose and the hunt eases in and out of it.
-    const { crouch, lunge, snap, toss, thrash, gulp } = stage
+    const { crouch, lunge, snap, toss, thrash, gulp, relieve } = stage
     const b = body.current
     if (b) {
       // Travel and heading come from the hunt. The lunge is a step *forward*, so
@@ -224,7 +233,9 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
       const yaw = DINO_YAW + stage.facing
       const reachX = Math.cos(yaw) * lunge * 0.28
       const reachZ = -Math.sin(yaw) * lunge * 0.28
-      b.position.set(stage.travelX + reachX, stage.travelY + bob - crouch * 0.06, stage.travelZ + sway + reachZ)
+      // The squat: hips down, with the slight tremble of an animal straining.
+      const settle = bob - crouch * 0.06 - relieve * 0.12 + Math.sin(t * 19) * 0.006 * relieve
+      b.position.set(stage.travelX + reachX, stage.travelY + settle, stage.travelZ + sway + reachZ)
       b.rotation.set(roll, yaw, Math.sin(beat * 2) * 0.012 * gait)
     }
 
@@ -256,7 +267,8 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
         Math.sin(t * 1.05 - i * 0.72) * (0.045 + i * 0.022) +
         counter * reach +
         tailAccent * Math.sin(t * 2.1 - i * 0.6) * 0.14 * reach
-      bone.rotation.z = Math.sin(t * 0.72 - i * 0.5) * (0.02 + i * 0.012) + tailAccent * 0.05 * reach
+      bone.rotation.z =
+        Math.sin(t * 0.72 - i * 0.5) * (0.02 + i * 0.012) + tailAccent * 0.05 * reach - relieve * (TAIL_LIFT[i] ?? 0)
     })
 
     // ---- Ribcage breathing — a slow swell rather than a bounce --------------

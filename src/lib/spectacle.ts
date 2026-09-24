@@ -31,7 +31,9 @@ export type SpectacleAct =
   | 'catch'
   /** A head-toss and a lump travelling down the throat. */
   | 'swallow'
-  /** What comes out the other end, and lands. */
+  /** It turns right around and presents its back to the room. */
+  | 'turn'
+  /** It squats, and what comes out the other end lands. */
   | 'drop'
   /** The tyrannosaur walks off the stage. */
   | 'leave'
