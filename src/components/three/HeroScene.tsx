@@ -25,6 +25,48 @@ export interface HeroSceneProps {
   active: boolean
 }
 
+/**
+ * The hero's own clock, in seconds, shared by everything in this scene.
+ *
+ * Nothing here may read `state.clock.elapsedTime`, because this canvas is parked
+ * with `frameloop="never"` the moment it scrolls off-screen and R3F treats that
+ * clock as its own scratch space:
+ *
+ * - flipping the prop — leaving the hero *and* returning to it — resets
+ *   `elapsedTime` to 0;
+ * - while parked, any stray frame sets `elapsedTime` to the raw `requestAnimationFrame`
+ *   timestamp, which is in *milliseconds*, so a number that should read ~40 arrives
+ *   as ~40000.
+ *
+ * Every pose in this file comes off that number, so the sculpture used to rewind
+ * and then bolt: the idle turntable is a target that grows with time, and a
+ * millisecond timestamp sent it thousands of radians out before the reset yanked
+ * it back, which is the fast multi-turn unwind on the way back to the top. The
+ * turtles snapped around their orbits at the same moment for the same reason.
+ *
+ * This clock only ever moves forward, in clamped steps, so parking the canvas
+ * pauses the sculpture instead of rewinding it.
+ */
+const heroTime = { t: 0 }
+
+/**
+ * Advances the hero clock, once per frame, before anything reads it.
+ *
+ * The negative priority is what puts it first: R3F sorts frame callbacks by
+ * priority and only counts positive ones when deciding whether the app has taken
+ * over rendering, so this stays ahead of the scene without disabling auto-render.
+ */
+function HeroClock() {
+  useFrame((_, dt) => {
+    // The cap is deliberately loose. It only has to reject the nonsense a parked
+    // canvas hands over — a frame that claims to have taken forty seconds — and a
+    // tight cap would be worse than the bug it guards: clamping to 1/30 makes a
+    // device drawing 9 fps run the whole sculpture at a third speed.
+    heroTime.t += Math.min(dt, 0.25)
+  }, -1)
+  return null
+}
+
 /** Nudges the arrangement up and right so the head clears the headline. */
 const BASE_OFFSET: [number, number] = [0.2, 0.5]
 
@@ -138,9 +180,9 @@ function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, '
     [byName],
   )
 
-  useFrame(({ clock }) => {
+  useFrame(() => {
     if (reducedMotion) return
-    const t = clock.elapsedTime
+    const t = heroTime.t
 
     // ---- Walk cycle ---------------------------------------------------------
     // Legs are half a stride apart; everything else in the body is driven from
@@ -247,10 +289,10 @@ function TurtleBody({ rig, orbit, theme, bump, reducedMotion }: Omit<TurtleProps
   useBind(mesh, skeleton)
   const [rx, ry] = ORBIT_RADIUS[orbit.ring] ?? [3, 1.5]
 
-  useFrame(({ clock }) => {
+  useFrame(() => {
     const g = group.current
     if (!g) return
-    const t = reducedMotion ? 0 : clock.elapsedTime
+    const t = reducedMotion ? 0 : heroTime.t
 
     const angle = orbit.phase + t * orbit.speed * Math.PI * 2
     g.position.set(Math.cos(angle) * rx, Math.sin(angle) * ry, 0)
@@ -282,10 +324,10 @@ function Orbit({ index, theme, detail, bump, reducedMotion }: CreatureProps & { 
   const group = useRef<Group>(null)
   const yaw = ORBIT_YAW[index] ?? 0
 
-  useFrame(({ clock }) => {
+  useFrame(() => {
     const g = group.current
     if (!g || reducedMotion) return
-    const t = clock.elapsedTime
+    const t = heroTime.t
     g.rotation.y = yaw + Math.cos(t * 0.15 + index) * 0.08
     g.rotation.x = Math.sin(t * 0.18 + index) * 0.03
   })
@@ -313,7 +355,7 @@ function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<H
     const g = group.current
     if (!g) return
     const delta = Math.min(dt, 1 / 30)
-    const t = state.clock.elapsedTime
+    const t = heroTime.t
     const s = progress.get()
 
     entrance.current = MathUtils.damp(entrance.current, introDone ? 1 : 0, 2.4, delta)
@@ -363,6 +405,7 @@ export default function HeroScene(props: HeroSceneProps) {
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance', stencil: false }}
       style={{ background: 'transparent' }}
     >
+      <HeroClock />
       <PerformanceMonitor onDecline={() => setDpr(1)} flipflops={2} />
       <ambientLight intensity={theme === 'dark' ? 0.15 : 0.5} />
       <directionalLight

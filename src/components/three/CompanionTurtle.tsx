@@ -89,6 +89,16 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
   // scrolled: the flippers then row for the speed the turtle appears to travel at.
   const swim = useRef(0)
 
+  // And the stunts have theirs, which simply counts forward.
+  //
+  // It cannot come from `state.clock`, because this canvas is parked with
+  // `frameloop="never"` whenever the reader goes back to the hero, and R3F resets
+  // that clock to zero every time the prop flips — while a parked frame sets it to
+  // the raw rAF timestamp, in milliseconds. Every deadline below is an absolute
+  // time compared against it, so either accident would strand the cooldowns in the
+  // future and the turtle would quietly stop doing anything at all.
+  const now = useRef(0)
+
   // Stunt state. The cooldown matters — without it a fast scroll would start a
   // fresh roll on every frame it stayed fast. The greeting keeps a second, much
   // longer one of its own, so that waiting for it can never leave a scroll
@@ -113,7 +123,8 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
     // otherwise overshoot.
     const elapsed = MathUtils.clamp(dt, 1 / 240, 0.25)
     const delta = Math.min(elapsed, 1 / 30)
-    const t = state.clock.elapsedTime
+    now.current += elapsed
+    const t = now.current
     const lane = state.size.width < 760 ? LANE.narrow : LANE.wide
 
     // Size follows the screen instead of being a fixed world scale. Viewport

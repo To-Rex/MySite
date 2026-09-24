@@ -243,6 +243,35 @@ near-black page reads as a silhouette under the hero's key light.
 `prefers-reduced-motion` removes it entirely — a creature that chases the reader
 is exactly the motion that preference asks us to drop.
 
+### Parked canvases and the clock
+
+Every 3D scene here stops rendering once it scrolls off screen — that is what
+`frameloop="never"` does, and it is most of why three canvases cost so little.
+The catch is that R3F treats `state.clock` as its own scratch space while that
+prop is in play:
+
+- flipping it resets `elapsedTime` to zero — on the way out **and** on the way back;
+- a frame that slips through while parked sets `elapsedTime` to the raw
+  `requestAnimationFrame` timestamp, which is in *milliseconds*, so a number that
+  should read ~40 arrives as ~40000.
+
+So nothing under `three/` may pose anything from `state.clock`. Each scene counts
+its own time forward instead, in clamped steps, and parking it then pauses that
+time rather than rewinding it.
+
+Left alone this is not subtle. The hero's turntable drift is a target that grows
+with time, so a millisecond timestamp sent it thousands of radians out and the
+reset yanked it back: returning to the top of the page spun the tyrannosaur
+through a dozen turns in about a second — measured at 12.87 turns of travel, with
+one frame of 21 radians, against 0.08 turns and 0.067 rad after the fix. The
+turtles snapped around their orbits at the same moment, the tech sphere's wire
+cage jumped to a fresh angle, and the companion's stunt deadlines — all absolute
+times — were stranded in the future, so it quietly stopped doing anything at all.
+
+The cap on each step is 0.25 s, and that looseness is deliberate: it only has to
+reject the nonsense above. Clamping to a frame budget like 1/30 looks tidier and
+runs the whole hero at a third speed on a device drawing 9 fps.
+
 ### Performance
 
 - The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only (~140 kB, 42 kB gzipped).

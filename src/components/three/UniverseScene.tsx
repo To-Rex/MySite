@@ -139,6 +139,7 @@ function Core({ theme, tier, activeId, reducedMotion }: { theme: Theme; tier: De
   const group = useRef<Group>(null)
   const wire = useRef<Mesh>(null)
   const pulse = useRef(1)
+  const spin = useRef(0)
   const p = PALETTE[theme]
   const q = qualityFor(tier)
 
@@ -146,13 +147,19 @@ function Core({ theme, tier, activeId, reducedMotion }: { theme: Theme; tier: De
     if (activeId) pulse.current = 1.12
   }, [activeId])
 
-  useFrame(({ clock }, dt) => {
+  useFrame((_, dt) => {
     const delta = Math.min(dt, 1 / 30)
     pulse.current = MathUtils.damp(pulse.current, 1, 4, delta)
     if (group.current) group.current.scale.setScalar(pulse.current)
     if (wire.current && !reducedMotion) {
-      wire.current.rotation.y = clock.elapsedTime * 0.12
-      wire.current.rotation.x = clock.elapsedTime * 0.07
+      // Counted here rather than read from `state.clock`: this canvas is parked
+      // with `frameloop="never"` off-screen, and R3F zeroes that clock whenever
+      // the prop flips — while a parked frame sets it to the rAF timestamp, in
+      // milliseconds. Either one snaps the cage to a different orientation the
+      // moment the section scrolls back into view.
+      spin.current += Math.min(dt, 0.25)
+      wire.current.rotation.y = spin.current * 0.12
+      wire.current.rotation.x = spin.current * 0.07
     }
   })
 
