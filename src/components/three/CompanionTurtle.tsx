@@ -5,6 +5,8 @@ import type { Theme } from '@/theme/context'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { DETAIL_BY_TIER, animateTurtleSwim, useBind, useCreature, type Rig } from './creatureRig'
 import { Eyes } from './creatureFittings'
+import { Cameo } from './Cameo'
+import { useCameoDirector } from './useCameoDirector'
 import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 
@@ -40,7 +42,17 @@ const LANE = {
 } as const
 
 /** Seconds each stunt runs for. */
-const TRICK_TIME = { barrel: 1.15, loop: 1.4, spin: 1.5, dart: 0.85, wave: 2.6 } as const
+const TRICK_TIME = {
+  barrel: 1.15,
+  loop: 1.4,
+  spin: 1.5,
+  dart: 0.85,
+  /** Two rolls and a dive at the camera, for a really hard flick of the wheel. */
+  corkscrew: 1.6,
+  /** Roll and somersault at once — the one it saves for the end of the page. */
+  tumble: 1.9,
+  wave: 2.6,
+} as const
 type TrickKind = keyof typeof TRICK_TIME
 
 /** Scroll speeds, in px/s, that count as hurried and as standing still. */
@@ -110,6 +122,8 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
   const quarter = useRef(-1)
   const crossed = useRef(0)
   const turn = useRef(0)
+  /** The bottom of the page is worth one celebration, not one per visit down. */
+  const cheered = useRef(false)
 
   const bump = tier === 'high' ? 0.03 : tier === 'medium' ? 0.022 : 0
 
@@ -180,9 +194,13 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
       nextTrick.current = Math.min(nextTrick.current, t + 0.35)
     } else if (!trick.current && t > nextTrick.current) {
       let kind: TrickKind | null = null
-      if (speed.current > FAST) kind = turn.current++ % 2 === 0 ? 'barrel' : 'dart'
+      if (speed.current > FAST * 2.1) kind = 'corkscrew'
+      else if (speed.current > FAST) kind = turn.current++ % 2 === 0 ? 'barrel' : 'dart'
       else if (speed.current < -FAST) kind = 'loop'
-      else if (rush > CALM && crossed.current > 0 && t - crossed.current > 0.5) kind = 'spin'
+      else if (progress > 0.985 && !cheered.current) {
+        kind = 'tumble'
+        cheered.current = true
+      } else if (rush > CALM && crossed.current > 0 && t - crossed.current > 0.5) kind = 'spin'
       else if (t - movedAt.current > 7 && t > nextWave.current) kind = 'wave'
       if (kind) {
         trick.current = { kind, start: t, end: t + TRICK_TIME[kind] }
@@ -223,6 +241,16 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
           offX = -bell * 0.26
           offZ = bell * 0.75
           roll = Math.sin(u * TAU) * 0.6
+          break
+        case 'corkscrew':
+          roll = ease * TAU * 2
+          offZ = bell * 0.6
+          offY = bell * 0.08
+          break
+        case 'tumble':
+          roll = ease * TAU
+          flip = -ease * TAU
+          offY = bell * 0.18
           break
         case 'wave':
           greet = hold(u, 0.3)
@@ -299,8 +327,11 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
   )
 }
 
-function Scene({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
+function Scene({ theme, tier, visible }: { theme: Theme; tier: DeviceTier; visible: boolean }) {
   const rig = useCreature('turtle', DETAIL_BY_TIER[tier])
+  // A chase needs a second creature meshed and a second skinned mesh drawn, so
+  // the weakest devices get the turtles gliding past and nothing heavier.
+  const [cameo, endCameo] = useCameoDirector(visible, tier !== 'low')
   return (
     <>
       {/* Brighter than the hero's night lighting: this turtle is small and often
@@ -312,6 +343,7 @@ function Scene({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
           stall, and at this size the reflections it feeds are a few pixels wide. */}
       <ThemedEnvironment theme={theme} resolution={64} />
       {rig && <Swimmer rig={rig} theme={theme} tier={tier} />}
+      {cameo && <Cameo key={cameo.id} plan={cameo} theme={theme} tier={tier} onDone={endCameo} />}
     </>
   )
 }
@@ -330,7 +362,7 @@ export default function CompanionTurtle({ theme, tier, visible }: CompanionTurtl
         gl={{ antialias: true, alpha: true, powerPreference: 'low-power', stencil: false }}
         style={{ background: 'transparent' }}
       >
-        <Scene theme={theme} tier={tier} />
+        <Scene theme={theme} tier={tier} visible={visible} />
       </Canvas>
     </div>
   )

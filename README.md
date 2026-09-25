@@ -215,8 +215,10 @@ somersaults it nose over tail and Y pirouettes it flat:
 | Trigger | Stunt |
 | --- | --- |
 | Hurrying down the page | a full barrel roll, alternating with a dart at the camera |
+| A really hard flick of the wheel | a corkscrew: two rolls and a dive at the camera |
 | Hurrying back up | a full somersault |
 | Crossing into a new quarter of the page | a flat pirouette |
+| Reaching the bottom of the page | a tumble — roll and somersault at once, once per visit |
 | Nobody has scrolled for 7 s | turns to the reader and waves a flipper |
 
 Two rules keep this from becoming noise. A crossing is *remembered* rather than
@@ -316,6 +318,33 @@ an act. The dropping was first positioned during the opening 6% of its act, a
 window 84 ms wide — missed outright on a device drawing 3 fps, and it then fell
 from the origin, which is the middle of the tyrannosaur. The tree grew out of its
 back.
+
+### Cameos
+
+Every so often on the way down the page, something crosses it: a tyrannosaur
+running one of the six animals down and not stopping for it, or three turtles
+gliding past in formation. They ride the companion's canvas — the only one that
+exists the whole way down — and alternate, with at least sixteen seconds between
+them.
+
+They fire on the reader passing a third of the page — or simply covering a lot
+of ground since the last one, because on a short page two thirds can sit inside
+one flick of the wheel and the cameos go quiet. Either way it is distance, not a
+timer, so a cameo always arrives as part of getting somewhere and never while
+someone sits still reading one paragraph. The director also keeps a watchdog on
+whatever is on stage: a cameo is supposed to clear itself at the end of its run,
+and without a backstop one that cannot — waiting on a mesh, or parked off-screen
+mid-crossing — silently ends every cameo for the rest of the visit. Nothing is meshed until one is due, and the chase
+reuses the tyrannosaur the hero has already built: geometry is cached per
+(creature, detail) and shared between every instance, so a cameo costs two more
+skinned meshes for four seconds rather than two more meshing runs. The chase is
+skipped on `low`-tier devices, which get the turtles and nothing heavier.
+
+`poseLeg`, `animateDinoRun` and `animateMascot` live in `creatureRig.ts` because
+three separate places now drive the same skeletons — the hero, the easter egg and
+the cameos. The hero's tyrannosaur keeps its own much richer idle; the cameo
+animator is deliberately compact, because the creature is on screen for three
+seconds and the only thing that has to read is *running*.
 
 ### Parked canvases and the clock
 

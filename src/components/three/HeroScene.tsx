@@ -2,13 +2,13 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { PerformanceMonitor, Sparkles } from '@react-three/drei'
 import type { MotionValue } from 'motion/react'
 import { useMemo, useRef, useState } from 'react'
-import { MathUtils, type Bone, type Group, type SkinnedMesh } from 'three'
+import { MathUtils, type Group, type SkinnedMesh } from 'three'
 import { pointer } from '@/lib/pointer'
 import type { Theme } from '@/theme/context'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { qualityFor } from '@/hooks/useDeviceTier'
 import type { CreatureDetail } from './creatures'
-import { DETAIL_BY_TIER, animateTurtleSwim, useBind, useCreature, type Rig } from './creatureRig'
+import { DETAIL_BY_TIER, animateTurtleSwim, poseLeg, useBind, useCreature, type Rig } from './creatureRig'
 import { Eyes, Teeth } from './creatureFittings'
 import { Spectacle } from './Spectacle'
 import { stage } from './stage'
@@ -149,29 +149,6 @@ function noiseAt(index: number, seed: number): number {
   h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
   h ^= h >>> 16
   return (h >>> 0) / 4294967296
-}
-
-/**
- * Poses one leg for a phase of the stride.
- *
- * Bones sit unrotated in bind pose, so their local axes are the creature's:
- * +Z rotation swings a downward-pointing bone forward, −Z folds the knee back
- * the way a digitigrade leg actually folds.
- */
-function poseLeg(thigh: Bone, shin: Bone, foot: Bone, phase: number, gait: number) {
-  const a = phase * Math.PI * 2
-  // Hip reaches furthest forward a quarter into the cycle, furthest back at three quarters.
-  const hip = Math.sin(a) * 0.44 * gait
-  // The knee folds hardest just after toe-off, with a smaller dip absorbing weight at mid-stance.
-  const swing = -0.85 * (0.5 + 0.5 * Math.cos(a - 0.5)) * gait
-  const absorb = -0.16 * (0.5 - 0.5 * Math.cos(2 * a)) * gait
-  const knee = swing + absorb
-  // Ankle keeps the sole roughly level, then pushes off as the leg passes behind.
-  const ankle = -(hip + knee) * 0.6 + 0.26 * Math.sin(a + 1.2) * gait
-
-  thigh.rotation.z = hip
-  shin.rotation.z = knee
-  foot.rotation.z = ankle
 }
 
 function DinosaurBody({ rig, theme, bump, reducedMotion }: Omit<CreatureProps, 'detail'> & { rig: Rig }) {

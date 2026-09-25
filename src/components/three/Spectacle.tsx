@@ -6,14 +6,13 @@ import {
   MathUtils,
   MeshStandardMaterial,
   Vector3,
-  type Bone,
   type Group,
   type SkinnedMesh,
 } from 'three'
 import type { Theme } from '@/theme/context'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { setSpectacleAct, setSpectacleMascot, useSpectacle, type SpectacleAct } from '@/lib/spectacle'
-import { DETAIL_BY_TIER, useBind, useCreature, type Rig } from './creatureRig'
+import { DETAIL_BY_TIER, MASCOT_SKIN, animateMascot, useBind, useCreature, type Rig } from './creatureRig'
 import { Eyes, Teeth } from './creatureFittings'
 import { SkinMaterial } from './skinMaterial'
 import { clearStage, stage } from './stage'
@@ -88,53 +87,12 @@ const CANOPY: readonly (readonly [number, number, number, number])[] = [
   [0.05, 1.47, -0.06, 0.21],
 ]
 
-/** Skin tuning per mascot: pattern frequency, countershading, scales vs plates. */
-const SKIN: Record<MascotKind, { texScale: number; halfHeight: number; plateMix: number }> = {
-  python: { texScale: 5.2, halfHeight: 0.14, plateMix: 0.15 },
-  elephant: { texScale: 3.4, halfHeight: 0.3, plateMix: 0.85 },
-  gopher: { texScale: 4.6, halfHeight: 0.34, plateMix: 0 },
-  crab: { texScale: 3.8, halfHeight: 0.16, plateMix: 0.9 },
-  swift: { texScale: 4.8, halfHeight: 0.12, plateMix: 0 },
-  camel: { texScale: 3.6, halfHeight: 0.38, plateMix: 0.1 },
-}
-
 const easeInOut = (u: number) => u * u * (3 - 2 * u)
 /** Rises over the first `edge` of a run, holds, then falls back over the last. */
 const plateau = (u: number, edge: number) =>
   MathUtils.smoothstep(u, 0, edge) * (1 - MathUtils.smoothstep(u, 1 - edge, 1))
 const easeOut = (u: number) => 1 - (1 - u) * (1 - u)
 const bell = (u: number) => Math.sin(MathUtils.clamp(u, 0, 1) * Math.PI)
-
-/**
- * Whatever the animal has, moved. Each mascot is rigged with only the bones its
- * anatomy needed, so this poses the ones that exist and ignores the rest — one
- * animator for six very different bodies.
- */
-function animateMascot(byName: Map<string, Bone>, t: number, fear: number): void {
-  const pose = (name: string, x: number, y: number, z: number) => {
-    const bone = byName.get(name)
-    if (bone) bone.rotation.set(x, y, z)
-  }
-  const quick = 1 + fear * 3
-
-  pose('head', 0, Math.sin(t * 2.1 * quick) * (0.2 + fear * 0.5), Math.sin(t * 1.4) * 0.1)
-  pose('tail', 0, Math.sin(t * 2.6 * quick) * (0.18 + fear * 0.4), 0)
-  pose('neck', 0, Math.sin(t * 1.7 * quick) * (0.12 + fear * 0.35), Math.sin(t * 1.1) * 0.08)
-  // Snake: a wave travelling down the body.
-  for (let i = 1; i <= 3; i++) {
-    pose(`body${i}`, 0, Math.sin(t * 2.4 * quick - i * 0.8) * (0.1 + fear * 0.3), 0)
-  }
-  // Bird: wingbeats, which get frantic.
-  const beat = Math.sin(t * 6 * quick)
-  pose('wingL', beat * (0.25 + fear * 0.8), 0, 0)
-  pose('wingR', -beat * (0.25 + fear * 0.8), 0, 0)
-  // Crab: claws waving.
-  pose('clawL', 0, Math.sin(t * 3.4 * quick) * (0.2 + fear * 0.6), 0)
-  pose('clawR', 0, -Math.sin(t * 3.4 * quick + 0.7) * (0.2 + fear * 0.6), 0)
-  // Elephant: the trunk curls and uncurls.
-  pose('trunk1', 0, 0, Math.sin(t * 1.6) * 0.18 - fear * 0.3)
-  pose('trunk2', 0, 0, Math.sin(t * 1.9 + 0.6) * 0.22 - fear * 0.35)
-}
 
 /** The headline's centre, cast from the page onto the arrangement's plane. */
 function headlinePoint(frame: RootState, out: Vector3): Vector3 {
@@ -508,7 +466,7 @@ function PreyBody({ rig, mascot, theme, bump, bodyRef }: PreyBodyProps) {
   const mesh = useRef<SkinnedMesh>(null)
   const { geometry, root, skeleton } = rig
   useBind(mesh, skeleton)
-  const skin = SKIN[mascot]
+  const skin = MASCOT_SKIN[mascot]
 
   return (
     <group ref={bodyRef} scale={0.0001}>
