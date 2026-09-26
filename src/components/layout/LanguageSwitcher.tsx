@@ -20,7 +20,7 @@ export function LanguageSwitcher({ variant = 'compact', className, layoutId = 'l
       aria-label={t.a11y.languageSwitcher}
       className={cn(
         'relative inline-flex items-center rounded-full p-1',
-        variant === 'compact' ? 'gap-0.5' : 'gap-1 border border-border bg-surface',
+        variant === 'compact' ? 'gap-0.5' : 'max-w-full flex-wrap justify-center gap-1 border border-border bg-surface',
         className,
       )}
     >
@@ -37,7 +37,7 @@ export function LanguageSwitcher({ variant = 'compact', className, layoutId = 'l
             data-cursor="link"
             className={cn(
               'relative rounded-full font-medium transition-colors duration-300',
-              variant === 'compact' ? 'h-8 px-2.5 font-mono text-[0.7rem] tracking-[0.12em] uppercase' : 'h-10 px-4 text-sm',
+              variant === 'compact' ? 'h-8 px-2.5 font-mono text-[0.7rem] tracking-[0.12em] uppercase' : 'h-10 px-4 text-sm max-xs:px-2.5 max-xs:text-[0.82rem]',
               active ? 'text-fg' : 'text-fg-3 hover:text-fg-2',
             )}
           >

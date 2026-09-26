@@ -66,7 +66,7 @@ export function Hero() {
 
       {/* 3D identity sculpture */}
       <motion.div
-        className="pointer-events-none absolute inset-0 lg:left-[14%]"
+        className="pointer-events-none absolute inset-0"
         style={{ opacity: sceneOpacity }}
         role="img"
         aria-label={t.a11y.heroSculpture}

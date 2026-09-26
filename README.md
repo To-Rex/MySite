@@ -627,7 +627,10 @@ its box and targets too small for a thumb — turned up, and what changed:
   and the third of a seven-twelfths block never is: because the container is
   capped, even at 1920 it stood out of its column into the gutter, and at 1280
   it stood out of the viewport by 103px. Preferences are now a row under the
-  two link columns rather than a third column.
+  two link columns rather than a third column. The same switcher is 354px wide
+  and a 360px phone has 320 to give it, so below the `xs` breakpoint its
+  buttons tighten (`max-xs:px-2.5`, 13px type) to 308, and it may wrap as a
+  last resort — the only place it does is a 320px screen.
 - Targets a thumb can hit. The labels in the universe were 29px tall and the
   technology chips 34; both stay as drawn on a mouse and grow only under a
   coarse pointer (`@media (pointer: coarse)` in CSS, `pointer-coarse:` in
@@ -638,6 +641,14 @@ its box and targets too small for a thumb — turned up, and what changed:
   there and tightens its padding; nothing else sees it.
 - The gutter is never narrower than the safe area, so nothing sits under a
   notch in landscape, and the mobile menu pads for the home indicator.
+- The hero's canvas used to start 14% in from the left on wide screens, to
+  keep the sculpture off the headline. The composition was right; the edge was
+  not: anything that orbited out to the left — the turtles, every few seconds —
+  vanished at an invisible line a seventh of the way across the page. The
+  canvas is now full-bleed and the arrangement itself moves right by the same
+  seven percent in world units, so it sits exactly where it did and the orbits
+  run to the real edge. The easter egg was unaffected either way: it places the
+  animal from the canvas's own bounding rect, not the viewport's.
 
 ### Performance
 

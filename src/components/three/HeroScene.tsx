@@ -409,7 +409,11 @@ function Arrangement({ theme, tier, progress, introDone, reducedMotion }: Omit<H
     const fit = Math.min(1, (state.viewport.width * 0.92) / ARRANGEMENT_SPAN)
     const scale = entrance.current * fit * (1 - s * 0.28)
     g.scale.setScalar(Math.max(0.0001, scale))
-    g.position.x = BASE_OFFSET[0] * fit
+    // On wide screens the canvas is the whole viewport but the sculpture keeps
+    // to the right of centre, where it clears the headline: the same seven
+    // percent the canvas's left edge used to be inset by, in world units.
+    const aside = state.size.width >= 1024 ? state.viewport.width * 0.07 : 0
+    g.position.x = BASE_OFFSET[0] * fit + aside
     g.position.y = BASE_OFFSET[1] * fit + s * 1.6 + (reducedMotion ? 0 : Math.sin(t * 0.6) * 0.05)
 
     // The jolt as the jaws close. Applied after the damping so it is a jolt and
