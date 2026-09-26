@@ -127,6 +127,14 @@
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(12px);
+  min-height: 2rem;
+}
+@media (pointer: coarse) {
+  .universe-label {
+    padding: 0.7rem 1rem;
+    min-height: 2.75rem;
+    font-size: 0.85rem;
+  }
   -webkit-backdrop-filter: blur(12px);
   white-space: nowrap;
   cursor: pointer;

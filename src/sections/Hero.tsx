@@ -92,7 +92,7 @@ export function Hero() {
       {/* Content */}
       <motion.div
         style={{ y: textY, opacity: textOpacity }}
-        className="container-x relative flex min-h-[100svh] flex-col justify-between pt-28 pb-[clamp(2rem,6vh,4rem)] md:pt-32"
+        className="container-x relative flex min-h-[100svh] flex-col justify-between pt-28 pb-[clamp(2rem,6vh,4rem)] md:pt-32 short:pt-20 short:pb-5"
       >
         <motion.div {...reveal(0.2)} className="flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[0.7rem] tracking-[0.16em] text-fg-2 uppercase">
           <span className="flex items-center gap-2">
@@ -109,7 +109,7 @@ export function Hero() {
               word, and the name is about to be eaten rather than copied. */}
           <h1
             id="hero-title"
-            className="display-tight text-[clamp(3.6rem,13.6vw,12.8rem)] uppercase select-none"
+            className="display-tight text-[clamp(3.6rem,13.6vw,12.8rem)] uppercase select-none short:text-[clamp(2.4rem,18vh,6rem)]"
             onDoubleClick={eggReady ? () => startSpectacle() : undefined}
           >
             <SplitText
@@ -153,7 +153,7 @@ export function Hero() {
             {...reveal(1.6)}
             type="button"
             onClick={() => scrollTo(SECTION_IDS.about)}
-            className="mt-10 inline-flex items-center gap-3 font-mono text-[0.68rem] tracking-[0.18em] text-fg-3 uppercase transition-colors hover:text-fg"
+            className="mt-10 inline-flex min-h-11 items-center gap-3 font-mono text-[0.68rem] tracking-[0.18em] text-fg-3 uppercase transition-colors hover:text-fg"
             data-cursor="link"
             aria-label={t.hero.scrollHint}
           >

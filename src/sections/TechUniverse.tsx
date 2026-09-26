@@ -171,7 +171,7 @@ export function TechUniverse() {
                               aria-pressed={isActive}
                               data-cursor="link"
                               className={cn(
-                                'rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors duration-300',
+                                'rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors duration-300 pointer-coarse:min-h-11 pointer-coarse:px-4',
                                 isActive
                                   ? 'border-accent bg-accent text-accent-ink'
                                   : 'border-border text-fg-2 hover:border-border-2 hover:text-fg',

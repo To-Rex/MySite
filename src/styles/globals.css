@@ -23,7 +23,7 @@
   --radius-xl: 2rem;
 
   --container: 84rem;
-  --gutter: clamp(1.25rem, 4vw, 3rem);
+  --gutter: max(clamp(1.25rem, 4vw, 3rem), env(safe-area-inset-left), env(safe-area-inset-right));
   --section-y: clamp(6rem, 14vh, 11rem);
 }
 
@@ -76,6 +76,8 @@
   --glass-border: rgba(18, 18, 17, 0.08);
   --selection: rgba(154, 107, 42, 0.22);
 }
+
+@custom-variant short (@media (orientation: landscape) and (max-height: 540px));
 
 @theme inline {
   --font-sans: var(--font-sans);

@@ -36,7 +36,7 @@ export function Footer() {
             <p className="mt-3 font-mono text-xs tracking-[0.14em] text-fg-3 uppercase">{t.common.role}</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-8 md:col-span-7 md:grid-cols-3">
+          <div className="grid grid-cols-2 gap-8 md:col-span-7">
             <div>
               <p className="eyebrow mb-4">{t.footer.nav}</p>
               <ul className="flex flex-col gap-2.5">
@@ -48,7 +48,7 @@ export function Footer() {
                         e.preventDefault()
                         scrollTo(item.id)
                       }}
-                      className="text-sm text-fg-2 transition-colors hover:text-fg"
+                      className="inline-block text-sm text-fg-2 transition-colors hover:text-fg pointer-coarse:py-1.5"
                       data-cursor="link"
                     >
                       {t.nav[item.key]}
@@ -66,7 +66,7 @@ export function Footer() {
                       href={s.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-sm text-fg-2 transition-colors hover:text-fg"
+                      className="inline-flex items-center gap-1.5 text-sm text-fg-2 transition-colors hover:text-fg pointer-coarse:py-1.5"
                       data-cursor="link"
                     >
                       {t.presence.platforms[s.id].name}
@@ -75,15 +75,15 @@ export function Footer() {
                   </li>
                 ))}
                 <li>
-                  <a href={`mailto:${site.email}`} className="text-sm text-fg-2 transition-colors hover:text-fg" data-cursor="link">
+                  <a href={`mailto:${site.email}`} className="inline-block text-sm text-fg-2 transition-colors hover:text-fg pointer-coarse:py-1.5" data-cursor="link">
                     {site.email}
                   </a>
                 </li>
               </ul>
             </div>
-            <div className="col-span-2 md:col-span-1">
+            <div className="col-span-2">
               <p className="eyebrow mb-4">{t.footer.preferences}</p>
-              <div className="flex flex-col items-start gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <LanguageSwitcher variant="expanded" layoutId="lang-indicator-footer" />
                 <ThemeToggle withLabel />
               </div>

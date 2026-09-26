@@ -46,7 +46,7 @@ export function MobileMenu({ open, onClose, onNavigate, active }: MobileMenuProp
           role="dialog"
           aria-modal="true"
           aria-label={t.common.menu}
-          className="fixed inset-0 z-[90] flex flex-col bg-bg/92 px-[var(--gutter)] pt-24 pb-8 backdrop-blur-2xl lg:hidden"
+          className="fixed inset-0 z-[90] flex flex-col overflow-y-auto bg-bg/92 px-[var(--gutter)] pt-24 pb-[max(2rem,env(safe-area-inset-bottom))] backdrop-blur-2xl lg:hidden short:pt-16"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: 0.35, ease: EASE } }}

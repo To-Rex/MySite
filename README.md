@@ -614,6 +614,31 @@ The cap on each step is 0.25 s, and that looseness is deliberate: it only has to
 reject the nonsense above. Clamping to a frame budget like 1/30 looks tidier and
 runs the whole hero at a third speed on a device drawing 9 fps.
 
+### Responsive
+
+The layout is fluid rather than stepped: the gutter, the section rhythm and the
+display type are all `clamp()`ed, the container is capped at 84rem, and the
+hero is `100svh` so a phone's toolbar coming and going does not move it. What
+the audit — ten viewports from 360×780 to 2560×1440, each scrolled end to end
+and measured for horizontal overflow, boxes crossing the edge, text wider than
+its box and targets too small for a thumb — turned up, and what changed:
+
+- The footer's language switcher, in its expanded form, is about 355px wide,
+  and the third of a seven-twelfths block never is: because the container is
+  capped, even at 1920 it stood out of its column into the gutter, and at 1280
+  it stood out of the viewport by 103px. Preferences are now a row under the
+  two link columns rather than a third column.
+- Targets a thumb can hit. The labels in the universe were 29px tall and the
+  technology chips 34; both stay as drawn on a mouse and grow only under a
+  coarse pointer (`@media (pointer: coarse)` in CSS, `pointer-coarse:` in
+  Tailwind), so the design is unchanged where a cursor is doing the pointing.
+- A phone on its side is wide and a few hundred pixels tall, and a headline
+  sized from the width alone filled the screen with two words. A `short`
+  variant (`landscape` and `max-height: 540px`) sizes the hero from the height
+  there and tightens its padding; nothing else sees it.
+- The gutter is never narrower than the safe area, so nothing sits under a
+  notch in landscape, and the mobile menu pads for the home indicator.
+
 ### Performance
 
 - The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only (~140 kB, 42 kB gzipped).
