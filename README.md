@@ -571,6 +571,20 @@ minutes, which is exactly what accumulating clamped deltas did. It does wait for
 one thing before starting the clock — all five species meshed — because a herd
 that turns up during the second act is worse than a beat of empty sky.
 
+### Canvases and the pointer
+
+Every full-bleed canvas here — the companion's, the valley's — sits in a layer
+with `pointer-events: none`, and that is not enough. R3F's `<Canvas>` sets
+`pointer-events: auto` on its own wrapper (it is where its event system
+listens), which overrides the inherited `none`, so the layer let clicks through
+and the canvas inside it did not. The companion's layer is `fixed inset-0` and
+is prebuilt a couple of seconds after load, which meant that from then on a
+real double-click on the headline landed on a transparent turtle canvas and the
+easter egg never opened — while the automated check, which dispatches the event
+straight at the element and skips hit-testing, went on passing. Both canvases
+now carry `style={{ pointerEvents: 'none' }}` of their own. The universe's
+canvas is the one that must not: its meshes take `onClick`.
+
 ### Parked canvases and the clock
 
 Every 3D scene here stops rendering once it scrolls off screen — that is what

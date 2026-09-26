@@ -401,7 +401,11 @@ export default function CompanionTurtle({ theme, tier, visible }: CompanionTurtl
         frameloop={visible ? 'always' : 'never'}
         camera={{ position: [0, 0, 6], fov: 34, near: 0.1, far: 40 }}
         gl={{ antialias: true, alpha: true, powerPreference: 'low-power', stencil: false }}
-        style={{ background: 'transparent' }}
+        // The layer above says pointer-events: none, and that is not enough:
+        // R3F puts pointer-events: auto on its own wrapper, so this canvas —
+        // full-bleed, fixed, mounted a couple of seconds after load — was
+        // catching every click on the page under it, the headline's included.
+        style={{ background: 'transparent', pointerEvents: 'none' }}
       >
         <Scene theme={theme} tier={tier} visible={visible} />
       </Canvas>

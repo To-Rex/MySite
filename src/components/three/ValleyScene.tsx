@@ -1323,6 +1323,9 @@ export default function ValleyScene({ theme, tier }: ValleySceneProps) {
       frameloop={running ? 'always' : 'never'}
       camera={{ position: [0, 12, 42], fov: 46, near: 0.5, far: 600 }}
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance', stencil: false }}
+      // Parked over the page for most of a visit: R3F's own wrapper would
+      // otherwise take the pointer (see CompanionTurtle).
+      style={{ pointerEvents: 'none' }}
     >
       <Show theme={theme} tier={tier} onReady={onReady} />
     </Canvas>
