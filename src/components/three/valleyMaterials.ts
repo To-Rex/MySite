@@ -40,6 +40,9 @@ export const ATMOS = {
   uLevel: { value: 1 },
   uWaterLevel: { value: WATER_LEVEL },
   uBump: { value: 0.6 },
+  /** Where the ground burns: x, z and radius, and how far along the burn is. */
+  uScorch: { value: new Vector3(0, 0, 1) },
+  uScorchAmount: { value: 0 },
   /** Sway at the crown, as a fraction of the plant's height. */
   uSway: { value: 0.028 },
 }
@@ -192,6 +195,9 @@ const TERRAIN_COLOR = /* glsl */ `
   // The margin of the lake is dark and wet.
   float vtShore = 1.0 - smoothstep(uWaterLevel + 0.2, uWaterLevel + 2.4, vvWorld.y);
   vtCol *= 1.0 - 0.38 * vtShore;
+  // And after the rock, the ground around the crater is char.
+  float vtScorch = (1.0 - smoothstep(uScorch.z * 0.45, uScorch.z, distance(vtP, uScorch.xy))) * uScorchAmount;
+  vtCol = mix(vtCol, vec3(0.05, 0.04, 0.035), vtScorch);
   diffuseColor.rgb = vtCol;
 `
 
@@ -263,7 +269,12 @@ const mistUniforms = () => ({
 
 /** The ground. */
 export function terrainProgram(shader: Shader): void {
-  Object.assign(shader.uniforms, mistUniforms(), { uWaterLevel: ATMOS.uWaterLevel, uBump: ATMOS.uBump })
+  Object.assign(shader.uniforms, mistUniforms(), {
+    uWaterLevel: ATMOS.uWaterLevel,
+    uBump: ATMOS.uBump,
+    uScorch: ATMOS.uScorch,
+    uScorchAmount: ATMOS.uScorchAmount,
+  })
   shader.vertexShader =
     ATMOS_PARS_VERT +
     'varying vec3 vvNormalW;\n' +
@@ -275,13 +286,13 @@ export function terrainProgram(shader: Shader): void {
       .replace('#include <project_vertex>', '#include <project_vertex>' + ATMOS_VERT_BODY)
   shader.fragmentShader =
     ATMOS_PARS_FRAG +
-    'uniform float uWaterLevel;\nuniform float uBump;\nvarying vec3 vvNormalW;\n' +
+    'uniform float uWaterLevel;\nuniform float uBump;\nuniform vec3 uScorch;\nuniform float uScorchAmount;\nvarying vec3 vvNormalW;\n' +
     NOISE_GLSL +
     shader.fragmentShader
       .replace('#include <color_fragment>', '#include <color_fragment>' + TERRAIN_COLOR)
       .replace(
         '#include <roughnessmap_fragment>',
-        '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.5, vtShore);',
+        '#include <roughnessmap_fragment>\n  roughnessFactor = mix(mix(roughnessFactor, 0.5, vtShore), 1.0, vtScorch);',
       )
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>' + TERRAIN_BUMP)
       .replace('#include <fog_fragment>', '#include <fog_fragment>' + MIST_BODY)
@@ -466,8 +477,14 @@ export function makeTrailMaterial(strength: { value: number }, blur: number): Sh
  * of each for the whole cloud, which is no good for smoke that has to thin out
  * puff by puff.
  */
-export function makeSmokeMaterial(map: CanvasTexture | null, colour: string, additive = false): ShaderMaterial {
+export function makeSmokeMaterial(
+  map: CanvasTexture | null,
+  colour: string,
+  additive = false,
+  heat = false,
+): ShaderMaterial {
   return new ShaderMaterial({
+    defines: heat ? { HEAT: '' } : {},
     uniforms: {
       uMap: { value: map },
       uColor: { value: new Color(colour) },
@@ -478,8 +495,15 @@ export function makeSmokeMaterial(map: CanvasTexture | null, colour: string, add
       attribute float aAlpha;
       varying float vA;
       uniform float uScale;
+      #ifdef HEAT
+        attribute float aHeat;
+        varying float vH;
+      #endif
       void main() {
         vA = aAlpha;
+        #ifdef HEAT
+          vH = aHeat;
+        #endif
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         gl_PointSize = aSize * (uScale / -mv.z);
         gl_Position = projectionMatrix * mv;
@@ -489,9 +513,22 @@ export function makeSmokeMaterial(map: CanvasTexture | null, colour: string, add
       uniform sampler2D uMap;
       uniform vec3 uColor;
       varying float vA;
+      #ifdef HEAT
+        varying float vH;
+      #endif
       void main() {
         float m = texture2D(uMap, gl_PointCoord).a;
-        gl_FragColor = vec4(uColor, m * vA);
+        #ifdef HEAT
+          // Blackbody, roughly: soot, then red, orange, and white at the core.
+          vec3 hot = mix(
+            mix(vec3(0.02, 0.01, 0.01), vec3(1.0, 0.22, 0.04), smoothstep(0.0, 0.45, vH)),
+            vec3(1.0, 0.96, 0.82),
+            smoothstep(0.45, 1.0, vH)
+          );
+          gl_FragColor = vec4(hot * uColor, m * vA);
+        #else
+          gl_FragColor = vec4(uColor, m * vA);
+        #endif
       }
     `,
     transparent: true,

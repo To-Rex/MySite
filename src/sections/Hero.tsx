@@ -43,7 +43,7 @@ export function Hero() {
   const eggReady = webgl && !reduced
   // Gone from the moment the animal is summoned until the fruit splits open —
   // and for the whole of the valley, which stands where the words do.
-  const buried = valley !== 'idle' && valley !== 'return'
+  const buried = valley !== 'idle' && valley !== 'return' && valley !== 'load'
   const nameShown = introDone && (act === 'idle' || act === 'crack' || act === 'return') && !buried
   const growing = act === 'crack' || act === 'return' || valley === 'return'
   const nameMotion = (introDelay: number) =>
@@ -79,10 +79,11 @@ export function Hero() {
               progress={scrollYProgress}
               introDone={introDone}
               reducedMotion={reduced}
-              // Parked while the valley is up: it is hidden under the cinematic
-              // and the two scenes together were too much for an older GPU. It
-              // wakes for the return, so the fade-out reveals a live hero.
-              active={inView && (valley === 'idle' || valley === 'return')}
+              // Parked once the valley covers it: the two scenes together were
+              // too much for an older GPU. It keeps moving while the valley
+              // compiles and fades up, and wakes again for the return, so at
+              // neither end is there a frozen frame under the cross-fade.
+              active={inView && (valley === 'idle' || valley === 'load' || valley === 'open' || valley === 'return')}
             />
           </Suspense>
         )}

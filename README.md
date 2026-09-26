@@ -390,7 +390,8 @@ it, and `Hero.tsx` takes the headline down for the duration.
 
 | Act | Seconds | What happens |
 | --- | --- | --- |
-| `open` | 2.4 | The page gives way and the camera settles into the valley |
+| `load` | — | Mounted and compiling off the main thread; nothing shown, the hero still moving |
+| `open` | 2.4 | The mist lifts and the camera settles into the valley |
 | `graze` | 4.2 | Two sauropods, two stegosaurs, a tyrannosaur, two turtles, three pterosaurs over the ridge |
 | `streak` | 2.6 | Something comes down out of the north-west, and every head comes up |
 | `impact` | 1.8 | White-out, shockwave, fireball, the crater throwing its floor back out |
@@ -458,8 +459,17 @@ into a normal, and they are gentle on purpose — at five times the strength the
 surface was a field of random facets and the lake rendered as glitter.
 
 **The cast** is the same rigged creatures as everywhere else, at `low` detail
-so the meshes come out of the cache the hero already filled. On `medium` and
-`high` the sun casts real shadows — one orthographic box over the near valley —
+so the meshes come out of the cache the hero already filled. Each stands with
+its feet on the ground, which took two things. A rig's origin is its middle and
+its feet are below it, so every animal is lifted by however far its geometry
+reaches down — placed at the height of the ground they were buried to the
+belly, the tyrannosaur a crocodile. And "the ground" is `groundAt`, the height
+of the *mesh* — the same two triangles per quad that `PlaneGeometry` indexes,
+interpolated the same way — not `heightAt`, the analytic field the mesh is
+sampled from: between two vertices the two disagree by up to a third of a unit,
+which is a turtle buried to its shell. Each is also stood on the slope rather
+than on the level, from the mesh normal under it, so all four feet meet the
+ground. On `medium` and `high` the sun casts real shadows — one orthographic box over the near valley —
 and the animals both cast and receive; each still stands in a soft contact
 patch, dimmed, for the occlusion under the belly a shadow map is too coarse
 for. On `low` the patch is the only grounding the herd has. The shadow camera is
@@ -477,8 +487,20 @@ the flight path with its point at the rock carries the plasma — white at the
 head, orange and ragged further back — with a fatter, fainter cone around it
 for the glow, and a trail of smoke sprites that are born the moment the rock
 passes their station (the streak's easing inverted once, by bisection) and go
-on spreading through the impact and the dark. It lights the valley on the way
-down, and the crater lights it after.
+on spreading through the impact and the dark. In the last stretch it breaks
+up: three pieces peel away across the path, each a little behind and below the
+body with a short trail of its own. The camera shudders as it passes overhead.
+It lights the valley on the way down, and the crater lights it after.
+
+**The impact** is five things at once. A white-out held against the lens. A
+fireball of sprites that carry their own temperature — blackbody, roughly:
+white at the heart through orange to soot at the edges as it climbs and cools —
+which is not a sphere, because a sphere was an egg. A crater cut into the mesh
+itself on the frame the rock lands, a bowl with a raised rim, with char
+spreading out from it in the ground material. A wall of dust the blast front
+drives across the floor at ground level, the trees going over as it reaches
+them. And the column of smoke that goes up after, sprites with a size and an
+opacity each, so where they overlap they do not pile up into a black disc.
 
 Two lighting notes, both learned the hard way. The hide is a physical material,
 so with no environment to reflect it goes to near-black and the entire herd came
@@ -507,12 +529,35 @@ the view rather than a thing in the world. Both particle fields carry an
 explicit `boundingSphere` — they are repositioned far from where their vertices
 were authored, and three would otherwise cull them on the frame they matter.
 
+**The click.** It used to do everything at once — fetch the chunk, mesh five
+species, sample sixteen thousand heights, scatter a thousand plants, merge the
+tree geometries, and then compile forty shader programs on the first frame —
+and the page stood still for most of a second before the valley appeared, the
+hero frozen mid-stride. Now the whole scene is built ahead of it. Nine seconds
+after load the warm-up fetches the chunk, meshes the cast, and builds the land
+and the forest in slices between idle frames; when that resolves, `Valley.tsx`
+mounts the scene invisibly with its frameloop parked, and the scene compiles
+every program off the main thread (`gl.compileAsync`, which uses
+KHR_parallel_shader_compile where it exists and polls) and then draws one frame
+nobody sees, so the shadow and environment passes have run and the textures
+are on the card. The click puts the store into a `load` act; the canvas answers
+by flipping its `frameloop` prop from `never` to `always`, the way the hero's
+does, and the first running frame starts the clock and fades the overlay up.
+(Starting the loop from *inside* the scene with `setFrameloop` did not survive
+the next render of the canvas, which re-applied the prop and put the loop back
+to sleep after one frame.)
+The hero keeps moving through all of it, and the valley is found through mist
+that lifts as the camera settles rather than switched on. A parked canvas
+costs nothing per frame; what it costs is memory, so after a showing the scene
+is torn down and only built again twelve seconds later. A click before the
+warm-up has finished falls back to building on the spot.
+
 **What it costs.** The tier says what the CPU is and nothing about the GPU: a
 nine-year-old Radeon behind eight cores reported `high` and ran the first cut
 at eight frames a second. Three things fixed that. The hero's canvas is parked
-while the valley is up — it is hidden under the cinematic and the two scenes
-together were the bulk of the load — and wakes for the return, so the fade-out
-reveals a live hero. Shadows are plain PCF on every tier that has them. And the
+once the valley covers it — it is hidden under the cinematic and the two scenes
+together were the bulk of the load — and wakes for the return, so at neither
+end is there a frozen frame under the cross-fade. Shadows are plain PCF on every tier that has them. And the
 scene measures its own frame times over the opening act and, if they average
 worse than thirty a second, drops the shadows, the bump and the extra
 resolution before the herd is in shot. On that same card the valley now holds

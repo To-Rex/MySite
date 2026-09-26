@@ -1,11 +1,12 @@
-import { Canvas, useFrame, type RootState } from '@react-three/fiber'
-import { useEffect, useMemo, useRef, type RefObject } from 'react'
+import { Canvas, useFrame, useThree, type RootState } from '@react-three/fiber'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import {
   BackSide,
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
   Color,
+  Euler,
   Fog,
   IcosahedronGeometry,
   MathUtils,
@@ -22,15 +23,15 @@ import {
 } from 'three'
 import type { Theme } from '@/theme/context'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
-import { setValleyAct, type ValleyAct } from '@/lib/valley'
+import { getValley, setValleyAct, useValley, type ValleyAct } from '@/lib/valley'
 import { useCreatureGeometry } from './useCreature'
 import { MASCOT_SKIN, animateFlap, animateGraze, useBind, useCreature, type Rig } from './creatureRig'
 import { Eyes, Teeth } from './creatureFittings'
 import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 import type { AnyCreatureKind } from './mascots'
-import { VALLEY_DETAIL } from './valleyCast'
-import { LAKE, VOLCANO, WATER_LEVEL, buildTerrain, hash2, heightAt } from './valleyLand'
+import { HERD, VALLEY_DETAIL, type Placed } from './valleyCast'
+import { LAKE, VOLCANO, WATER_LEVEL, buildTerrain, carveCrater, groundAt, groundNormalAt, hash2 } from './valleyLand'
 import {
   ATMOS,
   HALO,
@@ -129,24 +130,6 @@ const blend = (a: string, b: string, m: number, out: Color) => out.set(a).lerp(M
 /* The cast                                                                    */
 /* -------------------------------------------------------------------------- */
 
-interface Placed {
-  kind: AnyCreatureKind
-  x: number
-  z: number
-  size: number
-  yaw: number
-}
-
-const HERD: readonly Placed[] = [
-  { kind: 'sauropod', x: -23, z: -50, size: 13, yaw: 0.7 },
-  { kind: 'sauropod', x: 31, z: -78, size: 11.5, yaw: -1.9 },
-  { kind: 'stegosaur', x: 17, z: -33, size: 6.6, yaw: -0.8 },
-  { kind: 'stegosaur', x: -41, z: -63, size: 6, yaw: 1.4 },
-  { kind: 'dino', x: 5, z: -24, size: 7.4, yaw: -0.4 },
-  { kind: 'turtle', x: -11, z: -16, size: 2.8, yaw: 0.9 },
-  { kind: 'turtle', x: 13, z: -14, size: 2.2, yaw: -0.5 },
-]
-
 const FLYERS = [
   { x: -26, y: 22, z: -40, size: 7.5, phase: 0 },
   { x: -4, y: 29, z: -58, size: 6.4, phase: 1.4 },
@@ -195,7 +178,7 @@ const ASH_HOME = (() => {
     // the lens is a square the size of a building.
     const z = -18 - hash2(i, 29) * 180
     out[i * 3] = x
-    out[i * 3 + 1] = heightAt(x, z)
+    out[i * 3 + 1] = groundAt(x, z)
     out[i * 3 + 2] = z
   }
   return out
@@ -225,7 +208,20 @@ const SMOKE_BORN = (() => {
 
 /** The volcano's own smoke, which never stops. */
 const VENT_COUNT = 36
-const SUMMIT = heightAt(VOLCANO.x, VOLCANO.z) + 9
+const SUMMIT = groundAt(VOLCANO.x, VOLCANO.z) + 9
+
+/** The wall of dust the blast front pushes ahead of itself, at ground level. */
+const DUST_COUNT = 150
+
+/**
+ * Bolides break up. Three pieces come away from the main body in the last
+ * part of the descent, each with a short trail of its own.
+ */
+const FRAGMENTS = [
+  { side: 1, drop: 0.6, lag: 0.5, size: 0.42 },
+  { side: -0.7, drop: 1.1, lag: 0.9, size: 0.3 },
+  { side: 0.35, drop: 1.6, lag: 1.3, size: 0.24 },
+] as const
 
 /** The ball of fire is sprites, not a sphere: a sphere was an egg. */
 const FIRE_COUNT = 90
@@ -367,13 +363,32 @@ interface Beat {
   blast: number
 }
 
+const UP = new Vector3(0, 1, 0)
+const EULER = new Euler()
+const SPIN = new Quaternion()
+
 function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
   const place = spot as Placed
   const rig = useCreature(place.kind, VALLEY_DETAIL)
   const group = useRef<Group>(null)
   const shade = useRef<Mesh>(null)
   const shadowMap = useMemo(() => contactShadow(), [])
-  const ground = useMemo(() => heightAt(place.x, place.z), [place.x, place.z])
+  // The mesh's height here, not the analytic field's: they differ by up to a
+  // third of a unit between vertices, which was a turtle buried to its shell.
+  const ground = useMemo(() => groundAt(place.x, place.z), [place.x, place.z])
+  // The rig's origin is its middle and its feet are below it, so it is lifted
+  // by however far the geometry reaches down — and stood on the slope, not on
+  // the level, so all four feet meet the ground.
+  const lift = useMemo(() => {
+    if (!rig) return 0
+    rig.geometry.computeBoundingBox()
+    return -(rig.geometry.boundingBox?.min.y ?? 0) * place.size
+  }, [rig, place.size])
+  const tilt = useMemo(() => {
+    const n = new Vector3()
+    groundNormalAt(place.x, place.z, n)
+    return new Quaternion().setFromUnitVectors(UP, n)
+  }, [place.x, place.z])
   const skin =
     place.kind === 'dino'
       ? { texScale: 2.6, halfHeight: 0.22, plateMix: undefined as number | undefined }
@@ -397,12 +412,17 @@ function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
     const fall = easeInOut(gone)
     // Down onto its side and settled into the ground, not merely leaning: at
     // 1.45 rad the long necks stayed up and the herd read as a row of stakes.
-    g.position.set(place.x, ground + Math.sin(t * 0.5 + index) * 0.05 - fall * place.size * 0.34, place.z)
-    g.rotation.set(
+    g.position.set(
+      place.x,
+      ground + lift + Math.sin(t * 0.5 + index) * 0.05 - fall * (lift + place.size * 0.1),
+      place.z,
+    )
+    EULER.set(
       fall * (0.5 + (index % 3) * 0.12),
       place.yaw + Math.sin(t * 0.12 + index) * 0.08 + fall * 0.3,
       -fall * (1.62 + (index % 2) * 0.1),
     )
+    g.quaternion.copy(tilt).multiply(SPIN.setFromEuler(EULER))
     g.scale.setScalar(place.size)
 
     // The patch spreads and thins as the body settles onto its side.
@@ -517,22 +537,50 @@ function Body({
 /* -------------------------------------------------------------------------- */
 
 /** A points cloud with a size and an alpha per sprite, positioned every frame. */
-function spriteField(count: number, centre: Vector3, radius: number): BufferGeometry {
+function spriteField(count: number, centre: Vector3, radius: number, heat = false): BufferGeometry {
   const g = new BufferGeometry()
   g.setAttribute('position', new BufferAttribute(new Float32Array(count * 3), 3))
   g.setAttribute('aSize', new BufferAttribute(new Float32Array(count), 1))
   g.setAttribute('aAlpha', new BufferAttribute(new Float32Array(count), 1))
+  if (heat) g.setAttribute('aHeat', new BufferAttribute(new Float32Array(count), 1))
   // Repositioned far from where the vertices start; without a bounding sphere
   // three culls it while every point still sits at the origin.
   g.boundingSphere = new Sphere(centre, radius)
   return g
 }
 
-const HERD_SPOTS = HERD.map(({ x, z }) => ({ x, z }))
-
-function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
+function Show({ theme, tier, onReady }: { theme: Theme; tier: DeviceTier; onReady: () => void }) {
   const shadows = tier !== 'low'
-  const terrain = useMemo(() => buildTerrain(tier === 'low' ? 64 : tier === 'medium' ? 96 : 128), [tier])
+  const gl = useThree((state) => state.gl)
+  const scene = useThree((state) => state.scene)
+  const camera = useThree((state) => state.camera)
+  const advance = useThree((state) => state.advance)
+
+  /**
+   * Built while parked. The canvas mounts with its frameloop stopped; three
+   * would otherwise compile forty programs synchronously in the first frame,
+   * which was the page standing still for most of a second on the click, hero
+   * and all. `compileAsync` uses KHR_parallel_shader_compile where it exists
+   * and polls; then one frame is drawn — invisibly, the overlay is at zero —
+   * so the shadow and environment passes have run and the textures are on the
+   * card. The show does not start on that frame: it waits for the cue, which
+   * the canvas answers by changing its frameloop (see ValleyScene).
+   */
+  useEffect(() => {
+    let alive = true
+    void gl
+      .compileAsync(scene, camera)
+      .catch(() => undefined)
+      .then(() => {
+        if (!alive) return
+        advance(performance.now())
+        onReady()
+      })
+    return () => {
+      alive = false
+    }
+  }, [gl, scene, camera, advance, onReady])
+  const terrain = useMemo(() => buildTerrain(), [])
   const fleck = useMemo(() => ashFleck(), [])
   const rockShape = useMemo(() => rockGeometry(), [])
   const water = useMemo(() => makeWaterMaterial(tier === 'low' ? 0.18 : 0.32), [tier])
@@ -549,9 +597,11 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
   }, [])
   const smokeField = useMemo(() => spriteField(SMOKE_COUNT, new Vector3(-70, 70, -170), 260), [])
   const ventField = useMemo(() => spriteField(VENT_COUNT, new Vector3(VOLCANO.x, SUMMIT + 30, VOLCANO.z), 120), [])
-  const fireField = useMemo(() => spriteField(FIRE_COUNT, new Vector3(GROUND_ZERO[0], 20, GROUND_ZERO[1]), 90), [])
-  const fireMaterial = useMemo(() => makeSmokeMaterial(fleck, '#ff7a1e', true), [fleck])
+  const fireField = useMemo(() => spriteField(FIRE_COUNT, new Vector3(GROUND_ZERO[0], 20, GROUND_ZERO[1]), 90, true), [])
+  const fireMaterial = useMemo(() => makeSmokeMaterial(fleck, '#ffffff', true, true), [fleck])
   const plumeMaterial = useMemo(() => makeSmokeMaterial(fleck, '#3a3128'), [fleck])
+  const dustMaterial = useMemo(() => makeSmokeMaterial(fleck, '#a89a84'), [fleck])
+  const dustField = useMemo(() => spriteField(DUST_COUNT, new Vector3(GROUND_ZERO[0], 8, GROUND_ZERO[1]), 200), [])
   const keys = useMemo(
     () => ({ terrain: () => 'valley-terrain', rock: () => 'valley-rock' }),
     [],
@@ -600,6 +650,10 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
   const perf = useRef({ frames: 0, total: 0, last: 0, decided: false })
 
   const rock = useRef<Group>(null)
+  const fragments = useRef<Group>(null)
+  const terrainMesh = useRef<Mesh>(null)
+  const dustRing = useRef<Points>(null)
+  const carved = useRef(false)
   const rockLight = useRef<PointLight>(null)
   const blastLight = useRef<PointLight>(null)
   const trail = useRef<Mesh>(null)
@@ -617,11 +671,21 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
   useEffect(() => {
     resetSky()
     ROCK.uHeatDir.value.copy(travel)
+    ATMOS.uScorch.value.set(GROUND_ZERO[0], GROUND_ZERO[1], 44)
+    ATMOS.uScorchAmount.value = 0
   }, [travel])
 
-  const ground = useMemo(() => heightAt(GROUND_ZERO[0], GROUND_ZERO[1]), [])
+  const ground = useMemo(() => groundAt(GROUND_ZERO[0], GROUND_ZERO[1]), [])
+  /** Across the flight path, for the pieces that come away from the rock. */
+  const across = useMemo(() => new Vector3().crossVectors(travel, UP).normalize(), [travel])
 
   useFrame((state: RootState) => {
+    // Parked: the one warm frame, and nothing else until the cue.
+    if (getValley().act === 'idle') {
+      state.camera.position.set(0, 13.5, 30)
+      state.camera.lookAt(0, 11, -70)
+      return
+    }
     // Five creature meshes have to exist before there is a valley to show. They
     // are cheap at this detail and usually cached already, but on a cold start the
     // opening holds here rather than playing to an empty field.
@@ -723,6 +787,25 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
     state.scene.environmentIntensity = MathUtils.lerp(from.env, to.env, mix)
     SMOKE.uScale.value = state.gl.domElement.height * 0.5
 
+    // The opening: the valley is found through mist that lifts as the camera
+    // settles, rather than switched on.
+    if (state.scene.fog) {
+      const reveal = act === 'open' ? easeInOut(u) : 1
+      ;(state.scene.fog as Fog).near = MathUtils.lerp(16, 95, reveal)
+      if (act === 'open') ATMOS.uMistAmount.value = MathUtils.lerp(1.5, MOOD.day.mist, reveal)
+    }
+
+    // The crater, cut into the ground on the frame the rock lands, and the
+    // char spreading out from it.
+    if (act === 'impact' || act === 'die' || act === 'dark' || act === 'return') {
+      const tm = terrainMesh.current
+      if (!carved.current && tm) {
+        carveCrater(tm.geometry, GROUND_ZERO[0], GROUND_ZERO[1], 26, 6.5)
+        carved.current = true
+      }
+      ATMOS.uScorchAmount.value = act === 'impact' ? MathUtils.clamp(u * 2, 0, 1) : 1
+    }
+
     // --- what the animals know ------------------------------------------------
     beat.current.t = t
     beat.current.act = act
@@ -744,7 +827,8 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
 
     // --- the camera -----------------------------------------------------------
     const dolly = act === 'open' ? 1 - easeInOut(u) : 0
-    const shake = act === 'impact' ? Math.max(0, 1 - u * 1.6) : 0
+    const shake =
+      act === 'impact' ? Math.max(0, 1 - u * 1.6) : act === 'streak' ? MathUtils.smoothstep(u, 0.8, 1) * 0.35 : 0
     state.camera.position.set(
       Math.sin(t * 0.09) * 1.8 + Math.sin(t * 31) * shake * 0.9,
       9.5 + dolly * 4 + Math.sin(t * 27) * shake * 0.7,
@@ -788,12 +872,65 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
         // And it lights the valley on the way down.
         rl.position.copy(r.position)
         rl.intensity = fall * fall * 9000
+
+        // The break-up: pieces peel away in the last stretch, each falling a
+        // little behind and below the body with its own short trail.
+        const fg = fragments.current
+        if (fg) {
+          const split = MathUtils.smoothstep(fall, 0.58, 0.92)
+          fg.visible = split > 0.01
+          FRAGMENTS.forEach((piece, i) => {
+            const body = fg.children[i * 2]
+            const wake = fg.children[i * 2 + 1]
+            if (!body || !wake) return
+            body.position
+              .copy(r.position)
+              .addScaledVector(across, piece.side * split * 11)
+              .addScaledVector(UP, -piece.drop * split * 6)
+              .addScaledVector(travel, -piece.lag * split * 9)
+            body.rotation.set(t * 3 + i, t * 2.2, t * 1.7)
+            body.scale.setScalar(piece.size * (1.2 + fall * 4) * split)
+            const wakeLen = 14 + split * 26
+            wake.scale.set(1 + split * 2.2, wakeLen, 1 + split * 2.2)
+            wake.quaternion.copy(trailTurn)
+            wake.position.copy(body.position).addScaledVector(travel, -wakeLen * 0.5)
+          })
+        }
       } else {
         r.scale.setScalar(0.0001)
         tr.visible = false
         hl.visible = false
         rl.intensity = 0
         ROCK.uHeat.value = 0
+        if (fragments.current) fragments.current.visible = false
+      }
+    }
+
+    // The wall of dust the blast front drives across the floor.
+    const du = dustRing.current
+    if (du) {
+      const blast = beat.current.blast
+      const on = (act === 'impact' || act === 'die') && blast > 0.01 && blast < 0.995
+      du.visible = on
+      if (on) {
+        const pos = du.geometry.attributes.position as BufferAttribute
+        const size = du.geometry.attributes.aSize as BufferAttribute
+        const alpha = du.geometry.attributes.aAlpha as BufferAttribute
+        const front = 4 + blast * 125
+        const lit = MathUtils.smoothstep(blast, 0.03, 0.15) * (1 - MathUtils.smoothstep(blast, 0.7, 1))
+        for (let i = 0; i < DUST_COUNT; i++) {
+          const a = (i / DUST_COUNT) * Math.PI * 2 + (hash2(i, 601) - 0.5) * 0.1
+          const k = hash2(i, 602)
+          const r = front * (0.92 + k * 0.12)
+          const x = GROUND_ZERO[0] + Math.cos(a) * r
+          const z = GROUND_ZERO[1] + Math.sin(a) * r
+          pos.setXYZ(i, x, groundAt(x, z) + 2.5 + k * 3 + blast * 5, z)
+          size.setX(i, 7 + blast * 26 + k * 5)
+          alpha.setX(i, lit * 0.55 * (0.6 + k * 0.4))
+        }
+        pos.needsUpdate = true
+        size.needsUpdate = true
+        alpha.needsUpdate = true
       }
     }
 
@@ -872,25 +1009,29 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
         const pos = fb.geometry.attributes.position as BufferAttribute
         const size = fb.geometry.attributes.aSize as BufferAttribute
         const alpha = fb.geometry.attributes.aAlpha as BufferAttribute
+        const heat = fb.geometry.attributes.aHeat as BufferAttribute
         for (let i = 0; i < FIRE_COUNT; i++) {
           const dx = FIRE_SEED[i * 4] ?? 0
           const dy = FIRE_SEED[i * 4 + 1] ?? 0
           const dz = FIRE_SEED[i * 4 + 2] ?? 0
           const k = FIRE_SEED[i * 4 + 3] ?? 0
-          // Out from the crater, then up: the ball becomes a column of fire.
-          const reach = 4 + grow * (14 + k * 10)
+          // Out from the crater, then up: the ball becomes a column of fire,
+          // white at the heart and cooling to soot at the edges as it climbs.
+          const reach = 4 + grow * (16 + k * 12)
           pos.setXYZ(
             i,
             GROUND_ZERO[0] + dx * reach + Math.sin(t * 7 + i) * 0.8,
-            ground + 2 + dy * reach + grow * grow * 22,
+            ground + 2 + dy * reach + grow * grow * 26,
             GROUND_ZERO[1] + dz * reach,
           )
-          size.setX(i, 5 + grow * 9 + k * 5)
-          alpha.setX(i, Math.max(0, 0.55 - grow * 0.6) * (0.6 + k * 0.4))
+          size.setX(i, 6 + grow * 12 + k * 6)
+          alpha.setX(i, Math.max(0, 0.75 - grow * 0.8) * (0.6 + k * 0.4))
+          heat.setX(i, MathUtils.clamp(1.15 - grow * 1.5 - k * 0.35 - Math.hypot(dx, dz) * 0.25, 0, 1))
         }
         pos.needsUpdate = true
         size.needsUpdate = true
         alpha.needsUpdate = true
+        heat.needsUpdate = true
         fb.visible = true
       } else fb.visible = false
     }
@@ -1055,7 +1196,7 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
         <shaderMaterial vertexShader={SKY_VERT} fragmentShader={SKY_FRAG} side={BackSide} depthWrite={false} uniforms={SKY} />
       </mesh>
 
-      <mesh geometry={terrain} receiveShadow={shadows}>
+      <mesh ref={terrainMesh} geometry={terrain} receiveShadow={shadows}>
         <meshStandardMaterial
           roughness={0.95}
           metalness={0}
@@ -1074,7 +1215,7 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
       {/* The mountain is in the ground; this is what comes out of it. */}
       <points ref={vent} geometry={ventField} material={ventMaterial} />
 
-      <Flora tier={tier} shadows={shadows} herd={HERD_SPOTS} groundZero={GROUND_ZERO} beat={beat} />
+      <Flora tier={tier} shadows={shadows} groundZero={GROUND_ZERO} beat={beat} />
 
       {cast.map((spot, i) => (
         <Grazer key={i} spot={spot} index={i} theme={theme} bump={bump} shadows={shadows} beat={beat} />
@@ -1096,6 +1237,24 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
         </mesh>
       </group>
       <pointLight ref={rockLight} color="#ffb070" intensity={0} decay={2} />
+      <group ref={fragments} visible={false}>
+        {FRAGMENTS.map((_, i) => [
+          <mesh key={`f${i}`} geometry={rockShape}>
+            <meshStandardMaterial
+              vertexColors
+              roughness={1}
+              metalness={0}
+              envMapIntensity={0.2}
+              onBeforeCompile={rockProgram}
+              customProgramCacheKey={keys.rock}
+            />
+          </mesh>,
+          <mesh key={`w${i}`} material={trailMaterial}>
+            <coneGeometry args={[1, 1, 12, 1, true]} />
+          </mesh>,
+        ])}
+      </group>
+      <points ref={dustRing} geometry={dustField} material={dustMaterial} visible={false} />
       <mesh ref={trail} material={trailMaterial} visible={false}>
         <coneGeometry args={[1, 1, 24, 1, true]} />
       </mesh>
@@ -1147,14 +1306,25 @@ export interface ValleySceneProps {
 }
 
 export default function ValleyScene({ theme, tier }: ValleySceneProps) {
+  const { act } = useValley()
+  const [ready, setReady] = useState(false)
+  const onReady = useCallback(() => setReady(true), [])
+  // The frameloop is a prop and nothing else, the way the hero's is. Setting
+  // it from inside the scene did not survive the next render of the canvas,
+  // which re-applied the prop and put the loop back to sleep after one frame.
+  // Parked until the shaders are built and the name has been clicked, and
+  // transparent, so what shows through before the first frame is the page and
+  // not a black frame.
+  const running = ready && act !== 'idle'
   return (
     <Canvas
       dpr={tier === 'high' ? [1, 1.6] : 1}
       shadows={tier === 'low' ? false : 'percentage'}
+      frameloop={running ? 'always' : 'never'}
       camera={{ position: [0, 12, 42], fov: 46, near: 0.5, far: 600 }}
-      gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false }}
+      gl={{ antialias: true, alpha: true, powerPreference: 'high-performance', stencil: false }}
     >
-      <Show theme={theme} tier={tier} />
+      <Show theme={theme} tier={tier} onReady={onReady} />
     </Canvas>
   )
 }

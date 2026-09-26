@@ -15,6 +15,12 @@ import { useSyncExternalStore } from 'react'
 
 export type ValleyAct =
   | 'idle'
+  /**
+   * Mounted and compiling. The page is untouched and the hero keeps moving
+   * while the valley's shaders build off the main thread; nothing is shown
+   * until the first frame is ready to draw.
+   */
+  | 'load'
   /** The page gives way to a valley. */
   | 'open'
   /** It is alive: a herd, and flyers over the ridge. */
@@ -59,7 +65,7 @@ export function useValley(): ValleyState {
 /** Begins a showing, unless one is already running. */
 export function startValley(): boolean {
   if (state.act !== 'idle') return false
-  state = { act: 'open', run: state.run + 1 }
+  state = { act: 'load', run: state.run + 1 }
   emit()
   return true
 }
