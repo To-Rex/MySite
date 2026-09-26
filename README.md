@@ -321,11 +321,25 @@ back.
 
 ### Cameos
 
-Every so often on the way down the page, something crosses it: a tyrannosaur
-running one of the six animals down and not stopping for it, or three turtles
-gliding past in formation. They ride the companion's canvas — the only one that
-exists the whole way down — and alternate, with at least sixteen seconds between
-them.
+Every so often on the way down the page, something crosses it. Three of them,
+taken in turn so the same thing never happens twice running:
+
+| Cameo | What crosses |
+| --- | --- |
+| `chase` | A tyrannosaur running one of the six animals down, and not stopping for it |
+| `sky` | Three pterosaurs crossing above the reading, gliding and flapping |
+| `flock` | Three turtles gliding past in formation, low |
+
+They ride the companion's canvas — the only one that exists the whole way down —
+with at least sixteen seconds between them.
+
+The pterosaur is authored in `mascots.ts` alongside the language mascots but
+deliberately left out of `MASCOT_KINDS`: the easter egg picks from that list, and
+a Jurassic flyer has nothing to do with the stack. It is mostly wing, so
+normalisation makes the *wingspan* its unit rather than its length. Its wingbeat
+lags the hand a sixth of a beat behind the arm — the whole difference between a
+wing and a pair of scissors — and it crosses banked over, because a wing seen
+edge-on is a line.
 
 They fire on the reader passing a third of the page — or simply covering a lot
 of ground since the last one, because on a short page two thirds can sit inside

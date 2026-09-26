@@ -10,7 +10,7 @@ import { MASCOT_KINDS, type MascotKind } from './mascots'
  * keeps fast refresh working there.
  */
 
-export type CameoKind = 'chase' | 'flock'
+export type CameoKind = 'chase' | 'flock' | 'sky'
 
 export interface CameoPlan {
   kind: CameoKind
@@ -73,12 +73,17 @@ export function useCameoDirector(enabled: boolean, allowChase: boolean): [CameoP
     if (!(crossed || far) || !down || clock.current < next.current) return
 
     const n = turn.current++
-    const kind: CameoKind = allowChase && n % 2 === 0 ? 'chase' : 'flock'
+    // Round-robin, so the same thing never crosses twice running. A chase is the
+    // only one heavy enough to skip on a weak device.
+    const wheel: CameoKind[] = allowChase ? ['chase', 'sky', 'flock'] : ['sky', 'flock']
+    const kind = wheel[n % wheel.length]!
     setPlan({
       kind,
       mascot: MASCOT_KINDS[Math.floor(Math.random() * MASCOT_KINDS.length)] ?? 'gopher',
       way: n % 4 < 2 ? -1 : 1,
-      lane: -0.34 - (n % 3) * 0.11,
+      // The flyers cross the sky above the reading; everything else runs along
+      // the bottom of it.
+      lane: kind === 'sky' ? 0.47 + (n % 3) * 0.07 : -0.34 - (n % 3) * 0.11,
       id: n,
     })
     startedAt.current = clock.current

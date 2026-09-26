@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, type RefObject } from 'react'
 import { Bone, Matrix4, Skeleton, type SkinnedMesh } from 'three'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import type { BoneSpec, CreatureDetail } from './creatures'
-import type { AnyCreatureKind, MascotKind } from './mascots'
+import type { AnyCreatureKind, BeastKind } from './mascots'
 import { useCreatureGeometry } from './useCreature'
 
 /**
@@ -22,13 +22,14 @@ import { useCreatureGeometry } from './useCreature'
 export const DETAIL_BY_TIER: Record<DeviceTier, CreatureDetail> = { high: 'high', medium: 'medium', low: 'low' }
 
 /** Skin tuning per mascot: pattern frequency, countershading, scales vs plates. */
-export const MASCOT_SKIN: Record<MascotKind, { texScale: number; halfHeight: number; plateMix: number }> = {
+export const MASCOT_SKIN: Record<BeastKind, { texScale: number; halfHeight: number; plateMix: number }> = {
   python: { texScale: 5.2, halfHeight: 0.14, plateMix: 0.15 },
   elephant: { texScale: 3.4, halfHeight: 0.3, plateMix: 0.85 },
   gopher: { texScale: 4.6, halfHeight: 0.34, plateMix: 0 },
   crab: { texScale: 3.8, halfHeight: 0.16, plateMix: 0.9 },
   swift: { texScale: 4.8, halfHeight: 0.12, plateMix: 0 },
   camel: { texScale: 3.6, halfHeight: 0.38, plateMix: 0.1 },
+  pterosaur: { texScale: 4.2, halfHeight: 0.09, plateMix: 0.3 },
 }
 
 /** Realises a bone spec tree as three.js Bones plus the Skeleton that drives them. */
@@ -192,4 +193,39 @@ export function animateMascot(byName: Map<string, Bone>, t: number, fear: number
   // Elephant: the trunk curls and uncurls.
   pose('trunk1', 0, 0, Math.sin(t * 1.6) * 0.18 - fear * 0.3)
   pose('trunk2', 0, 0, Math.sin(t * 1.9 + 0.6) * 0.22 - fear * 0.35)
+}
+
+/**
+ * A wingbeat, for anything rigged with `wingL`/`wingR` and matching tip bones.
+ *
+ * The hand lags the arm by about a sixth of a beat, which is the whole
+ * difference between a wing and a pair of scissors. Wing bones extend along ±z,
+ * so the two sides take opposite signs about x to flap together.
+ *
+ * Returns the lift to apply to the body: it rises on the downstroke.
+ */
+export function animateFlap(byName: Map<string, Bone>, t: number, rate: number, power: number): number {
+  const beat = t * rate * Math.PI * 2
+  const stroke = Math.sin(beat)
+  const lag = Math.sin(beat - 1.05)
+
+  const set = (name: string, x: number, y: number) => {
+    const bone = byName.get(name)
+    if (!bone) return
+    bone.rotation.x = x
+    bone.rotation.y = y
+  }
+  set('wingL', stroke * power, -0.12 * power)
+  set('wingR', -stroke * power, 0.12 * power)
+  set('wingLTip', lag * power * 0.85, -0.2 * power)
+  set('wingRTip', -lag * power * 0.85, 0.2 * power)
+
+  const head = byName.get('head')
+  if (head) head.rotation.y = Math.sin(t * 0.6) * 0.12
+  const tail = byName.get('tail')
+  if (tail) {
+    tail.rotation.y = Math.sin(t * 0.9) * 0.1
+    tail.rotation.z = Math.sin(beat - 1.6) * 0.08 * power
+  }
+  return -stroke * 0.03 * power
 }

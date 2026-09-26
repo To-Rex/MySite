@@ -328,6 +328,11 @@ const HIDE = {
     dark: { dorsal: '#b09062', ventral: '#e0cda6' },
     light: { dorsal: '#96784c', ventral: '#d8c39a' },
   },
+  /** Leathery rather than feathered: a wing membrane lit from above. */
+  pterosaur: {
+    dark: { dorsal: '#7d6c55', ventral: '#cdbfa2' },
+    light: { dorsal: '#635441', ventral: '#c2b496' },
+  },
 } as const
 
 export type CreatureSpecies = keyof typeof HIDE

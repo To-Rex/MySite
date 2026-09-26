@@ -31,12 +31,22 @@ import {
 
 export type MascotKind = 'python' | 'elephant' | 'gopher' | 'crab' | 'swift' | 'camel'
 
+/**
+ * Not a language mascot, so deliberately not in `MASCOT_KINDS`: the easter egg
+ * picks from that list, and a pterosaur has nothing to do with the stack. It is
+ * here because it is authored exactly like the others and rides the same worker.
+ */
+export type ExtraKind = 'pterosaur'
+
+/** Everything this module can mesh. */
+export type BeastKind = MascotKind | ExtraKind
+
 export const MASCOT_KINDS: readonly MascotKind[] = ['python', 'elephant', 'gopher', 'crab', 'swift', 'camel']
 
-const KIND_SET = new Set<string>(MASCOT_KINDS)
+const BEAST_KINDS = new Set<string>([...MASCOT_KINDS, 'pterosaur'])
 
-export function isMascotKind(kind: string): kind is MascotKind {
-  return KIND_SET.has(kind)
+export function isBeastKind(kind: string): kind is BeastKind {
+  return BEAST_KINDS.has(kind)
 }
 
 interface Mascot {
@@ -241,17 +251,70 @@ const CAMEL: Mascot = {
   teeth: [],
 }
 
-const MASCOTS: Record<MascotKind, Mascot> = {
+/* -------------------------------------------------------------------------- */
+/* Pterosaur — the Jurassic flyer: all wing, long beak, vaned tail             */
+/* -------------------------------------------------------------------------- */
+
+const PTEROSAUR: Mascot = {
+  parts: [
+    blob([0, 1.0, 0], [0.5, 0.28, 0.28]), // body
+    blob([0.36, 1.0, 0], [0.34, 0.27, 0.27]), // chest, where the wings anchor
+    tube([[0.62, 1.05, 0], [0.86, 1.12, 0]], [0.18, 0.15]), // neck
+    blob([1.05, 1.15, 0], [0.3, 0.2, 0.18]), // skull
+    blob([1.0, 1.32, 0], [0.17, 0.13, 0.055]), // crest
+    tube([[1.24, 1.13, 0], [1.66, 1.09, 0], [1.98, 1.06, 0]], [0.15, 0.095, 0.035]), // beak
+    ...mirrored(cut([1.13, 1.22, 0.14], [0.085, 0.08, 0.07])), // eye sockets
+    cut([1.6, 1.095, 0], [0.3, 0.022, 0.07]), // the line of the jaw
+
+    // --- Wings: a spar along the leading edge with the membrane behind it -----
+    ...mirrored(tube(
+      [
+        [0.42, 1.05, 0.28],
+        [0.24, 1.04, 1.2],
+        [-0.3, 1.02, 2.0],
+        [-0.95, 1.0, 2.62],
+      ],
+      [0.14, 0.11, 0.085, 0.055],
+    )),
+    ...mirrored(blob([0.1, 1.02, 0.8], [0.52, 0.055, 0.78], 0.3)),
+    ...mirrored(blob([-0.42, 1.0, 1.75], [0.46, 0.05, 0.6], 0.62)),
+    ...mirrored(blob([-0.92, 0.99, 2.42], [0.3, 0.042, 0.34], 0.85)),
+
+    // --- Tail: long and thin, with the diamond vane a Rhamphorhynchus carries --
+    tube([[-0.46, 1.0, 0], [-1.3, 0.98, 0], [-2.0, 0.96, 0]], [0.12, 0.07, 0.05]),
+    blob([-2.22, 0.96, 0], [0.24, 0.19, 0.045]),
+
+    // --- Legs, tucked up under the membrane -----------------------------------
+    ...mirrored(tube([[-0.22, 0.9, 0.22], [-0.52, 0.72, 0.34], [-0.74, 0.62, 0.4]], [0.1, 0.08, 0.06])),
+  ],
+  bones: [
+    { name: 'root', parent: null, head: [0, 1.0, 0] },
+    { name: 'neck', parent: 'root', head: [0.7, 1.08, 0] },
+    { name: 'head', parent: 'neck', head: [1.05, 1.15, 0], tip: [1.9, 1.07, 0] },
+    { name: 'wingL', parent: 'root', head: [0.36, 1.04, 0.3] },
+    { name: 'wingLTip', parent: 'wingL', head: [-0.3, 1.02, 1.62], tip: [-1.0, 1.0, 2.7] },
+    { name: 'wingR', parent: 'root', head: [0.36, 1.04, -0.3] },
+    { name: 'wingRTip', parent: 'wingR', head: [-0.3, 1.02, -1.62], tip: [-1.0, 1.0, -2.7] },
+    { name: 'tail', parent: 'root', head: [-0.46, 1.0, 0], tip: [-2.3, 0.96, 0] },
+  ],
+  eye: { bone: 'head', at: [1.134, 1.224, 0.142], radius: 0.072 },
+  teeth: [
+    { fromX: 1.34, toX: 1.72, fromY: 1.09, toY: 1.085, fromZ: 0.055, toZ: 0.03, count: 4, length: 0.08, radius: 0.017, down: true },
+  ],
+}
+
+const BEASTS: Record<BeastKind, Mascot> = {
   python: PYTHON,
   elephant: ELEPHANT,
   gopher: GOPHER,
   crab: CRAB,
   swift: SWIFT,
   camel: CAMEL,
+  pterosaur: PTEROSAUR,
 }
 
 /** Every creature the site can mesh: the two brand animals plus the six mascots. */
-export type AnyCreatureKind = CreatureKind | MascotKind
+export type AnyCreatureKind = CreatureKind | BeastKind
 
 /**
  * The single place that knows about both sets, so the worker and the main-thread
@@ -259,7 +322,7 @@ export type AnyCreatureKind = CreatureKind | MascotKind
  * module — the dependency runs one way only.
  */
 export function createAnyCreature(kind: AnyCreatureKind, detail: CreatureDetail): CreaturePayload {
-  if (!isMascotKind(kind)) return createCreature(kind, detail)
-  const m = MASCOTS[kind]
+  if (!isBeastKind(kind)) return createCreature(kind, detail)
+  const m = BEASTS[kind]
   return buildCreature(m.parts, m.bones, m.eye, m.teeth, detail)
 }
