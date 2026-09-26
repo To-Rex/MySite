@@ -49,9 +49,15 @@ const TRICK_TIME = {
   dart: 0.85,
   /** Two rolls and a dive at the camera, for a really hard flick of the wheel. */
   corkscrew: 1.6,
+  /** A long dive and climb, for a reader settled into a steady scroll. */
+  swoop: 1.8,
+  /** A small figure of eight, banking through the crossover. */
+  figure8: 2.4,
   /** Roll and somersault at once — the one it saves for the end of the page. */
   tumble: 1.9,
   wave: 2.6,
+  /** Comes right up to the glass and has a look at whoever stopped reading. */
+  peek: 3,
 } as const
 type TrickKind = keyof typeof TRICK_TIME
 
@@ -124,6 +130,8 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
   const turn = useRef(0)
   /** The bottom of the page is worth one celebration, not one per visit down. */
   const cheered = useRef(false)
+  /** When the current stretch of scrolling began, for the stunts that reward it. */
+  const rolling = useRef(0)
 
   const bump = tier === 'high' ? 0.03 : tier === 'medium' ? 0.022 : 0
 
@@ -160,7 +168,10 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
     // the reader would be halfway down the page before the turtle noticed.
     speed.current = MathUtils.damp(speed.current, raw, 7, elapsed)
     const rush = Math.abs(speed.current)
-    if (rush > CALM) movedAt.current = t
+    if (rush > CALM) {
+      if (t - movedAt.current > 0.6) rolling.current = t
+      movedAt.current = t
+    }
 
     const span = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
     const progress = MathUtils.clamp(finite(scroll / span, 0), 0, 1)
@@ -200,14 +211,20 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
       else if (progress > 0.985 && !cheered.current) {
         kind = 'tumble'
         cheered.current = true
-      } else if (rush > CALM && crossed.current > 0 && t - crossed.current > 0.5) kind = 'spin'
+      } else if (rush > CALM && crossed.current > 0 && t - crossed.current > 0.5) {
+        kind = turn.current++ % 2 === 0 ? 'spin' : 'figure8'
+      } else if (rush > CALM && rolling.current > 0 && t - rolling.current > 2.6) kind = 'swoop'
+      // Two different things to do with a reader who has stopped, so a long pause
+      // is not the same wave over and over.
+      else if (t - movedAt.current > 15 && t > nextWave.current) kind = 'peek'
       else if (t - movedAt.current > 7 && t > nextWave.current) kind = 'wave'
       if (kind) {
         trick.current = { kind, start: t, end: t + TRICK_TIME[kind] }
         nextTrick.current = t + TRICK_TIME[kind] + 2.5
         crossed.current = 0
+        if (kind === 'swoop') rolling.current = t
         // Greeting the reader is charming once and nagging twice.
-        if (kind === 'wave') nextWave.current = t + TRICK_TIME[kind] + 13
+        if (kind === 'wave' || kind === 'peek') nextWave.current = t + TRICK_TIME[kind] + 13
       }
     }
 
@@ -252,9 +269,28 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
           flip = -ease * TAU
           offY = bell * 0.18
           break
+        case 'swoop':
+          // Drops away, then climbs back through where it started.
+          offY = -Math.sin(u * TAU) * 0.34
+          offX = -bell * 0.12
+          roll = Math.sin(u * TAU) * 0.55
+          break
+        case 'figure8':
+          offX = Math.sin(u * TAU) * 0.2
+          offY = Math.sin(u * 2 * TAU) * 0.13
+          roll = Math.sin(u * TAU) * 0.65
+          spin = Math.sin(u * TAU) * 0.3
+          break
         case 'wave':
           greet = hold(u, 0.3)
           offY = greet * 0.04
+          break
+        case 'peek':
+          // Comes right up to the glass, tips its head, and drifts back.
+          greet = hold(u, 0.32)
+          offZ = greet * 1.15
+          offY = greet * 0.05
+          flip = greet * 0.18
           break
       }
       if (t >= active.end) trick.current = null
@@ -306,11 +342,16 @@ function Swimmer({ rig, theme, tier }: { rig: Rig; theme: Theme; tier: DeviceTie
     if (greet > 0.01) {
       // Blended over the stroke the swim just wrote, rather than replacing it, so
       // the turtle lifts a flipper out of its rowing instead of snapping into a pose.
-      const flipper = byName.get('flipperFL')!
-      flipper.rotation.x = MathUtils.lerp(flipper.rotation.x, -1.15 + Math.sin(swim.current * 9) * 0.5, greet)
-      flipper.rotation.y = MathUtils.lerp(flipper.rotation.y, 0.45, greet)
       const head = byName.get('head')!
       head.rotation.y = MathUtils.lerp(head.rotation.y, 0.35, greet)
+      if (active?.kind === 'peek') {
+        // Curiosity rather than a greeting: the head cocks over instead.
+        head.rotation.z = MathUtils.lerp(head.rotation.z, 0.45, greet)
+      } else {
+        const flipper = byName.get('flipperFL')!
+        flipper.rotation.x = MathUtils.lerp(flipper.rotation.x, -1.15 + Math.sin(swim.current * 9) * 0.5, greet)
+        flipper.rotation.y = MathUtils.lerp(flipper.rotation.y, 0.45, greet)
+      }
     }
   })
 

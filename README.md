@@ -217,9 +217,11 @@ somersaults it nose over tail and Y pirouettes it flat:
 | Hurrying down the page | a full barrel roll, alternating with a dart at the camera |
 | A really hard flick of the wheel | a corkscrew: two rolls and a dive at the camera |
 | Hurrying back up | a full somersault |
-| Crossing into a new quarter of the page | a flat pirouette |
+| Settling into a steady scroll | a swoop: a long dive and climb back through |
+| Crossing into a new quarter of the page | a flat pirouette, or a banked figure of eight |
 | Reaching the bottom of the page | a tumble — roll and somersault at once, once per visit |
 | Nobody has scrolled for 7 s | turns to the reader and waves a flipper |
+| Nobody has scrolled for 15 s | comes up to the glass and cocks its head at them |
 
 Two rules keep this from becoming noise. A crossing is *remembered* rather than
 acted on at once: a hurried scroll crosses a quarter too, and the damped speed
@@ -236,6 +238,25 @@ Velocities divide by the true frame time while the damping uses a capped one.
 They looked interchangeable and are not: a capped clock makes a damped signal lag
 in proportion to how slow the device is, so on a 15 fps phone the turtle noticed
 a hurried scroll only after the reader had stopped.
+
+**Being there before it is wanted.** Building the canvas, baking its cubemap,
+rigging the mesh and compiling the skin shader all have to happen before anything
+can be drawn, and the first version started all of it at the line where the
+turtle was supposed to fade in. So it arrived late — and a reader who flicks the
+wheel hard crosses the wake line and the show line inside one frame, which is the
+slowest possible moment to begin. The chunk is now fetched a second after load
+and the canvas built a second after that, parked with `frameloop="never"` until
+it is wanted; crossing the line then costs a frameloop flip and the opacity
+transition. Measured in a software renderer, with nobody having scrolled at all:
+canvas at 4 s, turtle rigged at 7 s.
+
+**And the reason it sometimes never arrived at all.** The meshing worker's
+`onerror` marked it dead without settling the requests it was already carrying.
+Those promises never resolved, so whatever was waiting on that geometry — most
+visibly the companion, which asks for its turtle last — simply never appeared,
+with nothing in the console to explain it. A worker that dies now hands its queue
+back to the main thread, and every request carries a four-second patience for the
+other failure mode: a reply that never comes.
 
 Its cubemap is baked at 64px against the hero's 128–256: baking one is a visible
 main-thread stall, and at this size it feeds reflections a few pixels wide. Night

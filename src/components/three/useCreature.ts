@@ -41,6 +41,24 @@ let workerFailed = false
 let nextId = 1
 const inflight = new Map<number, (response: CreatureResponse) => void>()
 
+/** Longest a request may sit with the worker before the main thread takes it on. */
+const PATIENCE = 4000
+
+/**
+ * Gives up on the worker and hands every request still waiting on it back.
+ *
+ * Marking the worker dead without settling what it was carrying is the bug this
+ * exists for: those promises never resolve, so whatever was waiting on the
+ * geometry — most visibly the scroll companion — simply never appears, with no
+ * error anywhere to explain it.
+ */
+function abandonWorker(): void {
+  workerFailed = true
+  worker = null
+  for (const [id, settle] of inflight) settle({ id, ok: false, error: 'creature worker unavailable' })
+  inflight.clear()
+}
+
 function getWorker(): Worker | null {
   if (workerFailed) return null
   if (worker) return worker
@@ -50,9 +68,8 @@ function getWorker(): Worker | null {
       inflight.get(event.data.id)?.(event.data)
       inflight.delete(event.data.id)
     }
-    worker.onerror = () => {
-      workerFailed = true
-    }
+    worker.onerror = abandonWorker
+    worker.onmessageerror = abandonWorker
   } catch {
     workerFailed = true
     worker = null
@@ -74,7 +91,14 @@ function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<Creatur
       return
     }
     const id = nextId++
+    // And a reply that never comes at all — a worker wedged behind something, a
+    // message lost — is caught here rather than left to hang forever.
+    const patience = setTimeout(() => {
+      if (!inflight.delete(id)) return
+      resolve(toGeometry(createAnyCreature(kind, detail)))
+    }, PATIENCE)
     inflight.set(id, (response) => {
+      clearTimeout(patience)
       if (response.ok) resolve(toGeometry(response))
       // A failed worker run falls back to generating on the main thread: a brief
       // stall is still better than a hero with no creature in it.
