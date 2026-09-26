@@ -1,16 +1,14 @@
 import { Canvas, useFrame, type RootState } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, type RefObject } from 'react'
 import {
-  AdditiveBlending,
   BackSide,
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
   Color,
-  DoubleSide,
   Fog,
+  IcosahedronGeometry,
   MathUtils,
-  PlaneGeometry,
   Quaternion,
   Sphere,
   Vector3,
@@ -18,6 +16,7 @@ import {
   type Mesh,
   type MeshBasicMaterial,
   type MeshStandardMaterial,
+  type PointLight,
   type Points,
   type SkinnedMesh,
 } from 'three'
@@ -31,6 +30,23 @@ import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 import type { AnyCreatureKind } from './mascots'
 import { VALLEY_DETAIL } from './valleyCast'
+import { LAKE, VOLCANO, WATER_LEVEL, buildTerrain, hash2, heightAt } from './valleyLand'
+import {
+  ATMOS,
+  HALO,
+  ROCK,
+  SKY,
+  SKY_FRAG,
+  SKY_VERT,
+  SMOKE,
+  TRAIL,
+  makeSmokeMaterial,
+  makeTrailMaterial,
+  makeWaterMaterial,
+  rockProgram,
+  terrainProgram,
+} from './valleyMaterials'
+import { Flora } from './valleyFlora'
 
 /**
  * The extinction cinematic: a valley, a herd, and the thing that ended them.
@@ -39,10 +55,10 @@ import { VALLEY_DETAIL } from './valleyCast'
  * inset on wide screens and would leave a seam down the left of the sky. The
  * canvas exists only while the cinematic runs.
  *
- * Everything in here is procedural like the rest of the site: the terrain is a
- * displaced plane, the sky is two colours and a horizon, and the cast is the
- * same rigged creatures the rest of the page uses, at the same detail so the
- * meshes come out of the cache the hero already filled.
+ * Everything in here is procedural like the rest of the site. The land is in
+ * `valleyLand.ts`, the shaders in `valleyMaterials.ts`, the forest in
+ * `valleyFlora.tsx`; this file is the cast, the rock, and the timeline that
+ * runs them.
  */
 
 /**
@@ -62,194 +78,47 @@ const SCRIPT: readonly (readonly [Exclude<ValleyAct, 'idle'>, number])[] = [
   ['return', 2.8],
 ]
 
+/** When the streak begins and how long it runs — the smoke trail is timed off it. */
+const STREAK_AT = SCRIPT.slice(0, 2).reduce((sum, [, len]) => sum + len, 0)
+const STREAK_LEN = SCRIPT[2]?.[1] ?? 2.6
+
 /** Where the rock comes down, on the valley floor. */
 const GROUND_ZERO: readonly [number, number] = [10, -72]
 
-/**
- * The cast is meshed at the cheap detail whatever the device can manage: they
- * stand across a valley, most of them a long way off, and seven creatures at the
- * hero's detail is a lot of triangles for silhouettes.
- */
-
+/** Where the rock comes in from. */
+const ENTRY: readonly [number, number, number] = [-150, 120, -260]
 
 const easeInOut = (u: number) => u * u * (3 - 2 * u)
 
 /* -------------------------------------------------------------------------- */
-/* Terrain                                                                     */
+/* Mood                                                                        */
 /* -------------------------------------------------------------------------- */
-
-/** Allocation-free integer hash, the same trick the skin texture uses. */
-function hash2(x: number, y: number): number {
-  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0
-  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
-  h ^= h >>> 16
-  return (h >>> 0) / 4294967296
-}
-
-function valueNoise(x: number, y: number): number {
-  const xi = Math.floor(x)
-  const yi = Math.floor(y)
-  const xf = x - xi
-  const yf = y - yi
-  const sx = xf * xf * (3 - 2 * xf)
-  const sy = yf * yf * (3 - 2 * yf)
-  const a = MathUtils.lerp(hash2(xi, yi), hash2(xi + 1, yi), sx)
-  const b = MathUtils.lerp(hash2(xi, yi + 1), hash2(xi + 1, yi + 1), sx)
-  return MathUtils.lerp(a, b, sy)
-}
-
-/**
- * The shape of the place: a flat floor that lifts into ridges on both sides and
- * closes off in the distance, so the camera is looking *along* a valley rather
- * than across an open field.
- */
-function heightAt(x: number, z: number): number {
-  // Capped, and pushed well out to the sides. Uncapped they climbed past the top
-  // of the frustum long before the plane ran out and the frame became all hill:
-  // at the back of the valley the camera can see roughly 75 units up, so 30 and
-  // 40 leave the ridge line low in the frame and the upper half to the sky.
-  const walls = Math.min(30, Math.pow(Math.abs(x) / 98, 2.2) * 30)
-  const far = Math.min(40, Math.pow(Math.max(0, -z - 120) / 105, 2) * 40)
-  const rolling =
-    (valueNoise(x * 0.021, z * 0.021) - 0.5) * 7 +
-    (valueNoise(x * 0.055, z * 0.055) - 0.5) * 2.6 +
-    (valueNoise(x * 0.15, z * 0.15) - 0.5) * 0.9 +
-    (valueNoise(x * 0.4, z * 0.4) - 0.5) * 0.3
-  return walls + far + rolling
-}
-
-function useTerrain(detail: number) {
-  return useMemo(() => {
-    const size = 340
-    const geometry = new PlaneGeometry(size, size, detail, detail)
-    geometry.rotateX(-Math.PI / 2)
-    const pos = geometry.attributes.position as BufferAttribute
-    const colours = new Float32Array(pos.count * 3)
-    const low = new Color('#6f5f3f')
-    const high = new Color('#c4b083')
-    const grass = new Color('#5b6437')
-    const tint = new Color()
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i)
-      const z = pos.getZ(i) - 70
-      const y = heightAt(x, z)
-      pos.setY(i, y)
-      pos.setZ(i, z)
-      // Higher ground catches the light, and scrub breaks up the floor so it
-      // reads as ground rather than as a smooth brown sheet.
-      tint.copy(low).lerp(high, MathUtils.clamp(y / 20 + valueNoise(x * 0.07, z * 0.07) * 0.5, 0, 1))
-      tint.lerp(grass, MathUtils.clamp((valueNoise(x * 0.045 + 31, z * 0.045 - 17) - 0.42) * 2.1, 0, 0.55))
-      colours[i * 3] = tint.r
-      colours[i * 3 + 1] = tint.g
-      colours[i * 3 + 2] = tint.b
-    }
-    geometry.setAttribute('color', new BufferAttribute(colours, 3))
-    geometry.computeVertexNormals()
-    return geometry
-  }, [detail])
-}
-
-/* -------------------------------------------------------------------------- */
-/* Sky                                                                         */
-/* -------------------------------------------------------------------------- */
-
-const SKY_VERT = /* glsl */ `
-  varying vec3 vPos;
-  void main() {
-    vPos = position;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`
-
-const SKY_FRAG = /* glsl */ `
-  uniform vec3 uLow;
-  uniform vec3 uHigh;
-  uniform vec3 uGlow;
-  uniform float uSun;
-  uniform float uCloud;
-  uniform float uTime;
-  varying vec3 vPos;
-
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-  }
-
-  float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
-      mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
-      f.y
-    );
-  }
-
-  float fbm(vec2 p) {
-    float v = 0.0;
-    float a = 0.5;
-    for (int i = 0; i < 5; i++) {
-      v += a * noise(p);
-      p *= 2.03;
-      a *= 0.5;
-    }
-    return v;
-  }
-
-  void main() {
-    vec3 dir = normalize(vPos);
-    float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-    // Blue well before the zenith: at 0.42/0.95 the whole frame sat in the
-    // horizon colour and the sky read as one flat band of haze.
-    vec3 col = mix(uLow, uHigh, smoothstep(0.5, 0.82, h));
-
-    // Cloud, projected onto the dome. Fades out with uCloud when the light goes.
-    if (uCloud > 0.01 && dir.y > 0.0) {
-      vec2 uv = dir.xz / max(dir.y, 0.12) * 0.5 + vec2(uTime * 0.004, 0.0);
-      float band = fbm(uv * 0.6);
-      float cover = smoothstep(0.48, 0.78, band) * smoothstep(0.0, 0.22, dir.y);
-      col = mix(col, mix(uHigh, uGlow, 0.65) + vec3(0.18), cover * uCloud * 0.8);
-    }
-
-    // A low sun off to the left, bleeding along the horizon.
-    float sun = pow(max(0.0, dot(dir, normalize(vec3(-0.55, 0.1, -1.0)))), 12.0);
-    col += uGlow * sun * uSun;
-    gl_FragColor = vec4(col, 1.0);
-  }
-`
 
 /** Sky, fog and sunlight for each act, blended between as the cinematic runs. */
 const MOOD = {
-  day: { low: '#f0d3a4', high: '#4e86bf', glow: '#ffd9a0', sun: 1, fog: '#cdbb9d', light: 1.9, ambient: 0.85, env: 1, cloud: 1 },
-  burn: { low: '#ffa855', high: '#6d4a45', glow: '#fff0c8', sun: 2.6, fog: '#d79a6a', light: 2.2, ambient: 0.8, env: 1.1, cloud: 0.7 },
-  ash: { low: '#2b2724', high: '#14120f', glow: '#3a2a20', sun: 0.4, fog: '#211d19', light: 0.16, ambient: 0.1, env: 0.1, cloud: 0.2 },
-  night: { low: '#090807', high: '#040404', glow: '#120c08', sun: 0.1, fog: '#070605', light: 0.04, ambient: 0.03, env: 0.02, cloud: 0 },
+  day: { low: '#f0d3a4', high: '#4e86bf', glow: '#ffd9a0', sun: 1, fog: '#d6ccb8', light: 1.9, ambient: 0.65, env: 1, cloud: 1, mist: 0.32 },
+  burn: { low: '#ffa855', high: '#6d4a45', glow: '#fff0c8', sun: 2.6, fog: '#d79a6a', light: 2.2, ambient: 0.6, env: 1.1, cloud: 0.7, mist: 0.28 },
+  ash: { low: '#2b2724', high: '#14120f', glow: '#3a2a20', sun: 0.4, fog: '#211d19', light: 0.16, ambient: 0.1, env: 0.1, cloud: 0.2, mist: 0.6 },
+  night: { low: '#090807', high: '#040404', glow: '#120c08', sun: 0.1, fog: '#070605', light: 0.04, ambient: 0.03, env: 0.02, cloud: 0, mist: 0.5 },
 } as const
 
 type Mood = (typeof MOOD)[keyof typeof MOOD]
 
-/**
- * The sky's uniforms, held at module level for the same reason the hero's stage
- * is: they are written every frame, and a memoised object is not something a
- * render may reach in and change.
- */
-const SKY_UNIFORMS = {
-  uLow: { value: new Color(MOOD.day.low) },
-  uHigh: { value: new Color(MOOD.day.high) },
-  uGlow: { value: new Color(MOOD.day.glow) },
-  uSun: { value: MOOD.day.sun as number },
-  uCloud: { value: MOOD.day.cloud as number },
-  uTime: { value: 0 },
-}
-
 /** Back to daylight, for a second showing. */
 function resetSky(): void {
-  SKY_UNIFORMS.uLow.value.set(MOOD.day.low)
-  SKY_UNIFORMS.uHigh.value.set(MOOD.day.high)
-  SKY_UNIFORMS.uGlow.value.set(MOOD.day.glow)
-  SKY_UNIFORMS.uSun.value = MOOD.day.sun
-  SKY_UNIFORMS.uCloud.value = MOOD.day.cloud
-  SKY_UNIFORMS.uTime.value = 0
+  SKY.uLow.value.set(MOOD.day.low)
+  SKY.uHigh.value.set(MOOD.day.high)
+  SKY.uGlow.value.set(MOOD.day.glow)
+  SKY.uSun.value = MOOD.day.sun
+  SKY.uCloud.value = MOOD.day.cloud
+  SKY.uTime.value = 0
+  ATMOS.uMistColor.value.set(MOOD.day.fog)
+  ATMOS.uMistAmount.value = MOOD.day.mist
+  ATMOS.uLevel.value = 1
+  ATMOS.uTime.value = 0
+  ROCK.uHeat.value = 0
+  TRAIL.uStrength.value = 0
+  HALO.uStrength.value = 0
 }
 
 /** One scratch colour for the blends, so a frame allocates nothing. */
@@ -284,13 +153,6 @@ const FLYERS = [
   { x: 21, y: 18, z: -44, size: 6.8, phase: 2.7 },
 ] as const
 
-/**
- * One soft blob, reused by every animal as the patch of shade it stands in.
- *
- * Real shadow maps would cost a pass over a scene that already meshes five
- * species on the way in, and at this distance a contact patch is all that is
- * doing the work: without it the herd looked like it was hovering.
- */
 /** Chunks of the crater floor, thrown out on fixed arcs. */
 const EJECTA = Array.from({ length: 14 }, (_, i) => {
   const a = (i / 14) * Math.PI * 2 + 0.7
@@ -339,6 +201,47 @@ const ASH_HOME = (() => {
   return out
 })()
 
+/**
+ * The smoke the rock leaves behind it, one puff per step of the path. Each puff
+ * is born the moment the rock passes its station, which is a fixed time once
+ * the streak's easing is inverted — done here, once, by bisection.
+ */
+const SMOKE_COUNT = 150
+const SMOKE_BORN = (() => {
+  const out = new Float32Array(SMOKE_COUNT)
+  for (let i = 0; i < SMOKE_COUNT; i++) {
+    const f = (i + 0.5) / SMOKE_COUNT
+    let lo = 0
+    let hi = 1
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2
+      if (easeInOut(mid) < f) lo = mid
+      else hi = mid
+    }
+    out[i] = STREAK_AT + ((lo + hi) / 2) * STREAK_LEN
+  }
+  return out
+})()
+
+/** The volcano's own smoke, which never stops. */
+const VENT_COUNT = 36
+const SUMMIT = heightAt(VOLCANO.x, VOLCANO.z) + 9
+
+/** The ball of fire is sprites, not a sphere: a sphere was an egg. */
+const FIRE_COUNT = 90
+const FIRE_SEED = (() => {
+  const out = new Float32Array(FIRE_COUNT * 4)
+  for (let i = 0; i < FIRE_COUNT; i++) {
+    const a = hash2(i, 121) * Math.PI * 2
+    const b = Math.acos(2 * hash2(i, 122) - 1)
+    out[i * 4] = Math.sin(b) * Math.cos(a)
+    out[i * 4 + 1] = Math.abs(Math.cos(b)) * 0.8 + 0.2
+    out[i * 4 + 2] = Math.sin(b) * Math.sin(a)
+    out[i * 4 + 3] = hash2(i, 123)
+  }
+  return out
+})()
+
 let fleckTexture: CanvasTexture | null = null
 function ashFleck(): CanvasTexture | null {
   if (fleckTexture) return fleckTexture
@@ -359,6 +262,11 @@ function ashFleck(): CanvasTexture | null {
 }
 
 let shadowTexture: CanvasTexture | null = null
+/**
+ * One soft blob, reused by every animal as the patch of shade it stands in.
+ * With real shadow maps on it is the occlusion under the belly that a shadow
+ * map is too coarse for; without them it is the only grounding the herd has.
+ */
 function contactShadow(): CanvasTexture | null {
   if (shadowTexture) return shadowTexture
   if (typeof document === 'undefined') return null
@@ -377,14 +285,72 @@ function contactShadow(): CanvasTexture | null {
   return shadowTexture
 }
 
-/** Where the rock comes in from, and where it stops. */
-const ENTRY: readonly [number, number, number] = [-150, 120, -260]
+/* -------------------------------------------------------------------------- */
+/* The rock                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function hash3(x: number, y: number, z: number): number {
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(z | 0, 1103515245)) | 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
+  h ^= h >>> 16
+  return (h >>> 0) / 4294967296
+}
+
+function noise3(x: number, y: number, z: number): number {
+  const xi = Math.floor(x)
+  const yi = Math.floor(y)
+  const zi = Math.floor(z)
+  const fx = x - xi
+  const fy = y - yi
+  const fz = z - zi
+  const sx = fx * fx * (3 - 2 * fx)
+  const sy = fy * fy * (3 - 2 * fy)
+  const sz = fz * fz * (3 - 2 * fz)
+  const c = (dx: number, dy: number, dz: number) => hash3(xi + dx, yi + dy, zi + dz)
+  const x00 = MathUtils.lerp(c(0, 0, 0), c(1, 0, 0), sx)
+  const x10 = MathUtils.lerp(c(0, 1, 0), c(1, 1, 0), sx)
+  const x01 = MathUtils.lerp(c(0, 0, 1), c(1, 0, 1), sx)
+  const x11 = MathUtils.lerp(c(0, 1, 1), c(1, 1, 1), sx)
+  return MathUtils.lerp(MathUtils.lerp(x00, x10, sy), MathUtils.lerp(x01, x11, sy), sz)
+}
+
+/**
+ * An asteroid: a sphere pushed in and out by noise at three scales until it
+ * is a lump, with the surface left faceted because that is what a rock is.
+ */
+function rockGeometry(): BufferGeometry {
+  const g = new IcosahedronGeometry(1, 4)
+  const pos = g.attributes.position as BufferAttribute
+  const colours = new Float32Array(pos.count * 3)
+  const v = new Vector3()
+  for (let i = 0; i < pos.count; i++) {
+    v.set(pos.getX(i), pos.getY(i), pos.getZ(i))
+    const big = noise3(v.x * 1.4 + 9, v.y * 1.4, v.z * 1.4)
+    const mid = noise3(v.x * 3.2, v.y * 3.2 + 4, v.z * 3.2)
+    const fine = noise3(v.x * 7 + 2, v.y * 7, v.z * 7 + 6)
+    const r = 0.66 + big * 0.5 + (mid - 0.5) * 0.22 + (fine - 0.5) * 0.08
+    v.multiplyScalar(r)
+    pos.setXYZ(i, v.x, v.y, v.z)
+    const shade = 0.7 + fine * 0.5
+    colours[i * 3] = 0.24 * shade
+    colours[i * 3 + 1] = 0.2 * shade
+    colours[i * 3 + 2] = 0.17 * shade
+  }
+  g.setAttribute('color', new BufferAttribute(colours, 3))
+  g.computeVertexNormals()
+  return g
+}
+
+/* -------------------------------------------------------------------------- */
+/* Cast components                                                             */
+/* -------------------------------------------------------------------------- */
 
 interface CastProps {
   spot: Placed | (typeof FLYERS)[number]
   index: number
   theme: Theme
   bump: number
+  shadows: boolean
   beat: RefObject<Beat>
 }
 
@@ -397,9 +363,11 @@ interface Beat {
   alarm: number
   /** 0 alive, 1 down. */
   dead: number
+  /** 0 before the impact, 1 once the blast front has crossed the valley. */
+  blast: number
 }
 
-function Grazer({ spot, index, theme, bump, beat }: CastProps) {
+function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
   const place = spot as Placed
   const rig = useCreature(place.kind, VALLEY_DETAIL)
   const group = useRef<Group>(null)
@@ -417,6 +385,7 @@ function Grazer({ spot, index, theme, bump, beat }: CastProps) {
     () => Math.hypot(place.x - GROUND_ZERO[0], place.z - GROUND_ZERO[1]) / 90,
     [place.x, place.z],
   )
+  const patch = shadows ? 0.5 : 0.85
 
   useFrame(() => {
     const g = group.current
@@ -440,14 +409,14 @@ function Grazer({ spot, index, theme, bump, beat }: CastProps) {
     const sh = shade.current
     if (sh) {
       sh.scale.set(1 + fall * 0.5, 1 + fall * 0.3, 1)
-      ;(sh.material as { opacity: number }).opacity = 0.85 - fall * 0.35
+      ;(sh.material as { opacity: number }).opacity = patch - fall * 0.35
     }
   })
 
   if (!rig) return null
   return (
     <>
-      <Body rig={rig} species={place.kind} theme={theme} bump={bump} skin={skin} bodyRef={group} />
+      <Body rig={rig} species={place.kind} theme={theme} bump={bump} shadows={shadows} skin={skin} bodyRef={group} />
       <mesh
         ref={shade}
         position={[place.x, ground + 0.08, place.z]}
@@ -455,13 +424,13 @@ function Grazer({ spot, index, theme, bump, beat }: CastProps) {
         renderOrder={-1}
       >
         <planeGeometry args={[place.size * 1.9, place.size * 1.35]} />
-        <meshBasicMaterial map={shadowMap} transparent depthWrite={false} opacity={0.85} />
+        <meshBasicMaterial map={shadowMap} transparent depthWrite={false} opacity={patch} />
       </mesh>
     </>
   )
 }
 
-function Flyer({ spot, index, theme, bump, beat }: CastProps) {
+function Flyer({ spot, index, theme, bump, shadows, beat }: CastProps) {
   const perch = spot as (typeof FLYERS)[number]
   const rig = useCreature('pterosaur', VALLEY_DETAIL)
   const group = useRef<Group>(null)
@@ -486,7 +455,15 @@ function Flyer({ spot, index, theme, bump, beat }: CastProps) {
 
   if (!rig) return null
   return (
-    <Body rig={rig} species="pterosaur" theme={theme} bump={bump} skin={MASCOT_SKIN.pterosaur} bodyRef={group} />
+    <Body
+      rig={rig}
+      species="pterosaur"
+      theme={theme}
+      bump={bump}
+      shadows={shadows}
+      skin={MASCOT_SKIN.pterosaur}
+      bodyRef={group}
+    />
   )
 }
 
@@ -495,6 +472,7 @@ function Body({
   species,
   theme,
   bump,
+  shadows,
   skin,
   bodyRef,
 }: {
@@ -502,6 +480,7 @@ function Body({
   species: AnyCreatureKind
   theme: Theme
   bump: number
+  shadows: boolean
   skin: { texScale: number; halfHeight: number; plateMix?: number }
   bodyRef: RefObject<Group | null>
 }) {
@@ -510,7 +489,13 @@ function Body({
   useBind(mesh, skeleton)
   return (
     <group ref={bodyRef} scale={0.0001}>
-      <skinnedMesh ref={mesh} geometry={geometry} frustumCulled={false}>
+      <skinnedMesh
+        ref={mesh}
+        geometry={geometry}
+        frustumCulled={false}
+        castShadow={shadows}
+        receiveShadow={shadows}
+      >
         <SkinMaterial
           theme={theme}
           species={species}
@@ -531,32 +516,50 @@ function Body({
 /* The show                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/** A points cloud with a size and an alpha per sprite, positioned every frame. */
+function spriteField(count: number, centre: Vector3, radius: number): BufferGeometry {
+  const g = new BufferGeometry()
+  g.setAttribute('position', new BufferAttribute(new Float32Array(count * 3), 3))
+  g.setAttribute('aSize', new BufferAttribute(new Float32Array(count), 1))
+  g.setAttribute('aAlpha', new BufferAttribute(new Float32Array(count), 1))
+  // Repositioned far from where the vertices start; without a bounding sphere
+  // three culls it while every point still sits at the origin.
+  g.boundingSphere = new Sphere(centre, radius)
+  return g
+}
+
+const HERD_SPOTS = HERD.map(({ x, z }) => ({ x, z }))
+
 function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
-  const terrain = useTerrain(tier === 'low' ? 48 : tier === 'medium' ? 72 : 96)
+  const shadows = tier !== 'low'
+  const terrain = useMemo(() => buildTerrain(tier === 'low' ? 64 : tier === 'medium' ? 96 : 128), [tier])
   const fleck = useMemo(() => ashFleck(), [])
-  const plumeField = useMemo(() => {
-    const g = new BufferGeometry()
-    g.setAttribute('position', new BufferAttribute(new Float32Array(PLUME_COUNT * 3), 3))
-    // It is repositioned from the crater every frame it is visible; without a
-    // bounding sphere three culls it while every point still sits at the origin.
-    g.boundingSphere = new Sphere(new Vector3(0, 40, -60), 400)
-    return g
-  }, [])
+  const rockShape = useMemo(() => rockGeometry(), [])
+  const water = useMemo(() => makeWaterMaterial(tier === 'low' ? 0.18 : 0.32), [tier])
+  const trailMaterial = useMemo(() => makeTrailMaterial(TRAIL.uStrength, 0), [])
+  const haloMaterial = useMemo(() => makeTrailMaterial(HALO.uStrength, 1), [])
+  const smokeMaterial = useMemo(() => makeSmokeMaterial(fleck, '#2f2823'), [fleck])
+  const ventMaterial = useMemo(() => makeSmokeMaterial(fleck, '#5a5350'), [fleck])
+  const plumeField = useMemo(() => spriteField(PLUME_COUNT, new Vector3(0, 40, -60), 400), [])
   const ashField = useMemo(() => {
     const g = new BufferGeometry()
     g.setAttribute('position', new BufferAttribute(Float32Array.from(ASH_HOME), 3))
-    // Same reason as the plume: the flecks climb far above where they start.
     g.boundingSphere = new Sphere(new Vector3(0, 40, -80), 320)
     return g
   }, [])
+  const smokeField = useMemo(() => spriteField(SMOKE_COUNT, new Vector3(-70, 70, -170), 260), [])
+  const ventField = useMemo(() => spriteField(VENT_COUNT, new Vector3(VOLCANO.x, SUMMIT + 30, VOLCANO.z), 120), [])
+  const fireField = useMemo(() => spriteField(FIRE_COUNT, new Vector3(GROUND_ZERO[0], 20, GROUND_ZERO[1]), 90), [])
+  const fireMaterial = useMemo(() => makeSmokeMaterial(fleck, '#ff7a1e', true), [fleck])
+  const plumeMaterial = useMemo(() => makeSmokeMaterial(fleck, '#3a3128'), [fleck])
+  const keys = useMemo(
+    () => ({ terrain: () => 'valley-terrain', rock: () => 'valley-rock' }),
+    [],
+  )
   /** The rock's heading, and the rotation that lays the trail along it. */
   const [travel, trailTurn] = useMemo(() => {
-    const dir = new Vector3(
-      GROUND_ZERO[0] - ENTRY[0],
-      -ENTRY[1],
-      GROUND_ZERO[1] - ENTRY[2],
-    ).normalize()
-    return [dir, new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), dir.clone().negate())]
+    const dir = new Vector3(GROUND_ZERO[0] - ENTRY[0], -ENTRY[1], GROUND_ZERO[1] - ENTRY[2]).normalize()
+    return [dir, new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), dir)]
   }, [])
   const bump = tier === 'high' ? 0.03 : tier === 'medium' ? 0.022 : 0
   const cast = tier === 'low' ? HERD.slice(0, 4) : HERD
@@ -576,7 +579,7 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
   ].every(Boolean)
 
   const waited = useRef(0)
-  const beat = useRef<Beat>({ t: 0, act: 'open', u: 0, alarm: 0, dead: 0 })
+  const beat = useRef<Beat>({ t: 0, act: 'open', u: 0, alarm: 0, dead: 0, blast: 0 })
   /**
    * Wall clock, not accumulated frame deltas.
    *
@@ -587,10 +590,23 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
    * when the frame rate fell to a sixth of a frame a second.
    */
   const started = useRef(0)
+  /**
+   * Frame times over the opening, and one decision from them. The tier says
+   * what the CPU is; it says nothing about the GPU, and a nine-year-old card
+   * behind eight cores ran this at eight frames a second. If the opening runs
+   * slow the shadows, the bump and the extra resolution go, before the herd is
+   * even in shot.
+   */
+  const perf = useRef({ frames: 0, total: 0, last: 0, decided: false })
 
   const rock = useRef<Group>(null)
+  const rockLight = useRef<PointLight>(null)
+  const blastLight = useRef<PointLight>(null)
   const trail = useRef<Mesh>(null)
-  const fireball = useRef<Mesh>(null)
+  const halo = useRef<Mesh>(null)
+  const smoke = useRef<Points>(null)
+  const vent = useRef<Points>(null)
+  const fireball = useRef<Points>(null)
   const wave = useRef<Mesh>(null)
   const dust = useRef<Mesh>(null)
   const flash = useRef<Mesh>(null)
@@ -598,7 +614,10 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
   const ejecta = useRef<Group>(null)
   const ash = useRef<Points>(null)
 
-  useEffect(resetSky, [])
+  useEffect(() => {
+    resetSky()
+    ROCK.uHeatDir.value.copy(travel)
+  }, [travel])
 
   const ground = useMemo(() => heightAt(GROUND_ZERO[0], GROUND_ZERO[1]), [])
 
@@ -619,6 +638,26 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
       started.current = performance.now()
     }
     const t = (performance.now() - started.current) / 1000
+
+    const pf = perf.current
+    if (!pf.decided) {
+      const now = performance.now()
+      if (pf.last > 0 && t > 0.7 && t < 2.3) {
+        pf.frames++
+        pf.total += now - pf.last
+      }
+      pf.last = now
+      if (t >= 2.3) {
+        pf.decided = true
+        const average = pf.frames > 3 ? pf.total / pf.frames : 0
+        if (average > 34) {
+          const sun = state.scene.getObjectByName('valley-sun') as { castShadow: boolean } | undefined
+          if (sun) sun.castShadow = false
+          ATMOS.uBump.value = 0
+          state.setDpr(1)
+        }
+      }
+    }
 
     let act: ValleyAct = 'idle'
     let u = 1
@@ -661,22 +700,28 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
       to = MOOD.day
       mix = easeInOut(MathUtils.clamp(u * 1.25, 0, 1))
     }
-    blend(from.low, to.low, mix, SKY_UNIFORMS.uLow.value)
-    blend(from.high, to.high, mix, SKY_UNIFORMS.uHigh.value)
-    blend(from.glow, to.glow, mix, SKY_UNIFORMS.uGlow.value)
-    SKY_UNIFORMS.uSun.value = MathUtils.lerp(from.sun, to.sun, mix)
-    SKY_UNIFORMS.uCloud.value = MathUtils.lerp(from.cloud, to.cloud, mix)
-    SKY_UNIFORMS.uTime.value = t
+    blend(from.low, to.low, mix, SKY.uLow.value)
+    blend(from.high, to.high, mix, SKY.uHigh.value)
+    blend(from.glow, to.glow, mix, SKY.uGlow.value)
+    SKY.uSun.value = MathUtils.lerp(from.sun, to.sun, mix)
+    SKY.uCloud.value = MathUtils.lerp(from.cloud, to.cloud, mix)
+    SKY.uTime.value = t
+    ATMOS.uTime.value = t
+    ATMOS.uMistAmount.value = MathUtils.lerp(from.mist, to.mist, mix)
+    blend(from.fog, to.fog, mix, ATMOS.uMistColor.value)
     if (state.scene.fog) blend(from.fog, to.fog, mix, (state.scene.fog as Fog).color)
+    const light = MathUtils.lerp(from.light, to.light, mix)
+    ATMOS.uLevel.value = MathUtils.clamp(light / MOOD.day.light, 0.02, 1.2)
     const key = state.scene.getObjectByName('valley-sun') as { intensity: number } | undefined
-    if (key) key.intensity = MathUtils.lerp(from.light, to.light, mix)
+    if (key) key.intensity = light
     const rim = state.scene.getObjectByName('valley-rim') as { intensity: number } | undefined
-    if (rim) rim.intensity = MathUtils.lerp(from.light, to.light, mix) * 0.55
+    if (rim) rim.intensity = light * 0.55
     const fill = state.scene.getObjectByName('valley-fill') as { intensity: number } | undefined
     if (fill) fill.intensity = MathUtils.lerp(from.ambient, to.ambient, mix)
     // The environment is what the hide reflects. Left at full strength it kept
     // the whole valley lit through the dark, sky black over a sunlit floor.
     state.scene.environmentIntensity = MathUtils.lerp(from.env, to.env, mix)
+    SMOKE.uScale.value = state.gl.domElement.height * 0.5
 
     // --- what the animals know ------------------------------------------------
     beat.current.t = t
@@ -684,8 +729,18 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
     beat.current.u = u
     beat.current.alarm =
       act === 'streak' ? easeInOut(MathUtils.clamp((u - 0.3) / 0.7, 0, 1)) : act === 'impact' ? 1 : 0
-    beat.current.dead =
-      act === 'die' ? easeInOut(u) : act === 'dark' || act === 'return' ? 1 : 0
+    beat.current.dead = act === 'die' ? easeInOut(u) : act === 'dark' || act === 'return' ? 1 : 0
+    beat.current.blast =
+      act === 'impact'
+        ? MathUtils.clamp((u - 0.2) / 0.8, 0, 1) * 0.6
+        : act === 'die'
+          ? 0.6 + 0.4 * easeInOut(MathUtils.clamp(u * 1.6, 0, 1))
+          : act === 'dark' || act === 'return'
+            ? 1
+            : 0
+    // The wind: a breeze until the blast front, which flattens everything.
+    ATMOS.uSway.value =
+      0.028 + (act === 'impact' ? MathUtils.clamp((u - 0.2) * 4, 0, 1) * 0.12 : act === 'die' ? 0.12 * (1 - u * 0.7) : 0)
 
     // --- the camera -----------------------------------------------------------
     const dolly = act === 'open' ? 1 - easeInOut(u) : 0
@@ -700,7 +755,9 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
     // --- the rock -------------------------------------------------------------
     const r = rock.current
     const tr = trail.current
-    if (r && tr) {
+    const hl = halo.current
+    const rl = rockLight.current
+    if (r && tr && hl && rl) {
       if (act === 'streak' || (act === 'impact' && u < 0.12)) {
         const fall = act === 'streak' ? easeInOut(u) : 1
         r.position.set(
@@ -709,36 +766,131 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
           MathUtils.lerp(ENTRY[2], GROUND_ZERO[1], fall),
         )
         r.rotation.set(t * 1.7, t * 2.3, t * 1.1)
-        const near = 0.35 + fall * 1.5
-        r.scale.setScalar(near)
+        r.scale.setScalar(1.2 + fall * 4)
+        ROCK.uHeat.value = 0.6 + fall * 3.4
 
-        // The trail is a cone laid along the flight path with its point at the
-        // rock, so it streaks back across the sky instead of hanging where it
-        // was authored. Its length is how far the rock has already come.
-        const len = 30 + fall * 150
+        // The plasma: an open cone with its point at the rock, laid back along
+        // the path, as long as the distance already flown. A second, fatter and
+        // fainter one is the glow around it.
+        const len = 40 + fall * 170
+        const width = 3 + fall * 9
         tr.visible = true
-        tr.scale.set(2 + fall * 5, len, 2 + fall * 5)
+        hl.visible = true
+        tr.scale.set(width, len, width)
+        hl.scale.set(width * 2.4, len * 0.9, width * 2.4)
         tr.quaternion.copy(trailTurn)
+        hl.quaternion.copy(trailTurn)
         tr.position.copy(r.position).addScaledVector(travel, -len * 0.5)
-        ;(tr.material as MeshStandardMaterial).opacity = 0.32 + fall * 0.45
+        hl.position.copy(r.position).addScaledVector(travel, -len * 0.45)
+        TRAIL.uStrength.value = 0.5 + fall * 0.6
+        HALO.uStrength.value = 0.12 + fall * 0.2
+
+        // And it lights the valley on the way down.
+        rl.position.copy(r.position)
+        rl.intensity = fall * fall * 9000
       } else {
         r.scale.setScalar(0.0001)
         tr.visible = false
+        hl.visible = false
+        rl.intensity = 0
+        ROCK.uHeat.value = 0
       }
     }
 
+    // The smoke it leaves behind, which stays.
+    const sm = smoke.current
+    if (sm) {
+      const on = act === 'streak' || act === 'impact' || act === 'die' || act === 'dark'
+      sm.visible = on
+      if (on) {
+        const pos = sm.geometry.attributes.position as BufferAttribute
+        const size = sm.geometry.attributes.aSize as BufferAttribute
+        const alpha = sm.geometry.attributes.aAlpha as BufferAttribute
+        for (let i = 0; i < SMOKE_COUNT; i++) {
+          const f = (i + 0.5) / SMOKE_COUNT
+          const age = t - (SMOKE_BORN[i] ?? 0)
+          if (age < 0) {
+            alpha.setX(i, 0)
+            continue
+          }
+          const jx = (hash2(i, 401) - 0.5) * 6
+          const jy = (hash2(i, 402) - 0.5) * 6
+          const jz = (hash2(i, 403) - 0.5) * 6
+          pos.setXYZ(
+            i,
+            MathUtils.lerp(ENTRY[0], GROUND_ZERO[0], f) + jx * (1 + age * 0.4),
+            MathUtils.lerp(ENTRY[1], ground + 2, f * f) + jy + age * 1.4,
+            MathUtils.lerp(ENTRY[2], GROUND_ZERO[1], f) + jz * (1 + age * 0.4),
+          )
+          size.setX(i, 5 + age * 9 * (0.6 + hash2(i, 404) * 0.8))
+          alpha.setX(i, 0.55 * Math.min(1, age * 3) * Math.exp(-age * 0.26) * (1 - f * 0.3))
+        }
+        pos.needsUpdate = true
+        size.needsUpdate = true
+        alpha.needsUpdate = true
+      }
+    }
+
+    // The volcano, which was doing this before any of it and goes on after.
+    const vt = vent.current
+    if (vt) {
+      const pos = vt.geometry.attributes.position as BufferAttribute
+      const size = vt.geometry.attributes.aSize as BufferAttribute
+      const alpha = vt.geometry.attributes.aAlpha as BufferAttribute
+      for (let i = 0; i < VENT_COUNT; i++) {
+        const age = (t * 0.22 + i * 0.31) % 7
+        pos.setXYZ(
+          i,
+          VOLCANO.x + (hash2(i, 501) - 0.5) * 10 + age * 4,
+          SUMMIT + age * 9,
+          VOLCANO.z + (hash2(i, 502) - 0.5) * 10,
+        )
+        size.setX(i, 16 + age * 11)
+        alpha.setX(i, 0.32 * Math.min(1, age * 2) * (1 - age / 7))
+      }
+      pos.needsUpdate = true
+      size.needsUpdate = true
+      alpha.needsUpdate = true
+    }
+
     // --- what it does when it lands -------------------------------------------
+    const bl = blastLight.current
+    if (bl) {
+      bl.intensity =
+        act === 'impact'
+          ? 26000 * Math.pow(1 - u, 1.4) + 7000
+          : act === 'die'
+            ? 7000 * (1 - easeInOut(u))
+            : 0
+    }
+
     const fb = fireball.current
     if (fb) {
-      const life = act === 'impact' ? u : act === 'die' ? 1 + u * 0.8 : -1
-      if (life >= 0 && life < 1.8) {
-        const grow = Math.pow(MathUtils.clamp(life, 0, 1.8) / 1.8, 0.55)
-        fb.position.set(GROUND_ZERO[0], ground + 3 + grow * 16, GROUND_ZERO[1])
-        // Taller than it is wide once it starts climbing, and boiling.
-        const boil = 1 + Math.sin(t * 9) * 0.06
-        fb.scale.set((3 + grow * 12) * boil, (3 + grow * 21) / boil, 3 + grow * 12)
-        fb.rotation.set(t * 0.4, t * 0.6, 0)
-        ;(fb.material as MeshBasicMaterial).opacity = Math.max(0, 1 - grow * 1.25)
+      const life = act === 'impact' ? u : act === 'die' ? 1 + u * 0.6 : -1
+      if (life >= 0 && life < 1.6) {
+        const grow = Math.pow(MathUtils.clamp(life, 0, 1.6) / 1.6, 0.6)
+        const pos = fb.geometry.attributes.position as BufferAttribute
+        const size = fb.geometry.attributes.aSize as BufferAttribute
+        const alpha = fb.geometry.attributes.aAlpha as BufferAttribute
+        for (let i = 0; i < FIRE_COUNT; i++) {
+          const dx = FIRE_SEED[i * 4] ?? 0
+          const dy = FIRE_SEED[i * 4 + 1] ?? 0
+          const dz = FIRE_SEED[i * 4 + 2] ?? 0
+          const k = FIRE_SEED[i * 4 + 3] ?? 0
+          // Out from the crater, then up: the ball becomes a column of fire.
+          const reach = 4 + grow * (14 + k * 10)
+          pos.setXYZ(
+            i,
+            GROUND_ZERO[0] + dx * reach + Math.sin(t * 7 + i) * 0.8,
+            ground + 2 + dy * reach + grow * grow * 22,
+            GROUND_ZERO[1] + dz * reach,
+          )
+          size.setX(i, 5 + grow * 9 + k * 5)
+          alpha.setX(i, Math.max(0, 0.55 - grow * 0.6) * (0.6 + k * 0.4))
+        }
+        pos.needsUpdate = true
+        size.needsUpdate = true
+        alpha.needsUpdate = true
         fb.visible = true
       } else fb.visible = false
     }
@@ -757,24 +909,31 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
                 : -1
       if (life > 0.01) {
         const grow = easeInOut(MathUtils.clamp(life, 0, 1))
-        ;(pl.material as MeshBasicMaterial).opacity = Math.min(0.34, grow * 0.7)
+        const fade = Math.min(1, grow * 2)
         const pos = pl.geometry.attributes.position as BufferAttribute
+        const size = pl.geometry.attributes.aSize as BufferAttribute
+        const alpha = pl.geometry.attributes.aAlpha as BufferAttribute
         for (let i = 0; i < PLUME_COUNT; i++) {
           const dx = PLUME_SEED[i * 4] ?? 0
           const dz = PLUME_SEED[i * 4 + 1] ?? 0
           const rise = PLUME_SEED[i * 4 + 2] ?? 1
-          const age = Math.max(0, grow - (PLUME_SEED[i * 4 + 3] ?? 0))
+          const delay = PLUME_SEED[i * 4 + 3] ?? 0
+          const age = Math.max(0, grow - delay)
           // It widens as it climbs, which is the only thing that makes a column
           // of smoke read as one rather than as a puff.
-          const spread = 7 + age * 62 * (0.35 + rise * 0.65)
+          const spread = 9 + age * 62 * (0.35 + rise * 0.65)
           pos.setXYZ(
             i,
             GROUND_ZERO[0] + dx * spread + Math.sin(t * 0.4 + i) * 2,
-            ground + 3 + rise * age * 76,
+            ground + 6 + rise * age * 76,
             GROUND_ZERO[1] + dz * spread,
           )
+          size.setX(i, 8 + age * 14)
+          alpha.setX(i, age > 0 ? 0.11 * fade * (0.5 + rise * 0.5) : 0)
         }
         pos.needsUpdate = true
+        size.needsUpdate = true
+        alpha.needsUpdate = true
         pl.visible = true
       } else pl.visible = false
     }
@@ -863,119 +1022,109 @@ function Show({ theme, tier }: { theme: Theme; tier: DeviceTier }) {
 
   return (
     <>
-      {/* Far enough back that the ridge at the end of the valley still reads. */}
+      {/* Far enough back that the ridge at the end of the valley still reads;
+          the mist in the materials handles the floor. */}
       <fog attach="fog" args={[MOOD.day.fog, 95, 400]} />
       {/* The hide is a physical material: with no environment to reflect it goes
           to near-black, and the whole herd came out as silhouettes. */}
       <ThemedEnvironment theme={theme} resolution={64} />
-      <hemisphereLight name="valley-fill" args={['#d7e6f4', '#6b573c', MOOD.day.ambient]} />
+      <hemisphereLight name="valley-fill" args={['#c9d9ea', '#5a4a33', MOOD.day.ambient]} />
       {/* Key from the camera's side so the animals are lit rather than backlit,
-          with a low warm rim behind for the hour of the day. */}
-      <directionalLight name="valley-sun" position={[-42, 34, 26]} intensity={MOOD.day.light} color="#ffe3bc" />
+          with a low warm rim behind for the hour of the day. The key casts:
+          one orthographic box over the near valley, where the herd is. */}
+      <directionalLight
+        name="valley-sun"
+        position={[-42, 34, 26]}
+        intensity={MOOD.day.light}
+        color="#ffe3bc"
+        castShadow={shadows}
+        shadow-mapSize-width={tier === 'high' ? 2048 : 1024}
+        shadow-mapSize-height={tier === 'high' ? 2048 : 1024}
+        shadow-bias={-0.0004}
+        shadow-normalBias={0.6}
+      >
+        {/* A camera of its own, because `shadow-camera-left` and friends set
+            the numbers but never rebuild the projection: the box stayed at the
+            default ten units and there were no shadows anywhere. */}
+        <orthographicCamera attach="shadow-camera" args={[-110, 110, 120, -120, 1, 260]} />
+      </directionalLight>
       <directionalLight name="valley-rim" position={[-56, 12, -86]} intensity={MOOD.day.light * 0.55} color="#ffb877" />
 
-      <mesh scale={300}>
+      <mesh scale={520} renderOrder={-10}>
         <sphereGeometry args={[1, 32, 24]} />
-        <shaderMaterial
-          vertexShader={SKY_VERT}
-          fragmentShader={SKY_FRAG}
-          side={BackSide}
-          depthWrite={false}
-          uniforms={SKY_UNIFORMS}
+        <shaderMaterial vertexShader={SKY_VERT} fragmentShader={SKY_FRAG} side={BackSide} depthWrite={false} uniforms={SKY} />
+      </mesh>
+
+      <mesh geometry={terrain} receiveShadow={shadows}>
+        <meshStandardMaterial
+          roughness={0.95}
+          metalness={0}
+          envMapIntensity={0.3}
+          onBeforeCompile={terrainProgram}
+          customProgramCacheKey={keys.terrain}
         />
       </mesh>
 
-      <mesh geometry={terrain} receiveShadow={false}>
-        <meshStandardMaterial vertexColors roughness={0.97} metalness={0} />
+      {/* The lake. Drawn after the ground and before the animals, so its
+          transparency sorts against the shore correctly. */}
+      <mesh position={[LAKE.x, WATER_LEVEL, LAKE.z]} rotation={[-Math.PI / 2, 0, 0]} material={water} renderOrder={1}>
+        <circleGeometry args={[LAKE.r * 1.12, 64]} />
       </mesh>
 
+      {/* The mountain is in the ground; this is what comes out of it. */}
+      <points ref={vent} geometry={ventField} material={ventMaterial} />
+
+      <Flora tier={tier} shadows={shadows} herd={HERD_SPOTS} groundZero={GROUND_ZERO} beat={beat} />
+
       {cast.map((spot, i) => (
-        <Grazer key={i} spot={spot} index={i} theme={theme} bump={bump} beat={beat} />
+        <Grazer key={i} spot={spot} index={i} theme={theme} bump={bump} shadows={shadows} beat={beat} />
       ))}
       {wings.map((spot, i) => (
-        <Flyer key={i} spot={spot} index={i} theme={theme} bump={bump} beat={beat} />
+        <Flyer key={i} spot={spot} index={i} theme={theme} bump={bump} shadows={shadows} beat={beat} />
       ))}
 
       <group ref={rock} scale={0.0001}>
-        <mesh>
-          <icosahedronGeometry args={[1, 1]} />
-          <meshStandardMaterial color="#3a2f27" roughness={0.9} emissive="#ff7a2a" emissiveIntensity={1.6} flatShading />
+        <mesh geometry={rockShape}>
+          <meshStandardMaterial
+            vertexColors
+            roughness={1}
+            metalness={0}
+            envMapIntensity={0.2}
+            onBeforeCompile={rockProgram}
+            customProgramCacheKey={keys.rock}
+          />
         </mesh>
       </group>
-      <mesh ref={trail} position={[-70, 60, -170]} rotation={[0, 0, -0.9]} visible={false}>
-        <coneGeometry args={[1.2, 1, 12, 1, true]} />
-        <meshStandardMaterial
-          color="#ffb469"
-          emissive="#ff8a3c"
-          emissiveIntensity={2.4}
-          transparent
-          opacity={0.6}
-          side={DoubleSide}
-          depthWrite={false}
-        />
+      <pointLight ref={rockLight} color="#ffb070" intensity={0} decay={2} />
+      <mesh ref={trail} material={trailMaterial} visible={false}>
+        <coneGeometry args={[1, 1, 24, 1, true]} />
       </mesh>
+      <mesh ref={halo} material={haloMaterial} visible={false}>
+        <coneGeometry args={[1, 1, 24, 1, true]} />
+      </mesh>
+      <points ref={smoke} geometry={smokeField} material={smokeMaterial} visible={false} />
 
-      <mesh ref={fireball} visible={false}>
-        {/* Low-poly on purpose: additive hides the facets but keeps the
-            silhouette from being a perfect egg. */}
-        <icosahedronGeometry args={[1, 1]} />
-        <meshBasicMaterial
-          color="#ff6a12"
-          transparent
-          opacity={0}
-          blending={AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
+      <pointLight ref={blastLight} position={[GROUND_ZERO[0], ground + 6, GROUND_ZERO[1]]} color="#ff7a30" intensity={0} decay={2} />
+      <points ref={fireball} geometry={fireField} material={fireMaterial} visible={false} />
       {/* The column that goes up after it, and spreads. */}
-      <points ref={plume} geometry={plumeField} visible={false}>
-        <pointsMaterial
-          size={11}
-          map={fleck}
-          color="#3a3128"
-          transparent
-          opacity={0}
-          depthWrite={false}
-          sizeAttenuation
-        />
-      </points>
+      <points ref={plume} geometry={plumeField} material={plumeMaterial} visible={false} />
       <mesh ref={wave} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
         <ringGeometry args={[0.82, 1, 96]} />
-        <meshBasicMaterial
-          color="#e3cda6"
-          transparent
-          opacity={0}
-          side={DoubleSide}
-          depthWrite={false}
-        />
+        <meshBasicMaterial color="#e3cda6" transparent opacity={0} depthWrite={false} />
       </mesh>
       {/* Thrown out of the crater and back down again. */}
       <group ref={ejecta} visible={false}>
         {EJECTA.map((_, i) => (
           <mesh key={i}>
             <icosahedronGeometry args={[1, 0]} />
-            <meshStandardMaterial
-              color="#4a3a2c"
-              emissive="#ff7028"
-              emissiveIntensity={2.2}
-              roughness={0.9}
-              flatShading
-            />
+            <meshStandardMaterial color="#4a3a2c" emissive="#ff7028" emissiveIntensity={2.2} roughness={0.9} flatShading />
           </mesh>
         ))}
       </group>
 
       {/* What is still coming down long after. */}
       <points ref={ash} geometry={ashField} visible={false}>
-        <pointsMaterial
-          size={1.15}
-          map={fleck}
-          color="#9c9084"
-          transparent
-          opacity={0}
-          depthWrite={false}
-          sizeAttenuation
-        />
+        <pointsMaterial size={1.15} map={fleck} color="#9c9084" transparent opacity={0} depthWrite={false} sizeAttenuation />
       </points>
 
       {/* Held in front of the lens, like the flash. */}
@@ -1001,6 +1150,7 @@ export default function ValleyScene({ theme, tier }: ValleySceneProps) {
   return (
     <Canvas
       dpr={tier === 'high' ? [1, 1.6] : 1}
+      shadows={tier === 'low' ? false : 'percentage'}
       camera={{ position: [0, 12, 42], fov: 46, near: 0.5, far: 600 }}
       gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', stencil: false }}
     >

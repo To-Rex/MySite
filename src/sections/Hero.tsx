@@ -79,7 +79,10 @@ export function Hero() {
               progress={scrollYProgress}
               introDone={introDone}
               reducedMotion={reduced}
-              active={inView}
+              // Parked while the valley is up: it is hidden under the cinematic
+              // and the two scenes together were too much for an older GPU. It
+              // wakes for the return, so the fade-out reveals a live hero.
+              active={inView && (valley === 'idle' || valley === 'return')}
             />
           </Suspense>
         )}

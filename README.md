@@ -415,20 +415,70 @@ three-free so none of this is in the main chunk; the fade in and out is a CSS
 keyframe rather than React state, because a `setState` in an effect to run a
 fade is a re-render per frame for something the compositor does for free.
 
-Everything is procedural like the rest of the site. The terrain is a displaced
-plane: value noise for the ground itself, plus ridges on both sides and a rise
-at the far end so the camera looks *along* a valley rather than across a field.
-Both are **capped**. Uncapped they were mathematically correct and useless — at
-the back of the valley the camera can see about seventy-five units up, the walls
-were past a hundred long before the plane ran out, and the result was a frame
-with no sky in it at all. The cap is the composition.
+Everything is procedural like the rest of the site, and it is split four ways:
+`valleyLand.ts` is the height field and the scatter, `valleyMaterials.ts` the
+shaders, `valleyFlora.tsx` the forest, and `ValleyScene.tsx` the cast, the rock
+and the timeline.
 
-The cast is the same rigged creatures as everywhere else, at `low` detail so the
-meshes come out of the cache the hero already filled, and each stands in a soft
-contact patch — a single radial-gradient canvas texture shared by all of them.
-Real shadow maps would mean another pass over a scene that already meshes five
-species on the way in, and at this distance the patch is doing all the work that
-matters: without it the herd read as hovering.
+**The land.** A displaced plane: value noise for the ground itself, ridges on
+both sides and a rise at the far end so the camera looks *along* a valley rather
+than across a field, a lake blended in as a bowl on the low side, and a volcano
+at the head of the valley that is part of the height field rather than a cone
+stood on it — so it gets the same rock, strata, bump and mist as the ridges and
+meets them without a seam, with a crater at the summit for the vent to smoke
+from. The ridges are **capped**. Uncapped they were mathematically correct and useless — at the
+back of the valley the camera can see about seventy-five units up, the walls
+were past a hundred long before the plane ran out, and the result was a frame
+with no sky in it at all. The cap is the composition. The ground is coloured per
+pixel rather than per vertex: moss where it is low and damp, dry grass and earth
+on the open floor, banded rock wherever it steepens or climbs, all broken up by
+noise at four scales, with the Mikkelsen surface-gradient bump the hide uses
+adding relief that fades out with distance before derivatives of noise turn to
+shimmer. Mist pools on the floor — thicker low down and further off — as a
+chunk injected after three's own fog into every material that stands in it.
+
+**The forest.** Jurassic ground cover was ferns and cycads; the trees were
+conifers, and the ones that read as *that period* to anyone are the araucarias,
+a bare trunk with an umbrella of branches at the top. Two conifer shapes, a tree
+fern and a ground fern, each authored once as one merged geometry and planted
+hundreds of times as an `InstancedMesh`, so the whole forest is four draw
+calls. The leaf is a pinnate frond drawn on a canvas, alpha-tested, with a
+strip of bark down one edge so a trunk can share the material. Every plant
+sways on its own phase, more at the crown than at the root, and the ones within
+reach of the impact go over as the blast front passes, scorched on the side
+that faced it. Placement is rejection sampling with a rule per species —
+conifers keep to the slopes and the head of the valley, tree ferns to the lake
+shore, nothing grows through an animal or in the water — and it is seeded, so
+it is the same forest every showing.
+
+**The lake** reflects the same sky the dome draws: literally the same function
+on the same uniforms, evaluated for the reflected ray, so whatever an act does
+to the sky the water follows. Ripples are two scrolling noise fields differenced
+into a normal, and they are gentle on purpose — at five times the strength the
+surface was a field of random facets and the lake rendered as glitter.
+
+**The cast** is the same rigged creatures as everywhere else, at `low` detail
+so the meshes come out of the cache the hero already filled. On `medium` and
+`high` the sun casts real shadows — one orthographic box over the near valley —
+and the animals both cast and receive; each still stands in a soft contact
+patch, dimmed, for the occlusion under the belly a shadow map is too coarse
+for. On `low` the patch is the only grounding the herd has. The shadow camera is
+attached as a camera of its own (`<orthographicCamera attach="shadow-camera">`)
+rather than set through `shadow-camera-left` and friends: those props set the
+numbers but never rebuild the projection, so the box stayed at the default ten
+units and there were no shadows anywhere — on the software renderer *and* on
+the real card, which is what finally gave it away.
+
+**The rock** is a sphere pushed in and out by 3D noise at three scales, left
+faceted because that is what a rock is, with ablation in the material: the face
+into the wind is white-hot and the rest dull red, from the dot of the world
+normal with the direction of travel. Behind it, an open cone laid back along
+the flight path with its point at the rock carries the plasma — white at the
+head, orange and ragged further back — with a fatter, fainter cone around it
+for the glow, and a trail of smoke sprites that are born the moment the rock
+passes their station (the streak's easing inverted once, by bisection) and go
+on spreading through the impact and the dark. It lights the valley on the way
+down, and the crater lights it after.
 
 Two lighting notes, both learned the hard way. The hide is a physical material,
 so with no environment to reflect it goes to near-black and the entire herd came
@@ -456,6 +506,17 @@ like the white-out, because "everything goes dark" is a thing that happens to
 the view rather than a thing in the world. Both particle fields carry an
 explicit `boundingSphere` — they are repositioned far from where their vertices
 were authored, and three would otherwise cull them on the frame they matter.
+
+**What it costs.** The tier says what the CPU is and nothing about the GPU: a
+nine-year-old Radeon behind eight cores reported `high` and ran the first cut
+at eight frames a second. Three things fixed that. The hero's canvas is parked
+while the valley is up — it is hidden under the cinematic and the two scenes
+together were the bulk of the load — and wakes for the return, so the fade-out
+reveals a live hero. Shadows are plain PCF on every tier that has them. And the
+scene measures its own frame times over the opening act and, if they average
+worse than thirty a second, drops the shadows, the bump and the extra
+resolution before the herd is in shot. On that same card the valley now holds
+sixty frames a second through every act.
 
 The timeline runs on a **wall clock**, which is the opposite of everything else
 here. The rest of the site accumulates frame deltas so that parking a canvas
