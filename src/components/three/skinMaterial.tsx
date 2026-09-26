@@ -328,6 +328,14 @@ const HIDE = {
     dark: { dorsal: '#b09062', ventral: '#e0cda6' },
     light: { dorsal: '#96784c', ventral: '#d8c39a' },
   },
+  sauropod: {
+    dark: { dorsal: '#6a6e55', ventral: '#b9b492' },
+    light: { dorsal: '#525640', ventral: '#aca787' },
+  },
+  stegosaur: {
+    dark: { dorsal: '#7a6446', ventral: '#c4b086' },
+    light: { dorsal: '#5f4d34', ventral: '#b7a37b' },
+  },
   /** Leathery rather than feathered: a wing membrane lit from above. */
   pterosaur: {
     dark: { dorsal: '#7d6c55', ventral: '#cdbfa2' },

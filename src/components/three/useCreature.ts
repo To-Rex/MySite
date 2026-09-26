@@ -117,6 +117,31 @@ function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<Creatur
 }
 
 /**
+ * Meshes a list of creatures ahead of time, one after another.
+ *
+ * Sequential on purpose: there is one worker, and a caller that queues five
+ * species at once would sit in front of whatever the page actually needs on
+ * screen right now. Failures are the cache's problem, not the caller's — this
+ * is a warm-up, and everything it warms is requested properly later anyway.
+ */
+export async function prewarmCreatures(
+  kinds: readonly AnyCreatureKind[],
+  detail: CreatureDetail,
+  gap = 400,
+): Promise<void> {
+  for (const kind of kinds) {
+    try {
+      await request(kind, detail)
+    } catch {
+      /* the real request will fall back on the main thread */
+    }
+    // A gap between each, so anything the page needs on screen right now gets
+    // the worker instead of queueing behind the whole warm-up.
+    await new Promise((done) => setTimeout(done, gap))
+  }
+}
+
+/**
  * Returns the shared geometry for a creature, or null until it is ready.
  * Geometry is owned by the module cache and shared between instances, so it is
  * deliberately never disposed here.

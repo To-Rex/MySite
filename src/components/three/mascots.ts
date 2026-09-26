@@ -36,14 +36,14 @@ export type MascotKind = 'python' | 'elephant' | 'gopher' | 'crab' | 'swift' | '
  * picks from that list, and a pterosaur has nothing to do with the stack. It is
  * here because it is authored exactly like the others and rides the same worker.
  */
-export type ExtraKind = 'pterosaur'
+export type ExtraKind = 'pterosaur' | 'sauropod' | 'stegosaur'
 
 /** Everything this module can mesh. */
 export type BeastKind = MascotKind | ExtraKind
 
 export const MASCOT_KINDS: readonly MascotKind[] = ['python', 'elephant', 'gopher', 'crab', 'swift', 'camel']
 
-const BEAST_KINDS = new Set<string>([...MASCOT_KINDS, 'pterosaur'])
+const BEAST_KINDS = new Set<string>([...MASCOT_KINDS, 'pterosaur', 'sauropod', 'stegosaur'])
 
 export function isBeastKind(kind: string): kind is BeastKind {
   return BEAST_KINDS.has(kind)
@@ -303,6 +303,96 @@ const PTEROSAUR: Mascot = {
   ],
 }
 
+/* -------------------------------------------------------------------------- */
+/* Sauropod — the long one: neck up, tail out, standing on four pillars        */
+/* -------------------------------------------------------------------------- */
+
+const SAUROPOD: Mascot = {
+  parts: [
+    blob([0, 1.55, 0], [1.45, 0.88, 0.86]), // barrel
+    blob([1.05, 1.6, 0], [0.9, 0.78, 0.78]), // shoulders
+    blob([-1.15, 1.52, 0], [0.92, 0.8, 0.8]), // hips
+    tube(
+      [
+        [1.75, 1.85, 0],
+        [2.6, 2.5, 0],
+        [3.5, 3.2, 0],
+        [4.25, 3.62, 0],
+      ],
+      [0.46, 0.36, 0.28, 0.21],
+    ), // neck
+    blob([4.5, 3.72, 0], [0.3, 0.23, 0.22]), // small head
+    tube([[4.66, 3.68, 0], [4.96, 3.6, 0]], [0.2, 0.13]), // muzzle
+    ...mirrored(cut([4.54, 3.83, 0.16], [0.085, 0.08, 0.07])), // eye sockets
+    tube(
+      [
+        [-1.85, 1.5, 0],
+        [-3.1, 1.42, 0],
+        [-4.4, 1.3, 0],
+        [-5.6, 1.16, 0],
+      ],
+      [0.5, 0.33, 0.19, 0.08],
+    ), // tail
+    ...mirrored(tube([[1.0, 1.15, 0.58], [1.06, 0.6, 0.6], [1.0, 0.06, 0.6]], [0.34, 0.3, 0.33])),
+    ...mirrored(tube([[-1.15, 1.12, 0.6], [-1.1, 0.58, 0.62], [-1.16, 0.06, 0.62]], [0.36, 0.32, 0.35])),
+  ],
+  bones: [
+    { name: 'root', parent: null, head: [0, 1.55, 0] },
+    { name: 'neck1', parent: 'root', head: [1.75, 1.85, 0] },
+    { name: 'neck2', parent: 'neck1', head: [2.7, 2.6, 0] },
+    { name: 'neck3', parent: 'neck2', head: [3.6, 3.3, 0] },
+    { name: 'head', parent: 'neck3', head: [4.45, 3.7, 0], tip: [5.0, 3.6, 0] },
+    { name: 'tail1', parent: 'root', head: [-1.85, 1.5, 0] },
+    { name: 'tail2', parent: 'tail1', head: [-3.1, 1.42, 0] },
+    { name: 'tail3', parent: 'tail2', head: [-4.4, 1.3, 0] },
+    { name: 'tail4', parent: 'tail3', head: [-5.6, 1.16, 0], tip: [-6.1, 1.1, 0] },
+  ],
+  eye: { bone: 'head', at: [4.544, 3.834, 0.162], radius: 0.07 },
+  teeth: [],
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stegosaur — low head, arched back, a double row of plates, spiked tail      */
+/* -------------------------------------------------------------------------- */
+
+const PLATES: Part[] = []
+for (let i = 0; i < 7; i++) {
+  const along = 1.05 - i * 0.42
+  const bell = Math.sin(((i + 0.6) / 7.4) * Math.PI)
+  PLATES.push(
+    blob([along, 1.62 + bell * 0.42, i % 2 === 0 ? 0.1 : -0.1], [0.14 + bell * 0.13, 0.16 + bell * 0.38, 0.055]),
+  )
+}
+
+const STEGOSAUR: Mascot = {
+  parts: [
+    blob([0, 1.05, 0], [1.25, 0.72, 0.68]), // barrel
+    blob([-0.1, 1.42, 0], [0.95, 0.5, 0.55]), // the arch of the back
+    blob([1.15, 0.95, 0], [0.55, 0.5, 0.52]), // chest
+    tube([[1.45, 1.0, 0], [1.9, 0.86, 0]], [0.32, 0.2]), // short neck, carried low
+    blob([2.1, 0.82, 0], [0.3, 0.2, 0.2]), // head
+    tube([[2.28, 0.8, 0], [2.56, 0.78, 0]], [0.16, 0.1]), // beak
+    ...mirrored(cut([2.14, 0.9, 0.15], [0.075, 0.07, 0.065])), // eye sockets
+    ...PLATES,
+    tube([[-1.3, 1.1, 0], [-2.3, 1.05, 0], [-3.05, 1.12, 0]], [0.4, 0.24, 0.13]), // tail
+    // Thagomizer: two pairs of spikes off the tail tip.
+    ...mirrored(tube([[-2.85, 1.12, 0.1], [-3.35, 1.42, 0.24]], [0.09, 0.03])),
+    ...mirrored(tube([[-3.05, 1.1, 0.09], [-3.6, 1.3, 0.2]], [0.085, 0.03])),
+    ...mirrored(tube([[0.95, 0.75, 0.5], [1.0, 0.4, 0.52], [0.95, 0.05, 0.52]], [0.24, 0.21, 0.23])),
+    ...mirrored(tube([[-1.0, 0.8, 0.54], [-0.96, 0.42, 0.56], [-1.02, 0.05, 0.56]], [0.3, 0.26, 0.28])),
+  ],
+  bones: [
+    { name: 'root', parent: null, head: [0, 1.15, 0] },
+    { name: 'neck', parent: 'root', head: [1.45, 1.0, 0] },
+    { name: 'head', parent: 'neck', head: [2.08, 0.84, 0], tip: [2.6, 0.78, 0] },
+    { name: 'tail1', parent: 'root', head: [-1.3, 1.1, 0] },
+    { name: 'tail2', parent: 'tail1', head: [-2.3, 1.05, 0] },
+    { name: 'tail3', parent: 'tail2', head: [-3.05, 1.12, 0], tip: [-3.6, 1.3, 0] },
+  ],
+  eye: { bone: 'head', at: [2.144, 0.904, 0.152], radius: 0.062 },
+  teeth: [],
+}
+
 const BEASTS: Record<BeastKind, Mascot> = {
   python: PYTHON,
   elephant: ELEPHANT,
@@ -311,6 +401,8 @@ const BEASTS: Record<BeastKind, Mascot> = {
   swift: SWIFT,
   camel: CAMEL,
   pterosaur: PTEROSAUR,
+  sauropod: SAUROPOD,
+  stegosaur: STEGOSAUR,
 }
 
 /** Every creature the site can mesh: the two brand animals plus the six mascots. */

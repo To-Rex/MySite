@@ -8,6 +8,7 @@ import { useScrollTo } from '@/hooks/useScrollTo'
 import { useIntroDone } from '@/app/intro'
 import { cn } from '@/lib/cn'
 import { EASE, springSnappy } from '@/lib/motion'
+import { startValley } from '@/lib/valley'
 import { LanguageSwitcher } from './LanguageSwitcher'
 import { ThemeToggle } from './ThemeToggle'
 import { MobileMenu } from './MobileMenu'
@@ -66,6 +67,8 @@ export function Navigation() {
             onClick={(e) => {
               e.preventDefault()
               go('home')
+              // And, for anyone who clicks their own name, the valley.
+              startValley()
             }}
             className="glass pointer-events-auto flex h-11 items-center gap-3 rounded-full pr-4 pl-1.5 text-fg"
             aria-label={site.name}

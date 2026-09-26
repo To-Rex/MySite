@@ -381,6 +381,90 @@ the cameos. The hero's tyrannosaur keeps its own much richer idle; the cameo
 animator is deliberately compact, because the creature is on screen for three
 seconds and the only thing that has to read is *running*.
 
+### The extinction cinematic
+
+Clicking the name in the nav — the one in the header, not the headline — puts the
+page aside for about eighteen seconds and shows what the valley looked like
+before any of this. `src/lib/valley.ts` holds the act, `ValleyScene.tsx` plays
+it, and `Hero.tsx` takes the headline down for the duration.
+
+| Act | Seconds | What happens |
+| --- | --- | --- |
+| `open` | 2.4 | The page gives way and the camera settles into the valley |
+| `graze` | 4.2 | Two sauropods, two stegosaurs, a tyrannosaur, two turtles, three pterosaurs over the ridge |
+| `streak` | 2.6 | Something comes down out of the north-west, and every head comes up |
+| `impact` | 1.8 | White-out, shockwave, fireball, the crater throwing its floor back out |
+| `die` | 3.4 | The herd goes over; the flyers come out of the sky; the column climbs |
+| `dark` | 3 | Dust closes over the valley and the light goes |
+| `return` | 2.8 | Morning, and the headline growing back into place |
+
+Nothing in it is meshed on demand. `Valley.tsx` dynamically imports a warm-up
+nine seconds after load, which builds all five species into the shared creature
+cache while the visitor is reading; on the first click that work used to happen
+with the camera already pointed at an empty valley, and the opening held for the
+better part of twenty seconds. Nine seconds, and a gap between each species,
+because there is one creature worker: queued back to back at four seconds the
+warm-up sat in front of the cameos, and the slowest case for the companion
+appearing went from nine seconds to fifteen. There is also a six-second backstop
+on the wait, so a slow machine gets the cinematic late rather than not at all.
+
+It gets its own full-bleed `<Canvas>` rather than borrowing the hero's, which is
+inset on wide screens and would have left a seam down the left of the sky. The
+canvas exists only while the cinematic runs. `Valley.tsx` is the gate and stays
+three-free so none of this is in the main chunk; the fade in and out is a CSS
+keyframe rather than React state, because a `setState` in an effect to run a
+fade is a re-render per frame for something the compositor does for free.
+
+Everything is procedural like the rest of the site. The terrain is a displaced
+plane: value noise for the ground itself, plus ridges on both sides and a rise
+at the far end so the camera looks *along* a valley rather than across a field.
+Both are **capped**. Uncapped they were mathematically correct and useless — at
+the back of the valley the camera can see about seventy-five units up, the walls
+were past a hundred long before the plane ran out, and the result was a frame
+with no sky in it at all. The cap is the composition.
+
+The cast is the same rigged creatures as everywhere else, at `low` detail so the
+meshes come out of the cache the hero already filled, and each stands in a soft
+contact patch — a single radial-gradient canvas texture shared by all of them.
+Real shadow maps would mean another pass over a scene that already meshes five
+species on the way in, and at this distance the patch is doing all the work that
+matters: without it the herd read as hovering.
+
+Two lighting notes, both learned the hard way. The hide is a physical material,
+so with no environment to reflect it goes to near-black and the entire herd came
+out as silhouettes — the scene needs `ThemedEnvironment` even though it is
+outdoors. And that same environment has to *dim with the act*: left at full
+strength through `dark`, it lit a sunlit valley floor under a black sky.
+`scene.environmentIntensity` is blended alongside the sun, the rim, the fill,
+the fog colour and the four sky uniforms, all from one `MOOD` table.
+
+The rock's trail is a cone laid along the flight path with its point at the rock
+and its length set by how far it has already come, so it streaks back across the
+sky instead of hanging wherever it was authored. The ejecta are fourteen chunks
+on plain ballistic arcs, and the ash is a 340-point field whose x, z and ground
+height are computed once and wrapped round to the top as each fleck lands.
+
+The impact took four attempts, and every failure was the same mistake — giving a
+thing that has no edges an edge. A flat additive ring on the ground foreshortened
+into a white slab lying across the valley. An additive dome became a flying
+saucer. A single dark sphere for the smoke column read as a black bubble hanging
+over the ridge, and a world-space dust dome the camera sat on the lip of did the
+same. What works: the blast front is a broad soft annulus in the colour of the
+ground and nothing is added to it; the column is 460 soft sprites climbing and
+spreading out of the crater; and the darkness is a veil held against the lens,
+like the white-out, because "everything goes dark" is a thing that happens to
+the view rather than a thing in the world. Both particle fields carry an
+explicit `boundingSphere` — they are repositioned far from where their vertices
+were authored, and three would otherwise cull them on the frame they matter.
+
+The timeline runs on a **wall clock**, which is the opposite of everything else
+here. The rest of the site accumulates frame deltas so that parking a canvas
+pauses a scene rather than rewinding it. A cinematic has a running time: on
+hardware that cannot keep up it should play roughly, not stretch to several
+minutes, which is exactly what accumulating clamped deltas did. It does wait for
+one thing before starting the clock — all five species meshed — because a herd
+that turns up during the second act is worse than a beat of empty sky.
+
 ### Parked canvases and the clock
 
 Every 3D scene here stops rendering once it scrolls off screen — that is what

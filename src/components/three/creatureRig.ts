@@ -30,6 +30,8 @@ export const MASCOT_SKIN: Record<BeastKind, { texScale: number; halfHeight: numb
   swift: { texScale: 4.8, halfHeight: 0.12, plateMix: 0 },
   camel: { texScale: 3.6, halfHeight: 0.38, plateMix: 0.1 },
   pterosaur: { texScale: 4.2, halfHeight: 0.09, plateMix: 0.3 },
+  sauropod: { texScale: 3.2, halfHeight: 0.28, plateMix: 0.55 },
+  stegosaur: { texScale: 3.4, halfHeight: 0.26, plateMix: 0.7 },
 }
 
 /** Realises a bone spec tree as three.js Bones plus the Skeleton that drives them. */
@@ -228,4 +230,45 @@ export function animateFlap(byName: Map<string, Bone>, t: number, rate: number, 
     tail.rotation.z = Math.sin(beat - 1.6) * 0.08 * power
   }
   return -stroke * 0.03 * power
+}
+
+/**
+ * A standing animal minding its own business: the neck sweeps down to the
+ * ground and back up, the tail drifts, the ribs breathe.
+ *
+ * `alarm` from 0 to 1 raises the head, quickens everything and turns it towards
+ * whatever it has just noticed — which, in the valley, is the sky.
+ */
+export function animateGraze(byName: Map<string, Bone>, t: number, phase: number, alarm: number): void {
+  const quick = 1 + alarm * 1.8
+  const lift = alarm * 0.75
+
+  // Necks come in one bone or three; either way the lift is shared along them.
+  const chain = ['neck', 'neck1', 'neck2', 'neck3'].map((n) => byName.get(n)).filter(Boolean) as Bone[]
+  chain.forEach((bone, i) => {
+    const share = 1 / Math.max(1, chain.length)
+    bone.rotation.z = (Math.sin(t * 0.32 * quick + phase) * 0.22 - 0.1 + lift) * share * 1.6
+    bone.rotation.y = Math.sin(t * 0.21 * quick + phase + i) * 0.12
+  })
+
+  const head = byName.get('head')
+  if (head) {
+    head.rotation.z = Math.sin(t * 0.5 * quick + phase) * 0.12 + lift * 0.5
+    head.rotation.y = Math.sin(t * 0.27 + phase * 1.7) * 0.26
+  }
+
+  for (let i = 1; i <= 5; i++) {
+    const bone = byName.get(`tail${i}`)
+    if (!bone) continue
+    bone.rotation.y = Math.sin(t * 0.55 * quick + phase - i * 0.55) * (0.04 + i * 0.022) * (1 + alarm)
+    bone.rotation.z = Math.sin(t * 0.4 + phase - i * 0.3) * 0.02 * i
+  }
+  const tail = byName.get('tail')
+  if (tail) tail.rotation.y = Math.sin(t * 0.6 * quick + phase) * 0.16
+
+  const breath = Math.sin(t * 0.7 + phase) * 0.018
+  for (const name of ['spine1', 'spine2', 'root']) {
+    const bone = byName.get(name)
+    if (bone) bone.scale.set(1, 1 + breath, 1 + breath * 1.3)
+  }
 }
