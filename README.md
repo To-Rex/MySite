@@ -503,7 +503,17 @@ runs the whole hero at a third speed on a device drawing 9 fps.
 ## Deployment
 
 - Set `VITE_SITE_URL` (see `.env.example`) to the production origin for canonical/OG/hreflang tags.
-- Update the hard-coded domain in `public/robots.txt` and `public/sitemap.xml` if it isn't `https://torexdev.uz`.
+- The site's own address is resolved once, at build time, by `scripts/site-url.mjs`:
+  `VITE_SITE_URL`, else Netlify's `URL`, else `DEPLOY_PRIME_URL`, else
+  `https://torexdev.uz`. Vite bakes it into `site.url` through `define` (canonical
+  and `og:url`), and `scripts/generate-seo.mjs` rewrites `dist/robots.txt` and
+  `dist/sitemap.xml` to match. `public/robots.txt` and `public/sitemap.xml` hold
+  the production domain as their template, so a local build is correct as-is.
+- That means a deploy advertises the address it is actually served from. Netlify
+  sets `URL` to the custom domain once one is attached and to the `.netlify.app`
+  address until then, so nothing has to be edited when DNS finally lands — but
+  note the domain must exist in the registry first: a site can deploy perfectly
+  and still be unreachable, which looks identical to a broken build.
 - Static output — any static host works (`dist/`).
 
 ### Netlify

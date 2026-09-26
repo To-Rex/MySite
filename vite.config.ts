@@ -2,9 +2,16 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
+import { resolveSiteUrl } from './scripts/site-url.mjs'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    // Canonical and og:url come from here. Baked in rather than read at runtime
+    // so the value is identical to the one written into robots.txt and
+    // sitemap.xml after the build. See scripts/site-url.mjs.
+    'import.meta.env.VITE_SITE_URL': JSON.stringify(resolveSiteUrl()),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
