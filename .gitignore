@@ -1,6 +1,7 @@
 node_modules
-dist
-dist-ssr
+# Anchored: a bare "dist" would also swallow tests/dist.
+/dist
+/dist-ssr
 *.local
 .env
 .env.*
