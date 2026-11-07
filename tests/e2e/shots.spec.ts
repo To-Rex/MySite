@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from '@playwright/test'
-import { SECTIONS, introDone, mockGithub } from './site'
+import { SECTIONS, introDone, mockGithub, scrollTo } from './site'
 
 /**
  * Pictures, not assertions: `npm run shots` writes one screenshot per section,
@@ -76,7 +76,7 @@ for (const viewport of VIEWPORTS) {
 
       for (const [index, id] of SECTIONS.entries()) {
         // Each section framed from its own top edge, so two runs can be compared.
-        await page.evaluate((target) => document.getElementById(target)?.scrollIntoView({ block: 'start' }), id)
+        await scrollTo(page, id)
         await page.waitForTimeout(id === 'skills' ? 2500 : 1200)
         await shot(`${String(index + 1).padStart(2, '0')}-${id}`)
       }

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { SECTIONS, introDone, mockGithub, open, watch } from './site'
+import { SECTIONS, introDone, mockGithub, open, scrollTo, watch } from './site'
 
 /**
  * The built site, in a real browser, behind the real response headers.
@@ -7,6 +7,11 @@ import { SECTIONS, introDone, mockGithub, open, watch } from './site'
  */
 
 test('runs clean from top to bottom under the production Content-Security-Policy', async ({ page, request }) => {
+  // The heaviest test here: the full intro, then every 3D chunk and canvas on
+  // the page. On a CI runner, where WebGL is software-rendered, the desktop
+  // viewport alone needs more than the usual minute.
+  test.slow()
+
   // The point of serving dist/ ourselves: make sure the policy really is on.
   const document = await request.get('/')
   const policy = document.headers()['content-security-policy'] ?? ''
@@ -20,7 +25,7 @@ test('runs clean from top to bottom under the production Content-Security-Policy
   // the fonts, the GitHub requests. Anything the policy refuses lands in
   // `problems` as a console error.
   for (const id of SECTIONS) {
-    await page.locator(`#${id}`).scrollIntoViewIfNeeded()
+    await scrollTo(page, id)
     await page.waitForTimeout(400)
   }
   await expect(page.getByText('fixture-flutter-app')).toBeVisible()

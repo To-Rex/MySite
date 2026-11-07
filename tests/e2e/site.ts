@@ -121,3 +121,15 @@ export async function introDone(page: Page): Promise<void> {
 
 /** The ids of every section, in page order. */
 export const SECTIONS = ['home', 'about', 'philosophy', 'skills', 'building', 'projects', 'github', 'presence', 'contact'] as const
+
+/**
+ * Scrolls a section to the top of the viewport. Not `scrollIntoViewIfNeeded`:
+ * that waits for the element to hold still for two animation frames, and on a
+ * CI runner WebGL is drawn in software, so under a 3D scene a frame can take
+ * most of a second and the wait can outlast the test. The page's own scroll is
+ * what the lazy loaders watch, so a plain `scrollIntoView` asks for the same
+ * chunks.
+ */
+export async function scrollTo(page: Page, id: (typeof SECTIONS)[number]): Promise<void> {
+  await page.evaluate((target) => document.getElementById(target)?.scrollIntoView({ block: 'start' }), id)
+}
