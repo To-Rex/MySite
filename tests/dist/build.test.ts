@@ -175,3 +175,13 @@ describe('robots.txt and sitemap.xml', () => {
     for (const lang of ['uz', 'en', 'de', 'ru']) expect(sitemap).toContain(`href="${site}/?lang=${lang}"`)
   })
 })
+
+describe('Google Search Console', () => {
+  // Google fetches /<token>.html and expects exactly this line back. A rename,
+  // a stray newline or a build step that stops copying public/ unverifies
+  // the property, silently.
+  it('serves the ownership proof at the root, byte for byte', () => {
+    const token = 'google65ed419aea3368d9'
+    expect(read(`${token}.html`)).toBe(`google-site-verification: ${token}.html`)
+  })
+})

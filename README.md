@@ -778,6 +778,11 @@ delete the override.
   note the domain must exist in the registry first: a site can deploy perfectly
   and still be unreachable, which looks identical to a broken build.
 - Static output — any static host works (`dist/`).
+- `public/google65ed419aea3368d9.html` is the Google Search Console ownership
+  proof for `torexdev.uz`. Vite copies everything in `public/` to the root of
+  `dist/`, so it is served at `/google65ed419aea3368d9.html`, which is where
+  Google looks. It must keep its exact name and content; `tests/dist` checks
+  both. Deleting it unverifies the property.
 
 ### Link previews
 
