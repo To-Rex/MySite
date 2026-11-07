@@ -10,9 +10,75 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <title>Dilshodjon Haydarov — Dasturchi · Ijodkor · Bunyodkor</title>
-    <meta name="description" content="Dilshodjon Haydarov (To-Rex) — mobil dasturchi, ijodkor va bunyodkor. Men g‘oyalarni haqiqiy raqamli mahsulotlarga aylantiraman." />
+    <meta name="description" content="Dilshodjon Haydarov (To-Rex) — mobil dasturchi, ijodkor va bunyodkor. Men g‘oyalarni haqiqiy raqamli mahsulotlarga aylantiraman. Flutter, Python, React va boshqalar." />
+    <meta name="keywords" content="Dilshodjon Haydarov, To-Rex, dasturchi, Flutter dasturchi, mobil dasturchi, O‘zbekiston" />
     <meta name="author" content="Dilshodjon Haydarov" />
     <meta name="robots" content="index,follow" />
+
+    <!--
+      What <Seo> writes at runtime for the default language, written out by hand
+      as well: link-preview and most search crawlers never run JavaScript, so a
+      tag that only exists after React mounts does not exist for them. The site
+      address is filled in at build time (vite.config.ts), and
+      tests/unit/seo.test.tsx fails if this block and <Seo> ever disagree.
+    -->
+    <link rel="canonical" href="%VITE_SITE_URL%/" />
+    <link rel="alternate" hreflang="uz-Latn" href="%VITE_SITE_URL%/?lang=uz" />
+    <link rel="alternate" hreflang="en" href="%VITE_SITE_URL%/?lang=en" />
+    <link rel="alternate" hreflang="de" href="%VITE_SITE_URL%/?lang=de" />
+    <link rel="alternate" hreflang="ru" href="%VITE_SITE_URL%/?lang=ru" />
+    <link rel="alternate" hreflang="x-default" href="%VITE_SITE_URL%/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Dilshodjon Haydarov" />
+    <meta property="og:title" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
+    <meta property="og:description" content="Men g‘oyalarni haqiqiy mahsulotlarga aylantiraman. Dasturchi · Ijodkor · Bunyodkor." />
+    <meta property="og:url" content="%VITE_SITE_URL%/" />
+    <meta property="og:image" content="%VITE_SITE_URL%/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
+    <meta property="og:locale" content="uz_UZ" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta property="og:locale:alternate" content="de_DE" />
+    <meta property="og:locale:alternate" content="ru_RU" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
+    <meta name="twitter:description" content="Men g‘oyalarni haqiqiy mahsulotlarga aylantiraman. Dasturchi · Ijodkor · Bunyodkor." />
+    <meta name="twitter:image" content="%VITE_SITE_URL%/og.png" />
+    <meta name="twitter:image:alt" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
+
+    <script type="application/ld+json" id="ld-person">
+      {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": "Dilshodjon Haydarov",
+        "givenName": "Dilshodjon",
+        "familyName": "Haydarov",
+        "alternateName": "To-Rex",
+        "jobTitle": "Mobil dasturchi",
+        "description": "Men g‘oyalarni haqiqiy mahsulotlarga aylantiraman. Dasturchi · Ijodkor · Bunyodkor.",
+        "url": "%VITE_SITE_URL%/",
+        "image": "%VITE_SITE_URL%/og.png",
+        "email": "mailto:torex.amaki@gmail.com",
+        "sameAs": ["https://github.com/To-Rex", "https://www.instagram.com/torex.dev/", "https://t.me/torex_dev"],
+        "knowsAbout": ["Flutter", "Dart", "Python", "FastAPI", "PostgreSQL", "React", "TypeScript", "Git", "GitHub"],
+        "alumniOf": { "@type": "CollegeOrUniversity", "name": "Toshkent Gumanitar Fanlar Universiteti" },
+        "homeLocation": { "@type": "Place", "name": "Kokand, Uzbekistan" }
+      }
+    </script>
+    <script type="application/ld+json" id="ld-website">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Dilshodjon Haydarov",
+        "url": "%VITE_SITE_URL%/",
+        "inLanguage": ["uz-Latn", "en", "de", "ru"]
+      }
+    </script>
+
     <script>
       // Apply persisted theme + language before first paint to avoid flashes.
       (function () {

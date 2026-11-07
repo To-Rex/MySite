@@ -20,8 +20,20 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const dist = join(root, 'dist')
 const html = readFileSync(join(dist, 'index.html'), 'utf8')
 
-/** Hash every inline <script> (those without a src) so the CSP allows exactly ours. */
-const inlineScripts = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1])
+/**
+ * Hash every inline <script> the browser would actually run, so the CSP allows
+ * exactly ours.
+ *
+ * "Would run" matters: JSON-LD and other data blocks (`type="application/ld+json"`)
+ * are never executed, so script-src is never consulted for them and pinning their
+ * hashes would only make the policy longer — and tie it to copy that changes
+ * whenever the description does.
+ */
+const EXECUTABLE_TYPE = /^(?:module|text\/javascript|application\/javascript)?$/i
+const inlineScripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+  .filter(([, attrs]) => !/\ssrc\s*=/.test(attrs))
+  .filter(([, attrs]) => EXECUTABLE_TYPE.test(attrs.match(/\stype\s*=\s*["']?([^"'\s>]*)/)?.[1] ?? ''))
+  .map(([, , body]) => body)
 const hashes = inlineScripts.map((body) => `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`)
 
 if (!hashes.length) {

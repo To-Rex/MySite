@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useI18n } from '@/i18n/context'
 import { LANGUAGES, type Language } from '@/i18n/types'
 import { site } from '@/config/site'
+import { technologies } from '@/content/technologies'
 
 const OG_LOCALE: Record<Language, string> = { uz: 'uz_UZ', en: 'en_US', de: 'de_DE', ru: 'ru_RU' }
 const HREFLANG: Record<Language, string> = { uz: 'uz-Latn', en: 'en', de: 'de', ru: 'ru' }
@@ -42,6 +43,12 @@ function upsertJsonLd(id: string, data: unknown) {
 /**
  * Localized document metadata: title, description, canonical, hreflang alternates,
  * Open Graph / Twitter cards and Person structured data. Runs on every language change.
+ *
+ * `index.html` carries the same tags, written out for the default language, for
+ * the crawlers that never run this. Every helper here updates a tag in place if
+ * it is already there, so the static copy is adopted rather than duplicated —
+ * and `tests/unit/seo.test.tsx` holds the two to each other: add a tag here and
+ * it has to be added there.
  */
 export function Seo() {
   const { t, lang } = useI18n()
@@ -66,8 +73,10 @@ export function Seo() {
     upsertMeta('property', 'og:description', t.meta.ogDescription)
     upsertMeta('property', 'og:url', lang === 'uz' ? canonical : `${base}/?lang=${lang}`)
     upsertMeta('property', 'og:image', ogImage)
+    upsertMeta('property', 'og:image:type', 'image/png')
     upsertMeta('property', 'og:image:width', '1200')
     upsertMeta('property', 'og:image:height', '630')
+    upsertMeta('property', 'og:image:alt', t.meta.ogTitle)
     upsertMeta('property', 'og:locale', OG_LOCALE[lang])
     document.head.querySelectorAll('meta[property="og:locale:alternate"]').forEach((el) => el.remove())
     LANGUAGES.filter((l) => l !== lang).forEach((l) => {
@@ -81,6 +90,7 @@ export function Seo() {
     upsertMeta('name', 'twitter:title', t.meta.ogTitle)
     upsertMeta('name', 'twitter:description', t.meta.ogDescription)
     upsertMeta('name', 'twitter:image', ogImage)
+    upsertMeta('name', 'twitter:image:alt', t.meta.ogTitle)
 
     upsertJsonLd('ld-person', {
       '@context': 'https://schema.org',
@@ -94,8 +104,8 @@ export function Seo() {
       url: canonical,
       image: ogImage,
       email: `mailto:${site.email}`,
-      sameAs: [site.social.github, site.social.instagram],
-      knowsAbout: ['Flutter', 'Dart', 'Python', 'FastAPI', 'PostgreSQL', 'React', 'TypeScript', 'Git', 'GitHub'],
+      sameAs: [site.social.github, site.social.instagram, site.social.telegram],
+      knowsAbout: technologies.map((tech) => tech.name),
       alumniOf: { '@type': 'CollegeOrUniversity', name: 'Toshkent Gumanitar Fanlar Universiteti' },
       homeLocation: { '@type': 'Place', name: 'Kokand, Uzbekistan' },
     })
