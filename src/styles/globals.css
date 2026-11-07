@@ -218,8 +218,10 @@ html.lenis body {
 @utility glass {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
+  /* Unprefixed only: Lightning CSS adds -webkit- for Safari itself. Writing the
+     prefixed copy after this one makes it drop the unprefixed declaration, and
+     Chrome and Firefox do not read -webkit-backdrop-filter at all. */
   backdrop-filter: blur(18px) saturate(1.3);
-  -webkit-backdrop-filter: blur(18px) saturate(1.3);
 }
 
 @utility eyebrow {

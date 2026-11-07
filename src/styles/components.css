@@ -126,16 +126,9 @@
   color: var(--fg);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
+  /* Unprefixed only — see the note on `glass` in globals.css. */
   backdrop-filter: blur(12px);
   min-height: 2rem;
-}
-@media (pointer: coarse) {
-  .universe-label {
-    padding: 0.7rem 1rem;
-    min-height: 2.75rem;
-    font-size: 0.85rem;
-  }
-  -webkit-backdrop-filter: blur(12px);
   white-space: nowrap;
   cursor: pointer;
   transform: translateZ(0);
@@ -144,6 +137,13 @@
     background-color 0.3s var(--ease-out),
     box-shadow 0.3s var(--ease-out),
     opacity 0.2s linear;
+}
+@media (pointer: coarse) {
+  .universe-label {
+    padding: 0.7rem 1rem;
+    min-height: 2.75rem;
+    font-size: 0.85rem;
+  }
 }
 .universe-label:hover,
 .universe-label[data-active='true'] {
