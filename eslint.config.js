@@ -24,4 +24,11 @@ export default defineConfig([
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
+  {
+    // Tests and tool configs run in Node (and, for the component tests, a DOM on top of it).
+    files: ['tests/**/*.{ts,tsx}', '*.config.ts'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+    },
+  },
 ])

@@ -6,5 +6,9 @@ dist-ssr
 .env.*
 !.env.example
 graphify-out
+# graphify's hooks, installed with absolute paths of one machine
+.claude/settings.json
+test-results
+playwright-report
 .DS_Store
 *.log
