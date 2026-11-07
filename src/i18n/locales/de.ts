@@ -171,7 +171,11 @@ export const de: Dictionary = {
       'mx-nasiya': { tagline: 'Ein MX-Produkt für Ratenverkauf', description: '' },
       'xms-hotel': { tagline: 'Plattform für Hotelmanagement', description: '' },
       'xavsiz-shahar': { tagline: 'Eine Lösung für städtische Sicherheit', description: '' },
-      'torex-local-storage': { tagline: 'Eine Lösung für lokale Datenspeicherung', description: '' },
+      'torex-local-storage': {
+        tagline: 'Ein eingebetteter Key-Value-Speicher für Flutter mit Rust-Kern',
+        description:
+          'Eine eingebettete Key-Value-Speicher-Engine für Flutter. Der Kern ist in Rust geschrieben – ein LSM-Baum mit Write-Ahead-Log, Memory-Mapped Files und Bloom-Filtern – und wird über flutter_rust_bridge an Dart angebunden. Öffnen oder Schließen entfällt: Torex.box("name").put(key, value) ist die gesamte Einrichtung. Im Repository liegt eine Demo-App, die die Engine benchmarkt und Collections von Hand durchsuchen und bearbeiten lässt.',
+      },
     },
   },
   github: {

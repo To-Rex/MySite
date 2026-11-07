@@ -172,7 +172,11 @@ export const uz: Dictionary = {
       'mx-nasiya': { tagline: 'Nasiya savdo yo‘nalishidagi MX mahsuloti', description: '' },
       'xms-hotel': { tagline: 'Mehmonxonalarni boshqarish platformasi', description: '' },
       'xavsiz-shahar': { tagline: 'Shahar xavfsizligi uchun yechim', description: '' },
-      'torex-local-storage': { tagline: 'Lokal ma’lumotlarni saqlash yechimi', description: '' },
+      'torex-local-storage': {
+        tagline: 'Flutter uchun Rust yadroli lokal ma’lumotlar ombori',
+        description:
+          'Flutter uchun o‘rnatiladigan (embedded) key-value ma’lumotlar ombori. Yadrosi Rust tilida yozilgan: LSM-daraxt, oldindan yozish jurnali (WAL), xotiraga akslantirilgan fayllar va bloom filtrlar. Dart bilan flutter_rust_bridge orqali bog‘lanadi. Hech narsani ochish yoki yopish kerak emas: Torex.box("name").put(key, value) — butun sozlash shu. Repozitoriyda dvigatelni benchmark qiladigan va kolleksiyalarni qo‘lda ko‘rib, tahrirlash imkonini beradigan demo ilova ham bor.',
+      },
     },
   },
   github: {

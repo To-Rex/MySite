@@ -171,7 +171,11 @@ export const ru: Dictionary = {
       'mx-nasiya': { tagline: 'Продукт MX для продаж в рассрочку', description: '' },
       'xms-hotel': { tagline: 'Платформа управления отелями', description: '' },
       'xavsiz-shahar': { tagline: 'Решение для безопасности города', description: '' },
-      'torex-local-storage': { tagline: 'Решение для локального хранения данных', description: '' },
+      'torex-local-storage': {
+        tagline: 'Встраиваемое key-value хранилище для Flutter с ядром на Rust',
+        description:
+          'Встраиваемый key-value движок хранения для Flutter. Ядро написано на Rust: LSM-дерево с журналом упреждающей записи (WAL), отображаемыми в память файлами и фильтрами Блума; с Dart оно связано через flutter_rust_bridge. Ничего не нужно открывать или закрывать: Torex.box("name").put(key, value) — вся настройка. В репозитории есть демо-приложение, которое измеряет производительность движка и позволяет вручную просматривать и редактировать коллекции.',
+      },
     },
   },
   github: {

@@ -36,5 +36,13 @@ export const projects: readonly Project[] = [
   { id: 'mx-nasiya', title: 'MX Nasiya', category: 'mobile', technologies: [], links: {}, tone: 'sand' },
   { id: 'xms-hotel', title: 'XMS Hotel Management Platform', category: 'platform', technologies: [], links: {}, tone: 'ink', featured: true },
   { id: 'xavsiz-shahar', title: 'Xavsiz Shahar', category: 'platform', technologies: [], links: {}, tone: 'stone' },
-  { id: 'torex-local-storage', title: 'Torex Local Storage', category: 'library', technologies: [], links: {}, tone: 'ash' },
+  {
+    id: 'torex-local-storage',
+    title: 'Torex Local Storage',
+    category: 'library',
+    technologies: ['Flutter', 'Dart', 'Rust', 'flutter_rust_bridge'],
+    year: 2026,
+    links: { github: 'https://github.com/To-Rex/newtorexstore' },
+    tone: 'ash',
+  },
 ]

@@ -171,7 +171,11 @@ export const en: Dictionary = {
       'mx-nasiya': { tagline: 'An MX product for installment sales', description: '' },
       'xms-hotel': { tagline: 'Hotel management platform', description: '' },
       'xavsiz-shahar': { tagline: 'A solution for city safety', description: '' },
-      'torex-local-storage': { tagline: 'A local data storage solution', description: '' },
+      'torex-local-storage': {
+        tagline: 'An embedded key-value store for Flutter, with a Rust core',
+        description:
+          'An embedded key-value storage engine for Flutter. The core is written in Rust — an LSM-tree with a write-ahead log, memory-mapped files and bloom filters — and reaches Dart through flutter_rust_bridge. There is nothing to open or close: Torex.box("name").put(key, value) is the whole setup. The repository includes a demo app that benchmarks the engine and lets you browse and edit collections by hand.',
+      },
     },
   },
   github: {
