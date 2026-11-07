@@ -4,6 +4,7 @@ import type { Project } from '@/content/projects'
 import { projects } from '@/content/projects'
 import { useI18n } from '@/i18n/context'
 import { useScrollLock } from '@/hooks/useScrollLock'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { LinkButton } from '@/components/ui/Button'
 import { Close } from '@/components/ui/Icons'
 import { EASE } from '@/lib/motion'
@@ -18,8 +19,12 @@ interface ProjectDialogProps {
 export function ProjectDialog({ project, onClose }: ProjectDialogProps) {
   const { t } = useI18n()
   const closeButton = useRef<HTMLButtonElement>(null)
+  const overlay = useRef<HTMLDivElement>(null)
   const open = project !== null
   useScrollLock(open)
+  // The whole overlay rather than the panel: the backdrop is a sibling of the
+  // panel, and an inert backdrop would stop taking the click that closes it.
+  useFocusTrap(open, () => [overlay.current])
 
   useEffect(() => {
     if (!open) return
@@ -49,13 +54,17 @@ export function ProjectDialog({ project, onClose }: ProjectDialogProps) {
       {project && copy && (
         <motion.div
           key="project-dialog"
+          ref={overlay}
           className="fixed inset-0 z-[150] flex items-end justify-center p-0 sm:items-center sm:p-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: 0.3, ease: EASE } }}
           transition={{ duration: 0.4, ease: EASE }}
         >
-          <button type="button" className="absolute inset-0 bg-bg/70 backdrop-blur-md" aria-label={t.a11y.closeDialog} onClick={onClose} />
+          {/* A pointer affordance only. The keyboard and a screen reader have
+              the close button and Escape; a second, page-sized "close" as the
+              first stop in the dialog is noise for both. */}
+          <button type="button" tabIndex={-1} aria-hidden="true" className="absolute inset-0 bg-bg/70 backdrop-blur-md" onClick={onClose} />
           <motion.div
             role="dialog"
             aria-modal="true"

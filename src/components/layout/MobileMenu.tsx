@@ -44,7 +44,10 @@ export function MobileMenu({ open, onClose, onNavigate, active }: MobileMenuProp
         <motion.div
           id="mobile-menu"
           role="dialog"
-          aria-modal="true"
+          // Deliberately not aria-modal: the button that closes this lives in
+          // the header above it, and aria-modal would tell a screen reader that
+          // the header is out of reach. `Navigation` makes the rest of the page
+          // inert instead, which says the same thing truthfully.
           aria-label={t.common.menu}
           className="fixed inset-0 z-[90] flex flex-col overflow-y-auto bg-bg/92 px-[var(--gutter)] pt-24 pb-[max(2rem,env(safe-area-inset-bottom))] backdrop-blur-2xl lg:hidden short:pt-16"
           initial={{ opacity: 0 }}

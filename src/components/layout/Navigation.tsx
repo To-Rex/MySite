@@ -1,10 +1,11 @@
 import { AnimatePresence, motion, useMotionValueEvent, useScroll } from 'motion/react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '@/i18n/context'
 import { site } from '@/config/site'
 import { NAV_ITEMS, NAV_SECTION_IDS } from '@/config/sections'
 import { useActiveSection } from '@/hooks/useActiveSection'
 import { useScrollTo } from '@/hooks/useScrollTo'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 import { useIntroDone } from '@/app/intro'
 import { cn } from '@/lib/cn'
 import { EASE, springSnappy } from '@/lib/motion'
@@ -21,6 +22,7 @@ export function Navigation() {
   const [hidden, setHidden] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
+  const header = useRef<HTMLElement>(null)
   const { scrollY } = useScroll()
   const lastY = useRef(0)
 
@@ -52,9 +54,27 @@ export function Navigation() {
     menuButton.current?.focus()
   }, [])
 
+  // The header stays live with the menu: it holds the button that closes it.
+  useFocusTrap(menuOpen, () => [header.current, document.getElementById('mobile-menu')])
+
+  // The menu and its button exist only below `lg`. Widening the window past it
+  // with the menu open used to leave the state behind: nothing on screen, the
+  // page still scroll-locked — and, now, inert. A listener rather than a media
+  // query read during render, so the state itself is cleared and the menu does
+  // not spring back open when the window narrows again.
+  useEffect(() => {
+    const wide = window.matchMedia('(min-width: 64rem)')
+    const onChange = () => {
+      if (wide.matches) setMenuOpen(false)
+    }
+    wide.addEventListener('change', onChange)
+    return () => wide.removeEventListener('change', onChange)
+  }, [])
+
   return (
     <>
       <motion.header
+        ref={header}
         initial={{ y: -24, opacity: 0 }}
         animate={introDone ? { y: hidden ? -96 : 0, opacity: 1 } : { y: -24, opacity: 0 }}
         transition={{ duration: 0.7, ease: EASE }}
