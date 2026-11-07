@@ -19,13 +19,21 @@ A premium, immersive personal brand website for **Dilshodjon Haydarov** ([@To-Re
 ## Commands
 
 ```bash
-npm install       # install dependencies
+npm install       # install dependencies (`npm ci` for a lockfile-exact install)
 npm run dev       # dev server
 npm run build     # typecheck + production build (dist/)
 npm run preview   # serve the production build
 npm run lint      # eslint
 npm run typecheck # tsc only
+
+npm test          # unit tests — reads the source, takes a few seconds
+npm run test:dist # tests on the build output — run `npm run build` first
+npm run test:e2e  # browser tests against dist/, on a desktop and a phone
+npm run shots     # a screenshot of every section into test-results/shots/
+npm run verify    # everything above, in order — the same thing CI runs
 ```
+
+Node 22 (`.nvmrc`), which is also what Netlify and CI build with. See [Testing](#testing).
 
 ## Architecture
 
@@ -69,6 +77,9 @@ Dark is primary; light is a dedicated warm-white theme (not an inversion). All c
 2. `src/i18n/locales/*.ts` → `projects.items[<id>]` — add `tagline`/`description` in all four languages.
    Empty descriptions render an honest "details coming soon" note — nothing is invented.
 3. New project id? Add it to `ProjectId` in `src/i18n/types.ts` — the compiler then walks you through every file that needs copy.
+4. A description goes into all four languages or none. The compiler cannot see an empty
+   string, so `npm test` does: a project described in English and still "coming soon" in
+   Uzbek fails it.
 
 ### The hero creatures
 
@@ -141,9 +152,9 @@ Four things here are easy to get wrong, and each cost a debugging round:
 - **The bump is off on `low`-tier devices — including headless browsers.**
   Headless Chrome reports `pointer: coarse` and four cores, so `useDeviceTier`
   classifies it as low and passes `bump = 0`. Screenshot tests therefore show a
-  surface no real desktop visitor sees. `scratchpad/verify/desktop.mjs` shims
-  `matchMedia` and `hardwareConcurrency` to make the test browser representative;
-  without that shim, tuning the bump from screenshots is meaningless.
+  surface no real desktop visitor sees. `npm run shots` (`tests/e2e/shots.spec.ts`)
+  shims `matchMedia` and `hardwareConcurrency` to make the test browser
+  representative; without that shim, tuning the bump from screenshots is meaningless.
 - **Texture frequency must be set from on-screen size.** Aim for scales around
   6–10 px. Finer than that and the bump derivative aliases into noise.
 - **`DataTexture` defaults to `NearestFilter` on _both_ filters.** Setting only
@@ -614,6 +625,41 @@ The cap on each step is 0.25 s, and that looseness is deliberate: it only has to
 reject the nonsense above. Clamping to a frame budget like 1/30 looks tidier and
 runs the whole hero at a third speed on a device drawing 9 fps.
 
+### Overlays and the keyboard
+
+The project dialog and the phone menu are the two things that cover the page,
+and both used to be modal in name only: `aria-modal` on the element, and a Tab
+key that walked straight out of it into a page that was scroll-locked and half
+hidden. `useFocusTrap` holds them now, in two layers, because each covers what
+the other cannot:
+
+- **Everything outside is made `inert`.** That is what actually contains
+  things — a screen reader's cursor, a click, find-in-page and Tab all stop
+  seeing the page — and a key handler alone never achieves it. The hook walks
+  down from `<body>`, leaves the overlay's ancestors alone and switches off
+  their siblings, so the overlay does not have to be portalled out of the tree.
+- **Tab wraps** from the last control to the first. Inert alone lets focus walk
+  out into the browser's toolbar, which is how a native modal behaves and not
+  what anyone expects of a dialog.
+
+Three details are deliberate:
+
+- The trap takes *several* roots. The phone menu's close button lives in the
+  header above it, so the header and the menu stay live together and the loop
+  runs through both. For the same reason the menu is no longer `aria-modal`:
+  that attribute would tell a screen reader the header is out of reach.
+- The project dialog's backdrop is a sibling of the panel, so the root is the
+  whole overlay — an inert backdrop would stop taking the click that closes it.
+  It is out of the tab order and hidden from assistive technology: a page-sized
+  second "close" as the first stop in a dialog is noise for both.
+- A trap with nothing mounted does nothing. "Everything outside" an overlay
+  that is not there is the whole page, and a hook that can switch the site off
+  by accident is worse than no hook.
+
+The menu also closes itself when the window widens past `lg`. It is
+`display: none` from there up, and its state used to stay behind: nothing on
+screen, the page still scroll-locked — and, once the trap existed, inert.
+
 ### Responsive
 
 The layout is fluid rather than stepped: the gutter, the section rhythm and the
@@ -656,6 +702,67 @@ its box and targets too small for a thumb — turned up, and what changed:
 - Scenes render only while on screen (`frameloop="never"` off-screen), DPR adapts via `PerformanceMonitor`, and a device-tier estimate (`useDeviceTier`) scales geometry/particles; WebGL-less browsers get a designed 2D fallback.
 - `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor.
 
+## Testing
+
+There were no tests, and the two bugs that reached production in that time have
+something in common: neither was visible in the source. The stylesheet said
+`backdrop-filter` and the minifier shipped only the prefixed copy, which Chrome
+and Firefox ignore; a rule was pasted into the middle of another and half its
+declarations were dropped without an error. So the suite is in three layers,
+split by *what has to exist* for a check to be possible.
+
+| Layer | Command | Reads | Guards |
+| --- | --- | --- | --- |
+| Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the architecture rules |
+| Build | `npm run test:dist` | `dist/` | the CSP and its hashes, what loads up front and how big it is, what the minifier did to the CSS |
+| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard |
+
+**The architecture rules are tests.** `tests/unit/architecture.test.ts` follows
+static imports from `main.tsx` and fails if three.js is reachable without
+crossing a dynamic `import()`; does the same for the worker; parses every scene
+for a read of `state.clock`; checks each `<Canvas>` for the pointer-events it
+needs; and scans the stylesheets for a hand-written prefix or a declaration
+stranded inside an `@media`. Every one of those is a rule this README already
+states in prose, and every one was learned from a failure that produced no
+error — which is exactly the kind a person stops re-checking.
+
+**Every creature is meshed and measured.** No NaN, a watertight surface that
+faces outward, one body rather than a body and loose parts, weights that sum to
+one, a skeleton that is a single tree, eyes hung on a bone that exists. The
+first run found something: the tyrannosaur's nostrils are carved *inside* the
+snout. The cut is smaller than the sampling grid and never breaks the surface,
+so it comes out as two sealed bubbles in the head rather than two dents on it.
+Invisible, and left alone — moving a carve is a change to how the animal looks,
+not a fix — but it is why the "one body" test allows a few stray triangles.
+
+**The browser tests meet the real policy.** `tests/e2e/serve.mjs` serves
+`dist/` with the headers from `dist/_headers`; `vite preview` would serve the
+same files with no Content-Security-Policy at all, and a policy that blocks the
+theme script, the worker or a font does so silently and in production only.
+GitHub is mocked at the network layer — the requests still leave the page, so
+`connect-src` still has to allow them — which keeps the suite off the
+sixty-an-hour limit.
+
+Locally the browser tests drive the Chrome that is already installed, so there
+is nothing to download; CI installs Playwright's Chromium. `PW_CHANNEL=chromium`
+forces the bundled one.
+
+**`npm run shots` is not a test.** It writes a screenshot of every section, the
+dialog and the menu — dark and light, desktop and phone — into
+`test-results/shots/`, with the device-tier shim described under *The hero
+creatures*. It is how a visual change gets looked at before it is called done.
+
+`.github/workflows/ci.yml` runs `npm run verify` step by step on every push and
+pull request. It does not gate the Netlify deploy, which builds on its own; to
+make it, change the build command in `netlify.toml` to
+`npm test && npm run build && npm run test:dist` — the two layers that need no
+browser, about five seconds.
+
+One dependency note: `overrides` in `package.json` pins `minimatch` under
+`@typescript-eslint/typescript-estree` to a patched release that typescript-eslint
+has not moved to yet. When `npm ls minimatch` shows 11.0.1 or later without it,
+delete the override.
+
 ## Deployment
 
 - Set `VITE_SITE_URL` (see `.env.example`) to the production origin for canonical/OG/hreflang tags.
@@ -671,6 +778,36 @@ its box and targets too small for a thumb — turned up, and what changed:
   note the domain must exist in the registry first: a site can deploy perfectly
   and still be unreachable, which looks identical to a broken build.
 - Static output — any static host works (`dist/`).
+
+### Link previews
+
+A link to the site pasted into Telegram used to come out as a bare title: the
+Open Graph tags were written by `<Seo>` after React mounted, and the crawlers
+that build link previews — Telegram, Instagram, LinkedIn, and most search
+engines other than Google — never run JavaScript. A tag that only exists after
+hydration does not exist for them.
+
+So `index.html` now carries the whole head for the default language, written
+out by hand: canonical and hreflang links, Open Graph and Twitter tags, and the
+Person and WebSite structured data. Three things keep that from becoming a
+second copy to maintain:
+
+- **The address is filled in at build time.** The tags use `%VITE_SITE_URL%`,
+  which Vite replaces from the same `define` that feeds `site.ts` — so a deploy
+  preview's `og:image` points at the deploy it is on, like everything else.
+- **`<Seo>` adopts the static tags** rather than adding a second set. Each of
+  its helpers updates a tag in place if one is there, so switching language
+  rewrites the head instead of growing it.
+- **A test holds the two to each other.** `tests/unit/seo.test.tsx` loads the
+  built head, mounts `<Seo>` in Uzbek and requires the result to be *equal* —
+  not to contain the same tags, to be the same head. Add a tag to one side and
+  not the other and it fails.
+
+The structured data is two inline `<script type="application/ld+json">` blocks,
+and they are deliberately not in the CSP: a data block is never executed, so
+`script-src` is never consulted for it, and `scripts/generate-headers.mjs` only
+hashes the scripts a browser would run. The browser tests confirm it — the page
+loads under the generated policy without a violation.
 
 ### Netlify
 
