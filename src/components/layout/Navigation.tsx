@@ -97,7 +97,9 @@ export function Navigation() {
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-fg font-mono text-[0.7rem] font-bold tracking-[0.08em] text-bg">
               {site.monogram}
             </span>
-            <span className="hidden text-sm font-semibold tracking-[-0.01em] sm:block">{site.name}</span>
+            {/* From lg to xl the six links and five languages take the width; the
+                monogram carries the name alone there (it is the link's label). */}
+            <span className="hidden text-sm font-semibold tracking-[-0.01em] whitespace-nowrap sm:block lg:hidden xl:block">{site.name}</span>
           </a>
 
           {/* Desktop links */}
@@ -116,7 +118,7 @@ export function Navigation() {
                       aria-current={isActive ? 'true' : undefined}
                       data-cursor="link"
                       className={cn(
-                        'relative flex h-8 items-center rounded-full px-3.5 text-[0.84rem] font-medium tracking-[-0.005em] transition-colors duration-300',
+                        'relative flex h-8 items-center rounded-full px-3.5 text-[0.84rem] font-medium tracking-[-0.005em] whitespace-nowrap transition-colors duration-300',
                         isActive ? 'text-fg' : 'text-fg-2 hover:text-fg',
                       )}
                     >

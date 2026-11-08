@@ -1,11 +1,14 @@
 import { useEffect } from 'react'
-import { useI18n } from '@/i18n/context'
-import { LANGUAGES, type Language } from '@/i18n/types'
+import { HREFLANG, OG_LOCALE, useI18n } from '@/i18n/context'
+import { LANGUAGES } from '@/i18n/types'
 import { site } from '@/config/site'
 import { technologies } from '@/content/technologies'
 
-const OG_LOCALE: Record<Language, string> = { uz: 'uz_UZ', en: 'en_US', de: 'de_DE', ru: 'ru_RU' }
-const HREFLANG: Record<Language, string> = { uz: 'uz-Latn', en: 'en', de: 'de', ru: 'ru' }
+/** The languages with an hreflang of their own, in order. */
+const ALTERNATES = LANGUAGES.flatMap((l) => {
+  const hreflang = HREFLANG[l]
+  return hreflang ? [{ lang: l, hreflang }] : []
+})
 
 function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
   let el = document.head.querySelector<HTMLMetaElement>(`meta[${attr}="${key}"]`)
@@ -64,7 +67,7 @@ export function Seo() {
     upsertMeta('name', 'author', site.name)
 
     upsertLink('canonical', canonical)
-    LANGUAGES.forEach((l) => upsertLink('alternate', `${base}/?lang=${l}`, HREFLANG[l]))
+    ALTERNATES.forEach(({ lang: l, hreflang }) => upsertLink('alternate', `${base}/?lang=${l}`, hreflang))
     upsertLink('alternate', canonical, 'x-default')
 
     upsertMeta('property', 'og:type', 'website')
@@ -79,10 +82,12 @@ export function Seo() {
     upsertMeta('property', 'og:image:alt', t.meta.ogTitle)
     upsertMeta('property', 'og:locale', OG_LOCALE[lang])
     document.head.querySelectorAll('meta[property="og:locale:alternate"]').forEach((el) => el.remove())
-    LANGUAGES.filter((l) => l !== lang).forEach((l) => {
+    // One per distinct locale: the two Uzbek alphabets share theirs.
+    new Set(LANGUAGES.map((l) => OG_LOCALE[l])).forEach((locale) => {
+      if (locale === OG_LOCALE[lang]) return
       const el = document.createElement('meta')
       el.setAttribute('property', 'og:locale:alternate')
-      el.content = OG_LOCALE[l]
+      el.content = locale
       document.head.appendChild(el)
     })
 
@@ -114,7 +119,7 @@ export function Seo() {
       '@type': 'WebSite',
       name: site.name,
       url: canonical,
-      inLanguage: LANGUAGES.map((l) => HREFLANG[l]),
+      inLanguage: ALTERNATES.map((alternate) => alternate.hreflang),
     })
   }, [t, lang])
 

@@ -7,8 +7,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Seo } from '@/components/seo/Seo'
 import { site } from '@/config/site'
 import { I18nProvider } from '@/i18n/I18nProvider'
-import { dictionaries, useI18n, type I18nContextValue } from '@/i18n/context'
+import { HREFLANG, OG_LOCALE, dictionaries, useI18n, type I18nContextValue } from '@/i18n/context'
 import { LANGUAGES } from '@/i18n/types'
+
+// `oz` shares uz-Latn and uz_UZ with `uz`, so it adds no alternate of either kind.
+const ALTERNATES = Object.keys(HREFLANG).length
+const OG_ALTERNATES = new Set(Object.values(OG_LOCALE)).size - 1
 
 /**
  * `index.html` and <Seo> both describe the page, for two different audiences:
@@ -119,8 +123,8 @@ describe('<Seo>', () => {
     ]) {
       expect(count(selector), selector).toBe(1)
     }
-    expect(count('link[rel="alternate"]')).toBe(LANGUAGES.length + 1)
-    expect(count('meta[property="og:locale:alternate"]')).toBe(LANGUAGES.length - 1)
+    expect(count('link[rel="alternate"]')).toBe(ALTERNATES + 1)
+    expect(count('meta[property="og:locale:alternate"]')).toBe(OG_ALTERNATES)
   })
 
   it.each(LANGUAGES)('rewrites the head in place when the language becomes %s', (lang) => {
@@ -137,7 +141,7 @@ describe('<Seo>', () => {
     expect(count('meta[property="og:title"]')).toBe(1)
     expect(count('link[rel="canonical"]')).toBe(1)
     expect(count('script[type="application/ld+json"]')).toBe(2)
-    expect(count('meta[property="og:locale:alternate"]')).toBe(LANGUAGES.length - 1)
+    expect(count('meta[property="og:locale:alternate"]')).toBe(OG_ALTERNATES)
   })
 
   it('builds the whole head from nothing when there is no static copy', () => {
@@ -145,7 +149,7 @@ describe('<Seo>', () => {
     mount('/?lang=en')
     expect(document.title).toBe(dictionaries.en.meta.title)
     expect(content('meta[property="og:image"]')).toBe(`${site.url}/og.png`)
-    expect(count('link[rel="alternate"]')).toBe(LANGUAGES.length + 1)
+    expect(count('link[rel="alternate"]')).toBe(ALTERNATES + 1)
     expect(count('script[type="application/ld+json"]')).toBe(2)
   })
 })

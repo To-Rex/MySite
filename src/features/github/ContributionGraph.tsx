@@ -1,3 +1,4 @@
+import { respell } from '@/i18n/newLatin'
 import { useInView } from 'motion/react'
 import { useMemo, useRef, type CSSProperties } from 'react'
 import type { ContributionDay } from './api'
@@ -31,7 +32,7 @@ export function ContributionGraph({ days, weeks = 53 }: ContributionGraphProps) 
       if (!day) return
       const m = new Date(day.date + 'T00:00:00').getMonth()
       if (m !== lastMonth) {
-        labels.push({ col: ci, label: fmt.format(new Date(day.date + 'T00:00:00')) })
+        labels.push({ col: ci, label: respell(locale, fmt.format(new Date(day.date + 'T00:00:00'))) })
         lastMonth = m
       }
     })
@@ -62,7 +63,7 @@ export function ContributionGraph({ days, weeks = 53 }: ContributionGraphProps) 
                   className="contrib-cell"
                   data-level={d ? d.level : 'empty'}
                   style={{ '--d': `${ci * 14}ms` } as CSSProperties}
-                  title={d ? `${dateFmt.format(new Date(d.date + 'T00:00:00'))}: ${d.count}` : undefined}
+                  title={d ? `${respell(locale, dateFmt.format(new Date(d.date + 'T00:00:00')))}: ${d.count}` : undefined}
                 />
               )
             })}

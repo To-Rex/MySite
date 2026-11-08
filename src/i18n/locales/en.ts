@@ -242,7 +242,7 @@ export const en: Dictionary = {
   },
   language: {
     label: 'Language',
-    names: { uz: 'O‘zbek', en: 'English', de: 'Deutsch', ru: 'Русский' },
+    names: { uz: 'O‘zbek', oz: 'Özbek (yangi alifbo)', en: 'English', de: 'Deutsch', ru: 'Русский' },
   },
   cursor: {
     open: 'Open',

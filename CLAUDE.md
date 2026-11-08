@@ -47,6 +47,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 | layout, breakpoints | Responsive |
 | `scripts/`, `netlify.toml`, `site.ts` | Deployment |
 | `index.html` head, `Seo.tsx` | Deployment → Link previews |
+| `src/i18n/*`, `newLatin.ts`, locale files | Languages |
 | `ProjectDialog.tsx`, `MobileMenu.tsx`, `useFocusTrap.ts` | Overlays and the keyboard |
 | `tests/`, CI | Testing |
 
@@ -56,7 +57,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 src/app          shell, provider order, section order
 src/config       site identity (site.ts), section ids / nav
 src/content      language-neutral data: projects, technologies, socials
-src/i18n         Dictionary type + uz (default) / en / de / ru
+src/i18n         Dictionary type + uz (default) / en / de / ru; oz derived from uz (newLatin.ts)
 src/sections     one file per page section
 src/components   ui, layout, cursor, loader, seo, three (all 3D)
 src/lib          module stores (pointer, spectacle, valley), helpers
@@ -82,8 +83,10 @@ Each of these was a debugging round the first time. The README section explains 
    the wrapper's class is not enough. The universe canvas is the exception, its meshes take clicks.
 6. **Creature geometry is cached per (kind, detail) and shared.** Take detail from
    `DETAIL_BY_TIER` in `creatureRig.ts`, and never dispose that geometry.
-7. **Every UI string goes in all four locale files.** The `Dictionary` type makes a missing key
-   a compile error; keep it that way.
+7. **Every UI string goes in the four written locale files** (`uz`, `en`, `de`, `ru`). The
+   `Dictionary` type makes a missing key a compile error; keep it that way. `oz` (Uzbek in the
+   new Latin alphabet) is derived from `uz` by `src/i18n/newLatin.ts`: never edit it by hand, and
+   put a foreign word that must keep its spelling in `LOANWORDS` there.
 8. **Content honesty.** No invented achievements, stats, clients or project details. Missing
    data stays empty and the UI shows its placeholder.
 9. **CSS: write `backdrop-filter` unprefixed only.** Lightning CSS adds `-webkit-` itself, and a

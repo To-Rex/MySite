@@ -1,3 +1,8 @@
+import { respell } from '@/i18n/newLatin'
+
+// Intl has no data for Uzbek in the new Latin alphabet and answers in the old
+// one; `respell` is a no-op for every other locale.
+
 const DIVISIONS: { amount: number; unit: Intl.RelativeTimeFormatUnit }[] = [
   { amount: 60, unit: 'second' },
   { amount: 60, unit: 'minute' },
@@ -14,7 +19,7 @@ export function formatRelative(date: string | Date, locale: string): string {
     const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
     let duration = (new Date(date).getTime() - Date.now()) / 1000
     for (const division of DIVISIONS) {
-      if (Math.abs(duration) < division.amount) return rtf.format(Math.round(duration), division.unit)
+      if (Math.abs(duration) < division.amount) return respell(locale, rtf.format(Math.round(duration), division.unit))
       duration /= division.amount
     }
     return ''
@@ -26,7 +31,7 @@ export function formatRelative(date: string | Date, locale: string): string {
 /** Compact number (1.2k) localized via Intl. */
 export function formatCompact(value: number, locale: string): string {
   try {
-    return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+    return respell(locale, new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(value))
   } catch {
     return String(value)
   }

@@ -1,11 +1,11 @@
 import { motion } from 'motion/react'
-import { LANGUAGES, type Language } from '@/i18n/types'
-import { useI18n } from '@/i18n/context'
+import { LANGUAGES, LANGUAGE_LABELS, type Language } from '@/i18n/types'
+import { LOCALE_TAGS, useI18n } from '@/i18n/context'
 import { cn } from '@/lib/cn'
 import { springSnappy } from '@/lib/motion'
 
 interface LanguageSwitcherProps {
-  /** `compact` renders UZ · EN · DE · RU; `expanded` shows full language names. */
+  /** `compact` renders UZ · ÖZ · EN · DE · RU; `expanded` shows full language names. */
   variant?: 'compact' | 'expanded'
   className?: string
   layoutId?: string
@@ -30,7 +30,7 @@ export function LanguageSwitcher({ variant = 'compact', className, layoutId = 'l
           <button
             key={code}
             type="button"
-            lang={code}
+            lang={LOCALE_TAGS[code]}
             onClick={() => setLang(code)}
             aria-pressed={active}
             aria-label={t.language.names[code]}
@@ -49,7 +49,7 @@ export function LanguageSwitcher({ variant = 'compact', className, layoutId = 'l
                 aria-hidden
               />
             )}
-            <span className="relative">{variant === 'compact' ? code : t.language.names[code]}</span>
+            <span className="relative">{variant === 'compact' ? LANGUAGE_LABELS[code] : t.language.names[code]}</span>
           </button>
         )
       })}

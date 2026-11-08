@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LOCALE_TAGS, dictionaries } from '@/i18n/context'
 import { DEFAULT_LANGUAGE, LANGUAGES, type Language } from '@/i18n/types'
+import { leaves, type Leaf } from './dictionary'
 
 /**
  * What the `Dictionary` type cannot check.
@@ -10,17 +11,6 @@ import { DEFAULT_LANGUAGE, LANGUAGES, type Language } from '@/i18n/types'
  * a project described in English and still "coming soon" in Uzbek — all of
  * which compile, and all of which show up on the page.
  */
-
-type Leaf = { path: string; value: string }
-
-function leaves(node: unknown, path = ''): Leaf[] {
-  if (typeof node === 'string') return [{ path, value: node }]
-  if (Array.isArray(node)) return node.flatMap((item, i) => leaves(item, `${path}[${i}]`))
-  if (node && typeof node === 'object') {
-    return Object.entries(node).flatMap(([key, value]) => leaves(value, path ? `${path}.${key}` : key))
-  }
-  throw new Error(`unexpected ${typeof node} at ${path}`)
-}
 
 /** A project description is the one string allowed to be empty: "not written yet". */
 const mayBeEmpty = (path: string) => /^projects\.items\.[^.]+\.description$/.test(path)

@@ -63,9 +63,16 @@ src/
   hooks/, lib/    shared utilities (media queries, device tier, pointer store…)
 ```
 
-### Languages (uz default · en · de · ru)
+### Languages (uz default · oz · en · de · ru)
 
-Every UI string lives in `src/i18n/locales/*.ts` and must satisfy the `Dictionary` type — adding a key without translating it in all four files is a **compile error**. The choice persists in `localStorage` (`dh.lang`) and can be forced with `?lang=uz|en|de|ru`.
+Every UI string lives in `src/i18n/locales/*.ts` and must satisfy the `Dictionary` type — adding a key without translating it in the four written files (`uz`, `en`, `de`, `ru`) is a **compile error**. The choice persists in `localStorage` (`dh.lang`) and can be forced with `?lang=uz|oz|en|de|ru`.
+
+`oz` is Uzbek in the new 28-letter Latin alphabet (A B D E F G Ğ H I J K L M N O Ö P Q R S Ş Ç T U V X Y Z), shown as **ÖZ** in the switcher. It is not written by hand: `src/i18n/newLatin.ts` respells `uz` letter for letter — Oʻ→Ö, Gʻ→Ğ, Sh→Ş, Ch→Ç, and nothing else changes — so editing `uz.ts` updates both. Two things to know when writing Uzbek copy:
+
+- A foreign word that must keep its own spelling (a product name, an English term used as-is) goes in `LOANWORDS` in `newLatin.ts`; language names are already exempt. `tests/unit/new-latin.test.ts` fails on any `sh`, `ch`, `oʻ` or `gʻ` left in `oz`, which is how an unlisted loanword shows up.
+- Intl has no data for the new alphabet. `oz` uses the tag `uz-Latn-UZ-x-yangi`, which Intl formats as `uz-Latn-UZ` ("kecha", "oʻtgan oy"), and `respell()` fixes that output wherever it is shown: `formatRelative`, `formatCompact`, the contribution graph. A new `Intl` call that shows text needs the same wrapper.
+
+Search engines know Uzbek Latin as one language, so `oz` has no `hreflang` or sitemap entry of its own, and its `og:locale` is `uz_UZ` like `uz`'s.
 
 ### Themes
 
@@ -74,10 +81,10 @@ Dark is primary; light is a dedicated warm-white theme (not an inversion). All c
 ### Adding a real project
 
 1. `src/content/projects.ts` — fill `technologies`, `status`, `year`, `links.github/demo`, and optionally `media.image`.
-2. `src/i18n/locales/*.ts` → `projects.items[<id>]` — add `tagline`/`description` in all four languages.
+2. `src/i18n/locales/*.ts` → `projects.items[<id>]` — add `tagline`/`description` in `uz`, `en`, `de` and `ru` (`oz` follows `uz`).
    Empty descriptions render an honest "details coming soon" note — nothing is invented.
 3. New project id? Add it to `ProjectId` in `src/i18n/types.ts` — the compiler then walks you through every file that needs copy.
-4. A description goes into all four languages or none. The compiler cannot see an empty
+4. A description goes into all the written languages or none. The compiler cannot see an empty
    string, so `npm test` does: a project described in English and still "coming soon" in
    Uzbek fails it.
 

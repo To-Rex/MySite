@@ -69,6 +69,18 @@ test.describe('language', () => {
     await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute('content', 'de_DE')
   })
 
+  test('?lang=oz is the same Uzbek in the new Latin alphabet', async ({ page }) => {
+    await open(page, '/?lang=oz')
+    await expect(page.locator('html')).toHaveAttribute('lang', 'uz-Latn-UZ-x-yangi')
+    await expect(page).toHaveTitle(/Dasturçi/)
+    await expect(page.locator('h1')).toHaveText(/Dilşodjon\s*Haydarov/)
+    // Its button is the pressed one, named in its own alphabet.
+    const pressed = page.locator('button[lang="uz-Latn-UZ-x-yangi"][aria-pressed="true"]')
+    await expect(pressed.last()).toHaveAccessibleName('Özbek (yangi alifbo)')
+    // Search engines are told nothing new: the alternates are the four they can tell apart.
+    expect(await page.locator('link[rel="alternate"][hreflang]').count()).toBe(5)
+  })
+
   test.describe('with a Russian browser', () => {
     test.use({ locale: 'ru-RU' })
 
@@ -79,7 +91,7 @@ test.describe('language', () => {
       // On a phone the switcher lives in the menu.
       if (isMobile) await page.locator('header button[aria-controls="mobile-menu"]').click()
       const scope = isMobile ? page.locator('#mobile-menu') : page.locator('header')
-      await scope.locator('button[lang="uz"]').click()
+      await scope.locator('button[lang="uz-Latn-UZ"]').click()
       await expect(page.locator('html')).toHaveAttribute('lang', 'uz-Latn-UZ')
       await expect(page).toHaveTitle(/Dasturchi/)
 
