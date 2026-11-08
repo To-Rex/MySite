@@ -108,11 +108,15 @@ describe.each(VOICE_NAMES)('the voice %s', (name) => {
   it('is real numbers, in range, and not silent', () => {
     for (const channel of voice(name)) {
       expect(channel.length).toBeGreaterThan(1000)
+      // One expect at the end, not one a sample: the bed alone is 1.4 million of
+      // them, which is long enough to time out on a CI runner.
       let peak = 0
+      let broken = 0
       for (const value of channel) {
-        expect(Number.isFinite(value)).toBe(true)
+        if (!Number.isFinite(value)) broken++
         peak = Math.max(peak, Math.abs(value))
       }
+      expect(broken).toBe(0)
       expect(peak).toBeLessThanOrEqual(1)
       expect(peak).toBeGreaterThan(0.2)
     }
