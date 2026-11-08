@@ -232,6 +232,10 @@ describe('doing as it is asked', () => {
     expect(takesRequest(busy({ name: 'tailSlam', left: 0.4 }), true)).toBe(false)
   })
 
+  it('keeps nobody waiting for much more than half a second', () => {
+    expect(takesRequest(busy({ name: 'tailSlam', left: 0.8 }), true)).toBe(true)
+  })
+
   it('never cuts one roar off with another', () => {
     expect(takesRequest(busy({ name: 'roar', left: 2.5 }), true)).toBe(false)
   })

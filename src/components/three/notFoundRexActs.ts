@@ -340,7 +340,7 @@ export function walkHeading(dx: number, dz: number, facingLeft: boolean): number
 }
 
 /** The longest a visitor is kept waiting for something that is about to finish anyway. */
-const VISITOR_PATIENCE = 1.2
+const VISITOR_PATIENCE = 0.6
 
 export interface ActInProgress {
   name: RexActName
