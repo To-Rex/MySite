@@ -34,6 +34,10 @@ test('runs clean under the production policy, however deep the address, 3D and a
   await page.waitForTimeout(1500)
 
   await page.mouse.click(page.viewportSize()!.width * 0.5, page.viewportSize()!.height * 0.25)
+  // A cursor near its mouth and a click on the animal itself, once it has arrived.
+  await page.waitForTimeout(4000)
+  await page.mouse.move(page.viewportSize()!.width * 0.62, page.viewportSize()!.height * 0.6)
+  await page.mouse.click(page.viewportSize()!.width * 0.75, page.viewportSize()!.height * 0.65)
   await roar.click()
   await page.waitForTimeout(2500)
 

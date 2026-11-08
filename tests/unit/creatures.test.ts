@@ -154,6 +154,45 @@ describe('creature generation', () => {
     expect(medium).toBeGreaterThan(low * 1.3)
   })
 
+  describe('the tyrannosaur\'s jaw', () => {
+    const creature = createAnyCreature('dino', 'low')
+    const jaw = creature.bones.findIndex((bone) => bone.name === 'jaw')
+    const skull = creature.bones.findIndex((bone) => bone.name === 'head')
+    const weightOn = (vertex: number, bone: number) => {
+      let sum = 0
+      for (let k = 0; k < 4; k++) if (creature.skinIndices[vertex * 4 + k] === bone) sum += creature.skinWeights[vertex * 4 + k]!
+      return sum
+    }
+    // The line of the mouth, in the creature's own normalised space.
+    const line = creature.bones[jaw]!.below!
+    const span = line.to[0] - line.from[0]
+    const inMouth = Array.from({ length: creature.positions.length / 3 }, (_, i) => i).filter((i) => {
+      const x = creature.positions[i * 3]!
+      return x > line.from[0] + span * 0.25 && x < line.to[0]
+    })
+
+    it('hangs off the skull', () => {
+      expect(creature.bones[jaw]!.parent).toBe('head')
+    })
+
+    it('takes everything below the line of the mouth', () => {
+      const below = inMouth.filter((i) => creature.positions[i * 3 + 1]! < line.from[1] - span * 0.08)
+      expect(below.length).toBeGreaterThan(10)
+      for (const i of below) expect(weightOn(i, skull), `vertex ${i}`).toBeCloseTo(0, 3)
+    })
+
+    it('leaves everything above it to the skull, so the lips do not droop over the teeth', () => {
+      const above = inMouth.filter((i) => creature.positions[i * 3 + 1]! > line.from[1] + span * 0.08)
+      expect(above.length).toBeGreaterThan(10)
+      for (const i of above) expect(weightOn(i, jaw), `vertex ${i}`).toBeCloseTo(0, 3)
+    })
+
+    it('has teeth for both jaws', () => {
+      expect(creature.teeth.filter((tooth) => tooth.down).length).toBeGreaterThan(0)
+      expect(creature.teeth.filter((tooth) => !tooth.down).length).toBeGreaterThan(0)
+    })
+  })
+
   it('tells brand creatures from the authored beasts', () => {
     expect(isBeastKind('dino')).toBe(false)
     expect(isBeastKind('turtle')).toBe(false)

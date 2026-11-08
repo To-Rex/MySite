@@ -653,6 +653,51 @@ sees when something has already gone wrong, and it should not be able to fail to
 `prefers-reduced-motion` gets the finished tableau on a parked canvas, with
 nothing to set off.
 
+#### What the tyrannosaur does
+
+The hero's animal only ever walks; this one has a jaw, a will of its own and a
+short temper. `notFoundRexActs.ts` holds what each act is, as numbers: how far to
+open the mouth, rear up, reach or lift a foot at each moment, and which moments
+are events. `NotFoundRex.tsx` blends those over the idle and writes the bones.
+
+| Act | When | What happens |
+| --- | --- | --- |
+| Roar | On arrival, on the button, after a meteor | Breath in, head up, mouth wide, the wave goes through the number |
+| Snap | A cursor near its mouth, or clicking it | Lunges and shuts its jaws on the air |
+| Bite | By itself | Walks up to the number (on a phone, reaches from where it stands), tears a piece out, shakes it, chews three times, swallows (a lump goes down the neck) and burps sparks; the wound shows the lava and grows over |
+| Tail slam | By itself | Tail up over its back and brought down hard: dust, and the number jumps |
+| Stomp | By itself, or poked | Two stamps, the second harder |
+| Shake | By itself, or poked | Head thrown about like a dog out of the water |
+| Yawn | By itself | Slowly, enormously, eyes shut |
+| Sniff | By itself | Head down over the ground, three sniffs and a snort |
+| Pace | By itself | Turns on the spot and walks somewhere else for no reason it would admit to |
+| Flinch | A meteor lands too close | Recoils, then roars about it |
+| Snarl | A small meteor, some way off | A look, and a lifted lip |
+
+Between those it blinks, breathes, pants after anything strenuous, mutters, and
+watches the cursor or a passing pterosaur. Clicking on it gets it progressively
+less patient rather than calling a meteor down on its head.
+
+The idle list is a fixed order and not dice: chance left the bite for the third
+minute, by which time a visitor has gone. Each act is non-interruptible unless
+being cut short would look fine, and every act has to end at rest, so the next
+one starts without a jolt; `tests/unit/not-found-rex.test.ts` holds them to that.
+
+**It never turns its back.** The first version walked straight at wherever it was
+going, and when that was further into the scene the visitor got a long look at its
+rear. Now it stays more or less side-on however it is really moving, turns round by
+the side facing the camera even when the other way is shorter, and doesn't turn at
+all for a shuffle. Its speed follows its legs and its legs followed the distance
+left, so it also used to take for ever over the last stretch; the walk has a floor.
+
+**The jaw had to be split by hand.** Skin weights here come from distance to the
+bones, which works for limbs and fails for a mouth: a point on the outside of a
+lip is about as far from one jaw as the other, so the lips came down with the jaw
+and hid the teeth. The `jaw` bone therefore carries the line of the mouth
+(`below` in its spec), everything under that line belongs to it, and everything
+above belongs to the skull. At rest none of this changes a vertex, so the hero's
+animal and the valley's are untouched by it. The lower teeth ride the jaw.
+
 #### Sound
 
 The 404 page has a voice, and like everything else on the site none of it is a

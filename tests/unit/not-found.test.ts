@@ -139,6 +139,13 @@ describe('the layout', () => {
     expect(L.groundY + L.rexScale * 0.44).toBeLessThanOrEqual(bottom + 1e-5)
   })
 
+  it('only walks to the number where the window leaves room to', () => {
+    expect(stageLayout(1440, 900, NUMBER_WIDTH).reachesNumber).toBe(true)
+    expect(stageLayout(1024, 768, NUMBER_WIDTH).reachesNumber).toBe(true)
+    expect(stageLayout(390, 844, NUMBER_WIDTH).reachesNumber).toBe(false)
+    expect(stageLayout(844, 390, NUMBER_WIDTH).reachesNumber).toBe(false)
+  })
+
   it('converts between the world and the number', () => {
     const L = stageLayout(1440, 900, NUMBER_WIDTH)
     expect(toStage(L.stageX, L.stageY, L)).toEqual([0, 0])
