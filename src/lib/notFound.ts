@@ -99,6 +99,10 @@ export interface StageLayout {
   rexScale: number
   /** How far off-screen it starts walking from. */
   rexFrom: number
+  /** How far either way it will wander from where it stands. */
+  rexRoam: number
+  /** Whether there is room to walk up to the number to bite it. Otherwise it reaches from where it stands. */
+  reachesNumber: boolean
   /** Width over height of the window. */
   aspect: number
   /** Where the words sit, in screen 0..1: centre x, y and radius x, y. */
@@ -134,6 +138,8 @@ export function stageLayout(width: number, height: number, numberWidth: number):
       rexZ: 1.4,
       rexScale,
       rexFrom: viewW * 0.47 + rexScale * 0.56,
+      rexRoam: viewW * 0.08,
+      reachesNumber: false,
       aspect,
       quiet: [0.5, -0.05, 1.5, 0.6],
     }
@@ -152,6 +158,8 @@ export function stageLayout(width: number, height: number, numberWidth: number):
       rexZ: 1.6,
       rexScale,
       rexFrom: viewW * 0.44 + rexScale * 0.56,
+      rexRoam: viewW * 0.05,
+      reachesNumber: false,
       aspect,
       quiet: [0, 0.2, 0.62, 1.3],
     }
@@ -168,6 +176,8 @@ export function stageLayout(width: number, height: number, numberWidth: number):
     rexZ: 2,
     rexScale,
     rexFrom: viewW * 0.44 + rexScale * 0.56,
+    rexRoam: viewW * 0.07,
+    reachesNumber: true,
     aspect,
     quiet: [0.02, 0.02, 0.66, 0.78],
   }

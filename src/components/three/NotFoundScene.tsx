@@ -12,8 +12,6 @@ import {
   type Mesh,
   MeshStandardMaterial,
   type Object3D,
-  type Camera,
-  type Bone,
   type PointLight,
   type Points,
   Quaternion,
@@ -27,8 +25,8 @@ import { CAMERA, OPENING, VIEW_HEIGHT, drainCommands, setNotFoundAct, stageLayou
 import { cue, grindSound } from '@/features/sound/store'
 import type { Theme } from '@/theme/context'
 import type { CreatureDetail } from './creatures'
-import { DETAIL_BY_TIER, MASCOT_SKIN, animateDinoRun, animateFlap, animateTurtleSwim, poseLeg, useBind, useCreature, type Rig } from './creatureRig'
-import { Eyes, Teeth } from './creatureFittings'
+import { DETAIL_BY_TIER, MASCOT_SKIN, animateFlap, animateTurtleSwim, useBind, useCreature, type Rig } from './creatureRig'
+import { Eyes } from './creatureFittings'
 import { GLOW_LAYER, createBloom } from './notFoundBloom'
 import { DIGIT_HEIGHT, NUMBER_WIDTH, buildColumns } from './notFoundGlyphs'
 import {
@@ -36,7 +34,6 @@ import {
   FIELD,
   GROUND,
   SKY,
-  WAVE_SLOTS,
   makeBurstMaterial,
   makeColumnGeometry,
   makeColumnGlowMaterial,
@@ -55,6 +52,9 @@ import {
   makeStreakGeometry,
   makeStreakMaterial,
 } from './notFoundMaterials'
+import { GlowMask, Rex } from './NotFoundRex'
+import { ROAR_HOLD, ROAR_WIND } from './notFoundRexActs'
+import { type Burst, finite, landMeteor, launchMeteor, panOf, requestAct, resetShow, seeded, show, smooth } from './notFoundShow'
 import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 
@@ -86,235 +86,8 @@ const QUALITY: Record<DeviceTier, Quality> = {
   low: { dpr: [1, 1], cell: 0.088, embers: 110, stars: 200, rocks: 0, bloom: false, bump: 0, turtles: 1, flyers: 0 },
 }
 
-/** Deterministic 0..1, so nothing here reaches for Math.random during render. */
-function seeded(a: number, b: number): number {
-  let h = (Math.imul(a + 1, 374761393) + Math.imul(b + 1, 668265263)) | 0
-  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
-  h ^= h >>> 16
-  return (h >>> 0) / 4294967296
-}
-
-const smooth = (edge0: number, edge1: number, x: number) => MathUtils.smoothstep(x, edge0, edge1)
-const finite = (value: number, fallback = 0) => (Number.isFinite(value) ? value : fallback)
-
 /** Things the bloom pass should draw as well as the frame. */
 const glows = (object: Object3D) => object.layers.enable(GLOW_LAYER)
-
-/* -------------------------------------------------------------------------- */
-/* The director                                                                */
-/* -------------------------------------------------------------------------- */
-
-interface Strike {
-  live: boolean
-  born: number
-  lands: number
-  from: Vector3
-  to: Vector3
-  power: number
-}
-
-interface Ring {
-  at: Vector3
-  born: number
-  life: number
-  size: number
-  power: number
-}
-
-interface Flare {
-  at: Vector3
-  born: number
-  life: number
-  size: number
-}
-
-interface Burst {
-  at: Vector3
-  born: number
-  power: number
-}
-
-const newStrike = (): Strike => ({ live: false, born: 0, lands: 0, from: new Vector3(), to: new Vector3(), power: 1 })
-const newRing = (): Ring => ({ at: new Vector3(), born: -99, life: 1, size: 1, power: 0 })
-const newFlare = (): Flare => ({ at: new Vector3(), born: -99, life: 1, size: 1 })
-const newBurst = (): Burst => ({ at: new Vector3(), born: -99, power: 1 })
-
-/**
- * The show's state: one object written from frame callbacks and read by the
- * rest of them. Nothing here may be read from `state.clock` — see "Parked
- * canvases and the clock" in the README — so it counts its own time in clamped
- * steps like every other scene on the site.
- */
-const show = {
-  t: 0,
-  /** Whole-frame shake, from impacts and roars. */
-  shake: 0,
-  /** One sharp downward knock per footfall. */
-  thump: 0,
-  opened: false,
-  /** Whether the first meteor has landed: it gets the big bang. */
-  landed: false,
-  /** Sounds that go with a moment rather than an event. */
-  stonesCued: false,
-  roarCued: true,
-  roars: 0,
-  /** When it next mutters to itself, and when it last did. */
-  nextGrumble: 0,
-  grumbleAt: -100,
-  /** Which pass each far meteor is on, so a new one can be heard. */
-  streakCycles: [] as number[],
-  grindLevel: 0,
-  /** When a meteor comes down by itself, and how many have. */
-  nextAuto: 0,
-  autos: 0,
-  nextWave: 0,
-  nextRing: 0,
-  nextFlare: 0,
-  nextHot: 0,
-  nextDust: 0,
-  strikes: [newStrike(), newStrike(), newStrike()],
-  rings: Array.from({ length: 8 }, newRing),
-  flares: [newFlare(), newFlare(), newFlare()],
-  hot: [newBurst(), newBurst(), newBurst()],
-  dust: Array.from({ length: 6 }, newBurst),
-  /** When the walk started; Infinity until the animal is ready to. */
-  walkFrom: Infinity,
-  /** The current roar's start. May be in the future. */
-  roarAt: -100,
-  roarFired: true,
-  /** What the tyrannosaur is looking at, and until when. */
-  look: new Vector3(0, 1, 8),
-  lookUntil: -1,
-  mouth: new Vector3(),
-  arrived: false,
-  layout: stageLayout(1440, 900, NUMBER_WIDTH),
-}
-
-function resetShow(): void {
-  show.t = 0
-  show.shake = 0
-  show.thump = 0
-  show.opened = false
-  show.landed = false
-  show.stonesCued = false
-  show.roarCued = true
-  show.roars = 0
-  show.nextGrumble = OPENING.alive + 7
-  show.grumbleAt = -100
-  show.streakCycles = []
-  show.grindLevel = 0
-  show.nextAuto = OPENING.alive + 7
-  show.autos = 0
-  show.walkFrom = Infinity
-  show.roarAt = -100
-  show.roarFired = true
-  show.lookUntil = -1
-  show.arrived = false
-  for (const strike of show.strikes) strike.live = false
-  for (const ring of show.rings) ring.born = -99
-  for (const flare of show.flares) flare.born = -99
-  for (const burst of [...show.hot, ...show.dust]) burst.born = -99
-  FIELD.uWaves.value.forEach((wave) => wave.set(0, 0, -100, 0))
-  FIELD.uWaveCore.value.fill(0)
-  FIELD.uLava.value = 1
-  SKY.uReveal.value = 0
-  SKY.uFlash.value = 0
-  GROUND.uCrack.value = 0
-  EMBERS.uGust.value = 0
-  setNotFoundAct('load')
-}
-
-function pushWave(worldX: number, worldY: number, strength: number, core: number): void {
-  const slot = show.nextWave++ % WAVE_SLOTS
-  const [x, y] = toStage(worldX, worldY, show.layout)
-  FIELD.uWaves.value[slot]!.set(x, y, show.t, strength)
-  FIELD.uWaveCore.value[slot] = core
-}
-
-function spawnRing(at: Vector3, size: number, life: number, power: number, delay = 0): void {
-  const ring = show.rings[show.nextRing++ % show.rings.length]!
-  ring.at.copy(at)
-  ring.size = size
-  ring.life = life
-  ring.power = power
-  ring.born = show.t + delay
-}
-
-function spawnFlare(at: Vector3, size: number, life: number): void {
-  const flare = show.flares[show.nextFlare++ % show.flares.length]!
-  flare.at.copy(at)
-  flare.size = size
-  flare.life = life
-  flare.born = show.t
-}
-
-function spawnSparks(at: Vector3, power: number): void {
-  const burst = show.hot[show.nextHot++ % show.hot.length]!
-  burst.at.copy(at)
-  burst.power = power
-  burst.born = show.t
-}
-
-function spawnDust(at: Vector3, power: number): void {
-  const burst = show.dust[show.nextDust++ % show.dust.length]!
-  burst.at.copy(at)
-  burst.power = power
-  burst.born = show.t
-}
-
-/** Where a world x is across the stereo field. */
-function panOf(x: number): number {
-  const half = (VIEW_HEIGHT * Math.max(0.5, show.layout.aspect)) / 2
-  return MathUtils.clamp(finite(x) / half, -1, 1)
-}
-
-function launchMeteor(to: Vector3, flight: number, power: number): void {
-  const strike = show.strikes.find((candidate) => !candidate.live)
-  if (!strike) return
-  strike.live = true
-  strike.born = show.t
-  strike.lands = show.t + flight
-  strike.power = power
-  strike.to.copy(to)
-  // Always out of the top right, so a run of them reads as one storm.
-  strike.from.set(to.x + 6.5 + seeded(show.nextRing, 1) * 2, to.y + 8 + seeded(show.nextRing, 2) * 2, to.z - 4)
-  cue({ kind: 'meteor', flight, from: panOf(strike.from.x), to: panOf(to.x), power })
-}
-
-function landMeteor(strike: Strike): void {
-  strike.live = false
-  const { to, power } = strike
-  cue({ kind: 'impact', pan: panOf(to.x), power, first: !show.landed })
-  show.landed = true
-  pushWave(to.x, to.y, power, power)
-  spawnRing(to, 9 * power, 1.1, 0.5)
-  spawnRing(to, 5 * power, 0.8, 0.42, 0.07)
-  spawnFlare(to, 7.5 * power, 0.55)
-  spawnSparks(to, power)
-  show.shake = Math.max(show.shake, power)
-  FIELD.uLava.value = Math.max(FIELD.uLava.value, 1 + power * 0.75)
-  SKY.uFlash.value = Math.max(SKY.uFlash.value, power * 0.34)
-  EMBERS.uGust.value += power * 1.4
-  if (show.arrived) {
-    show.look.copy(to)
-    show.lookUntil = show.t + 1.9
-    if (show.t - show.roarAt > 2.6) startRoar(0.35)
-    else cue({ kind: 'snarl', pan: panOf(show.mouth.x) })
-  }
-}
-
-function startRoar(delay = 0): void {
-  if (show.t + delay - show.roarAt < 2.4) return
-  show.roarAt = show.t + delay
-  show.roarFired = false
-  show.roarCued = false
-}
-
-/** How long a roar's wind-up takes, then how long the mouth stays open. */
-const ROAR_WIND = 0.42
-/** The wave leaves once the head has come up, so it starts at the mouth and not where the mouth was. */
-const ROAR_RISE = 0.14
-const ROAR_HOLD = 1.5
 
 const scratch = new Vector3()
 const scratch2 = new Vector3()
@@ -326,6 +99,19 @@ function onNumberPlane(nx: number, ny: number, camera: { position: Vector3 } & O
   const z = show.layout.stageScale * 0.5
   const along = (z - camera.position.z) / scratch.z
   return out.copy(camera.position).addScaledVector(scratch, along)
+}
+
+/** Whether a click on the screen landed on the tyrannosaur, near enough. */
+function hitsTheAnimal(nx: number, ny: number, camera: { position: Vector3 } & Object3D): boolean {
+  const L = show.layout
+  scratch.set(nx, ny, 0.5).unproject(camera as never)
+  scratch.sub(camera.position).normalize()
+  const along = (L.rexZ - camera.position.z) / scratch.z
+  const x = camera.position.x + scratch.x * along
+  const y = camera.position.y + scratch.y * along
+  const rx = (x - show.rexX) / (L.rexScale * 0.56)
+  const ry = (y - (L.groundY + L.rexScale * 0.2)) / (L.rexScale * 0.24)
+  return rx * rx + ry * ry < 1
 }
 
 /**
@@ -349,7 +135,8 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
   useFrame((state, dt) => {
     const { camera } = state
     const L = show.layout
-    FIELD.uPointScale.value = state.gl.getPixelRatio() * MathUtils.clamp(state.size.height / 900, 0.55, 1.4)
+    // Sprites are sized in pixels, and a pixel is a much larger share of a phone.
+    FIELD.uPointScale.value = state.gl.getPixelRatio() * MathUtils.clamp(Math.min(state.size.height / 900, state.size.width / 1100), 0.55, 1.4)
 
     // The sky is centred on the number as the camera sees it, whatever depth it is really at.
     const skyZ = -9
@@ -403,30 +190,13 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
 
     for (const strike of show.strikes) if (strike.live && t >= strike.lands) landMeteor(strike)
 
-    // ---- Roar ----------------------------------------------------------------
-    // Cued at the start of the wind-up: the recording starts with the breath in.
-    if (!show.roarCued && t >= show.roarAt) {
-      show.roarCued = true
-      cue({ kind: 'roar', pan: panOf(show.mouth.x), short: show.roars++ % 2 === 1 })
-    }
-    if (!show.roarFired && t >= show.roarAt + ROAR_WIND + ROAR_RISE) {
-      show.roarFired = true
-      const { mouth } = show
-      for (let i = 0; i < 3; i++) spawnRing(mouth, 3.4 + i * 1.5, 0.95, 0.62 - i * 0.14, i * 0.14)
-      spawnSparks(mouth, 0.42)
-      cue({ kind: 'rattle', pan: panOf(mouth.x), power: 1 })
-      scratch2.set(mouth.x, Math.min(mouth.y, L.stageY - DIGIT_HEIGHT * 0.5 * L.stageScale), 0)
-      pushWave(scratch2.x, scratch2.y, 1, 0)
-      show.shake = Math.max(show.shake, 0.62)
-      EMBERS.uGust.value -= 1.6
-      FIELD.uLava.value = Math.max(FIELD.uLava.value, 1.7)
-    }
-
     // ---- What the visitor is doing -------------------------------------------
     for (const command of drainCommands()) {
       if (command.kind === 'roar') {
         // Not mid-stride: it stops to do this.
-        if (show.arrived) startRoar()
+        if (show.arrived) requestAct('roar')
+      } else if (show.arrived && hitsTheAnimal(command.nx, command.ny, camera)) {
+        show.rexPoked = true
       } else if (show.strikes.some((strike) => !strike.live)) {
         onNumberPlane(command.nx, command.ny, camera, scratch2)
         const halfW = NUMBER_WIDTH * 0.5 * L.stageScale
@@ -438,7 +208,7 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
     }
 
     // It mutters to itself, between roars.
-    if (show.arrived && t >= show.nextGrumble && t - show.roarAt > 3.4) {
+    if (show.arrived && !show.rexBusy && t >= show.nextGrumble && t - show.roarAt > 3.4) {
       const n = Math.floor(t)
       show.nextGrumble = t + 6.5 + seeded(n, 41) * 7.5
       show.grumbleAt = t
@@ -652,270 +422,6 @@ function Stage({ reducedMotion, children }: { reducedMotion: boolean; children: 
   return <group ref={group}>{children}</group>
 }
 
-/**
- * The same animal in black on the glow layer, because glow is drawn over the
- * finished frame: without this, the number's light shines straight through
- * whatever is standing in front of it.
- */
-function GlowMask({ rig }: { rig: Rig }) {
-  const mesh = useRef<SkinnedMesh>(null)
-  useBind(mesh, rig.skeleton)
-  return (
-    <skinnedMesh ref={mesh} geometry={rig.geometry} frustumCulled={false} layers={GLOW_LAYER}>
-      <meshBasicMaterial color="#000000" toneMapped={false} />
-    </skinnedMesh>
-  )
-}
-
-/* -------------------------------------------------------------------------- */
-/* The tyrannosaur                                                             */
-/* -------------------------------------------------------------------------- */
-
-/** Seconds per full two-step stride: a heavy, hurrying walk. */
-const STRIDE = 1.12
-
-/**
- * How far the body travels per stride, in multiples of its own scale, so the
- * planted foot stays planted: the hip swings ±0.44 rad over a leg about 0.19 of
- * the animal's length, and each stride is two steps.
- */
-const STRIDE_REACH = 1.7 * 0.188
-
-const HEADING_WALK = Math.PI + 0.06
-const HEADING_REST = Math.PI + 0.58
-
-/** Where the snout sits on the head bone, in the animal's own units. */
-const SNOUT = new Vector3(0.122, -0.014, 0)
-
-function Rex({ theme, detail, bump, bloom, reducedMotion }: { theme: Theme; detail: CreatureDetail; bump: number; bloom: boolean; reducedMotion: boolean }) {
-  const rig = useCreature('dino', detail)
-  if (!rig) return null
-  return <RexBody rig={rig} theme={theme} bump={bump} bloom={bloom} reducedMotion={reducedMotion} />
-}
-
-/** Everything the animal's frame needs, resolved once per rig. */
-interface RexBones {
-  byName: Rig['byName']
-  spine1: Bone
-  spine2: Bone
-  neck1: Bone
-  neck2: Bone
-  head: Bone
-  armL: Bone
-  armR: Bone
-  footL: Bone
-  footR: Bone
-  tail: Bone[]
-  legs: { thigh: Bone; shin: Bone; foot: Bone }[]
-}
-
-function rexBones(byName: Rig['byName']): RexBones {
-  return {
-    byName,
-    spine1: byName.get('spine1')!,
-    spine2: byName.get('spine2')!,
-    neck1: byName.get('neck1')!,
-    neck2: byName.get('neck2')!,
-    head: byName.get('head')!,
-    armL: byName.get('armL')!,
-    armR: byName.get('armR')!,
-    footL: byName.get('footL')!,
-    footR: byName.get('footR')!,
-    tail: ['tail1', 'tail2', 'tail3', 'tail4', 'tail5'].map((name) => byName.get(name)!),
-    legs: (['L', 'R'] as const).map((side) => ({
-      thigh: byName.get(`thigh${side}`)!,
-      shin: byName.get(`shin${side}`)!,
-      foot: byName.get(`foot${side}`)!,
-    })),
-  }
-}
-
-interface RexState {
-  x: number
-  pace: number
-  yaw: number
-  lookYaw: number
-  lookPitch: number
-  gait: number
-}
-
-const newRexState = (): RexState => ({ x: Infinity, pace: 0, yaw: HEADING_WALK, lookYaw: 0, lookPitch: 0, gait: 0 })
-
-/**
- * One frame of the tyrannosaur: where it is, what it is doing with its body and
- * what it is looking at. A plain function, like the animators in `creatureRig`,
- * because all it does is write to bones.
- */
-function driveRex(b: Group, s: RexState, bones: RexBones, feet: number, camera: Camera, dt: number, reducedMotion: boolean): void {
-  const L = show.layout
-  const t = show.t
-  const step = Math.min(dt, 0.25)
-
-  if (reducedMotion) {
-    b.position.set(L.rexX, L.groundY + feet * L.rexScale, L.rexZ)
-    b.scale.setScalar(L.rexScale)
-    b.rotation.set(0, HEADING_REST, 0)
-    show.arrived = true
-    return
-  }
-
-  // ---- Walking in ----------------------------------------------------------
-  if (s.x === Infinity) s.x = L.rexFrom
-  b.visible = t >= show.walkFrom
-  if (show.walkFrom === Infinity && t >= OPENING.walk) show.walkFrom = t
-  const walking = t >= show.walkFrom && !show.arrived
-  const remaining = s.x - L.rexX
-  let gaitTarget = 0
-  if (walking) {
-    gaitTarget = Math.min(smooth(0, 0.5, t - show.walkFrom), smooth(0, 0.9, remaining))
-    s.x -= ((STRIDE_REACH * L.rexScale) / STRIDE) * s.gait * step
-    // Speed follows gait and gait follows the distance left, so this approaches
-    // its mark for ever if it is made to get all the way there.
-    if (remaining < 0.09) {
-      show.arrived = true
-      s.x = L.rexX
-      startRoar(OPENING.windUp)
-    }
-  }
-  if (show.arrived) s.x = MathUtils.damp(s.x, L.rexX, 3, step)
-  s.gait = MathUtils.damp(s.gait, gaitTarget, 9, step)
-  const beforePace = s.pace
-  s.pace += (step / STRIDE) * (s.gait > 0.02 ? 1 : 0)
-
-  // Heel strike a quarter into each leg's cycle.
-  if (walking && Math.floor(beforePace * 2 - 0.5) !== Math.floor(s.pace * 2 - 0.5) && s.gait > 0.4) {
-    show.thump = 1
-    show.shake = Math.max(show.shake, 0.14)
-    cue({ kind: 'footfall', pan: panOf(s.x) })
-    const which = Math.floor(s.pace * 2 - 0.5) % 2 === 0 ? bones.footL : bones.footR
-    which.getWorldPosition(scratch)
-    scratch.y = L.groundY + 0.04
-    spawnDust(scratch, 0.65)
-    pushWave(s.x - L.rexScale * 0.2, L.stageY - DIGIT_HEIGHT * L.stageScale * 0.5, 0.2, 0)
-  }
-
-  // ---- The roar's envelope -------------------------------------------------
-  const since = t - show.roarAt
-  const wind = since > 0 ? smooth(0, ROAR_WIND, since) * (1 - smooth(ROAR_WIND, ROAR_WIND + 0.2, since)) : 0
-  const roar = since > 0 ? smooth(ROAR_WIND, ROAR_WIND + ROAR_RISE, since) * (1 - smooth(ROAR_WIND + ROAR_HOLD - 0.4, ROAR_WIND + ROAR_HOLD + 0.25, since)) : 0
-  const muttering = t - show.grumbleAt
-  const grumble = muttering >= 0 && muttering < 2.4 ? Math.sin((muttering / 2.4) * Math.PI) : 0
-  const tremble = roar * (0.6 + Math.sin(t * 13) * 0.4) + grumble * 0.3
-
-  // ---- Heading -------------------------------------------------------------
-  s.yaw = MathUtils.damp(s.yaw, show.arrived ? HEADING_REST : HEADING_WALK, 2.2, step)
-
-  // ---- Legs, hips ----------------------------------------------------------
-  let bob = 0
-  if (s.gait > 0.001) {
-    bob = animateDinoRun(bones.byName, s.pace, s.gait) * 0.85 * L.rexScale * 0.17
-  } else {
-    bones.legs.forEach((leg) => poseLeg(leg.thigh, leg.shin, leg.foot, 0, 0))
-  }
-  // A slight sit, so standing still does not look like a statue on stilts.
-  const sit = (1 - s.gait) * (1 + wind * 0.5)
-  const [front, back] = bones.legs
-  if (front && back) {
-    front.thigh.rotation.z += sit * 0.3
-    front.shin.rotation.z -= sit * 0.42
-    front.foot.rotation.z += sit * 0.12
-    back.thigh.rotation.z -= sit * 0.06
-    back.shin.rotation.z -= sit * 0.2
-    back.foot.rotation.z += sit * 0.26
-  }
-  const stand = 1 - s.gait
-  const breath = Math.sin(t * 0.95)
-  b.position.set(finite(s.x, L.rexX), L.groundY + feet * L.rexScale + finite(bob) - sit * L.rexScale * 0.003, L.rexZ + Math.sin(s.pace * Math.PI * 2) * 0.02 * s.gait + Math.sin(t * 0.5) * 0.015 * stand)
-  b.rotation.set(0, finite(s.yaw, HEADING_REST), 0)
-  b.scale.setScalar(Math.max(0.0001, finite(L.rexScale, 1)))
-
-  // ---- Where to look --------------------------------------------------------
-  b.updateWorldMatrix(true, false)
-  bones.head.getWorldPosition(scratch)
-  const glancing = t < show.lookUntil
-  if (glancing) {
-    scratch2.copy(show.look)
-  } else if (pointer.active && pointer.inside && !pointer.isTouch) {
-    scratch2.set(pointer.nx, pointer.ny, 0.5).unproject(camera)
-    scratch2.sub(camera.position).normalize()
-    const along = (scratch.z + 3.2 - camera.position.z) / scratch2.z
-    scratch2.multiplyScalar(along).add(camera.position)
-  } else {
-    scratch2.set(Math.sin(t * 0.31) * 3 + scratch.x - 1, scratch.y + Math.sin(t * 0.47) * 0.9 + 0.3, scratch.z + 3.5)
-  }
-  // Into the animal's own frame, where +x is its nose and +y is up.
-  const local = b.worldToLocal(scratch2.clone()).sub(b.worldToLocal(scratch.clone()))
-  const wantYaw = show.arrived ? MathUtils.clamp(Math.atan2(-local.z, local.x), -0.85, 0.34) : 0
-  const wantPitch = show.arrived ? MathUtils.clamp(Math.atan2(local.y, Math.hypot(local.x, local.z)), -0.38, 0.5) : 0
-  s.lookYaw = MathUtils.damp(s.lookYaw, finite(wantYaw) * (1 - roar * 0.7), glancing ? 8 : 4, step)
-  s.lookPitch = MathUtils.damp(s.lookPitch, finite(wantPitch) * (1 - roar), glancing ? 8 : 4, step)
-
-  // ---- Spine, neck, head ----------------------------------------------------
-  bones.spine1.scale.set(1, 1 + breath * 0.02 + roar * 0.03, 1 + breath * 0.028 + roar * 0.05)
-  bones.spine2.scale.set(1, 1 + breath * 0.014 + roar * 0.04, 1 + breath * 0.02 + roar * 0.06)
-  bones.spine1.rotation.z = stand * 0.08 + roar * 0.2 - wind * 0.12
-  bones.spine2.rotation.z = stand * 0.07 + roar * 0.16 - wind * 0.1
-
-  const shiver = Math.sin(t * 47) * 0.028 * tremble
-  bones.neck1.rotation.y = s.lookYaw * 0.26 + Math.sin(t * 0.33) * 0.03
-  bones.neck1.rotation.z = (s.gait > 0.01 ? bones.neck1.rotation.z * s.gait : 0) + stand * 0.12 + s.lookPitch * 0.26 + roar * 0.3 - wind * 0.26
-  bones.neck2.rotation.y = s.lookYaw * 0.3
-  bones.neck2.rotation.z = (s.gait > 0.01 ? bones.neck2.rotation.z * s.gait : 0) + stand * 0.03 + s.lookPitch * 0.3 + roar * 0.22 - wind * 0.2
-  bones.head.rotation.y = s.lookYaw * 0.44 + Math.sin(t * 29) * 0.02 * tremble
-  bones.head.rotation.x = shiver
-  bones.head.rotation.z =
-    (s.gait > 0.01 ? bones.head.rotation.z * s.gait : 0) - stand * 0.16 + s.lookPitch * 0.44 + Math.sin(t * 0.55 + 0.6) * 0.03 + roar * 0.3 - wind * 0.3
-
-  scratch.copy(SNOUT)
-  bones.head.localToWorld(scratch)
-  show.mouth.copy(scratch)
-
-  // ---- Tail and arms -------------------------------------------------------
-  bones.tail.forEach((bone, i) => {
-    const reach = 0.4 + i * 0.16
-    const wave = Math.sin(t * 1.05 - i * 0.72) * (0.05 + i * 0.024)
-    bone.rotation.y = s.gait > 0.01 ? bone.rotation.y * s.gait + wave * (1 - s.gait) : wave + Math.sin(t * 19 - i) * 0.02 * tremble * reach
-    bone.rotation.z = (s.gait > 0.01 ? bone.rotation.z * s.gait : 0) + Math.sin(t * 0.72 - i * 0.5) * (0.02 + i * 0.012) + (i === 0 ? stand * 0.09 : 0) - roar * 0.09 * reach
-  })
-  bones.armL.rotation.z = (s.gait > 0.01 ? bones.armL.rotation.z * s.gait : 0) + Math.sin(t * 1.7) * 0.05 - roar * 0.5
-  bones.armR.rotation.z = (s.gait > 0.01 ? bones.armR.rotation.z * s.gait : 0) + Math.sin(t * 0.9) * 0.05 - roar * 0.46
-}
-
-function RexBody({ rig, theme, bump, bloom, reducedMotion }: { rig: Rig; theme: Theme; bump: number; bloom: boolean; reducedMotion: boolean }) {
-  const body = useRef<Group>(null)
-  const mesh = useRef<SkinnedMesh>(null)
-  const state = useRef(newRexState())
-  const invalidate = useThree((three) => three.invalidate)
-  const { geometry, root, skeleton, byName } = rig
-  useBind(mesh, skeleton)
-
-  // Generated around the origin; this is how far below it the soles are.
-  const feet = useMemo(() => {
-    geometry.computeBoundingBox()
-    return -(geometry.boundingBox?.min.y ?? -0.19)
-  }, [geometry])
-
-  const bones = useMemo(() => rexBones(byName), [byName])
-
-  useEffect(() => invalidate(), [invalidate, rig])
-
-  useFrame(({ camera }, dt) => {
-    if (body.current) driveRex(body.current, state.current, bones, feet, camera, dt, reducedMotion)
-  })
-
-  return (
-    <group ref={body} position={[20, -20, 0]} scale={0.0001}>
-      <skinnedMesh ref={mesh} geometry={geometry} frustumCulled={false}>
-        <SkinMaterial theme={theme} species="dino" texScale={2.6} bump={bump} halfHeight={0.22} />
-      </skinnedMesh>
-      {bloom && <GlowMask rig={rig} />}
-      <primitive object={root} />
-      <Eyes rig={rig} theme={theme} />
-      <Teeth rig={rig} theme={theme} />
-    </group>
-  )
-}
-
 /* -------------------------------------------------------------------------- */
 /* Everything else that is alive                                               */
 /* -------------------------------------------------------------------------- */
@@ -1069,6 +575,10 @@ function FlyerBody({ rig, index, theme }: { rig: Rig; index: number; theme: Them
     // Only worth hearing while they are on the screen.
     const pan = g.position.x / ((VIEW_HEIGHT * Math.max(0.5, L.aspect)) / 2)
     if (Math.abs(pan) < 1.05 && t > OPENING.impact + 1) {
+      if (index === 0) {
+        show.flyerAt.copy(g.position)
+        show.flyerSeen = t
+      }
       if (t >= nextCall.current) {
         nextCall.current = t + 2.2 + seeded(Math.floor(t), index + 40) * 4.5
         cue({ kind: 'screech', pan: MathUtils.clamp(pan, -1, 1) })

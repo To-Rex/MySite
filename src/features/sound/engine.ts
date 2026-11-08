@@ -18,11 +18,18 @@ export type Cue =
   | { kind: 'impact'; pan: number; power: number; first: boolean }
   | { kind: 'stones' }
   | { kind: 'rattle'; pan: number; power: number }
-  | { kind: 'footfall'; pan: number }
+  | { kind: 'footfall'; pan: number; power: number }
   | { kind: 'roar'; pan: number; short: boolean }
   | { kind: 'snarl'; pan: number }
   | { kind: 'growl'; pan: number }
   | { kind: 'snort'; pan: number }
+  | { kind: 'chomp'; pan: number; quiet?: boolean }
+  | { kind: 'crunch'; pan: number }
+  | { kind: 'gulp'; pan: number }
+  | { kind: 'yawn'; pan: number }
+  | { kind: 'sniff'; pan: number }
+  | { kind: 'swish'; pan: number }
+  | { kind: 'slam'; pan: number }
   | { kind: 'screech'; pan: number }
   | { kind: 'wing'; pan: number }
   | { kind: 'bubbles'; pan: number }
@@ -318,7 +325,7 @@ export function createEngine(): SoundEngine {
           play('rattle', { bus: 'stone', gain: 0.75 * cue.power, rate: between(0.9, 1.12), pan: cue.pan, send: 0.32 })
           break
         case 'footfall':
-          play(pick(['stompA', 'stompB', 'stompC'] as const), { bus: 'rex', gain: 0.74, rate: between(0.93, 1.07), pan: cue.pan * 0.7, send: 0.2 })
+          play(pick(['stompA', 'stompB', 'stompC'] as const), { bus: 'rex', gain: 0.74 * (0.45 + cue.power * 0.55), rate: between(0.93, 1.07), pan: cue.pan * 0.7, send: 0.2 })
           duck(0.22, 0.08)
           break
         case 'roar':
@@ -334,6 +341,28 @@ export function createEngine(): SoundEngine {
           break
         case 'snort':
           play('snort', { bus: 'rex', gain: 0.38, rate: between(0.88, 1.12), pan: cue.pan * 0.5, send: 0.3 })
+          break
+        case 'chomp':
+          play('chomp', { bus: 'rex', gain: cue.quiet ? 0.32 : 0.82, rate: between(0.94, 1.08), pan: cue.pan * 0.5, send: 0.3 })
+          break
+        case 'crunch':
+          play(pick(['crunchA', 'crunchB'] as const), { bus: 'rex', gain: 0.5, rate: between(0.88, 1.12), pan: cue.pan * 0.5, send: 0.22 })
+          break
+        case 'gulp':
+          play('gulp', { bus: 'rex', gain: 0.66, rate: between(0.95, 1.05), pan: cue.pan * 0.5, send: 0.2 })
+          break
+        case 'yawn':
+          play('yawn', { bus: 'rex', gain: 0.62, pan: cue.pan * 0.5, send: 0.4 })
+          break
+        case 'sniff':
+          play('sniff', { bus: 'rex', gain: 0.3, rate: between(0.9, 1.15), pan: cue.pan * 0.5, send: 0.18 })
+          break
+        case 'swish':
+          play('swish', { bus: 'rex', gain: 0.42, rate: between(0.9, 1.1), pan: cue.pan * 0.6, send: 0.3 })
+          break
+        case 'slam':
+          play(pick(['stompA', 'stompB', 'stompC'] as const), { bus: 'rex', gain: 1, rate: between(0.74, 0.84), pan: cue.pan * 0.7, send: 0.34 })
+          duck(0.4, 0.3)
           break
         case 'screech':
           play(pick(['screechLong', 'screechDouble'] as const), { bus: 'life', gain: between(0.3, 0.46), rate: between(0.86, 1.14), pan: cue.pan, send: 0.75, lowpass: 5200 })

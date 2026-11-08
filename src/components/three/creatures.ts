@@ -74,6 +74,13 @@ export interface BoneSpec {
    * explicitly for leaf bones (skull, feet, tail tip) so they own enough mesh.
    */
   tip?: Vec3
+  /**
+   * For a jaw: everything below this line, in front of its start, belongs to this
+   * bone and everything above it to `upper`. Distance alone cannot split a mouth,
+   * because a point on the outside of a lip is about as far from one jaw as the
+   * other, and the lips then droop with the jaw and cover the teeth.
+   */
+  below?: { upper: string; from: Vec3; to: Vec3 }
 }
 
 /**
@@ -275,6 +282,10 @@ function computeSkinning(positions: Float32Array, bones: BoneSpec[]) {
     return { head: bone.head, tip: child ? child.head : bone.head }
   })
 
+  const splits: Split[] = bones.flatMap((bone, lower) =>
+    bone.below ? [{ lower, upper: bones.findIndex((b) => b.name === bone.below!.upper), from: bone.below.from, to: bone.below.to }] : [],
+  )
+
   const count = positions.length / 3
   const skinIndices = new Uint16Array(count * 4)
   const skinWeights = new Float32Array(count * 4)
@@ -300,9 +311,55 @@ function computeSkinning(positions: Float32Array, bones: BoneSpec[]) {
       skinIndices[v * 4 + i] = entry ? entry.index : 0
       skinWeights[v * 4 + i] = entry && total > 0 ? entry.weight / total : 0
     }
+
+    for (const split of splits) applySplit(split, v, px, py, skinIndices, skinWeights)
   }
 
   return { skinIndices, skinWeights }
+}
+
+interface Split {
+  lower: number
+  upper: number
+  from: Vec3
+  to: Vec3
+}
+
+const ramp = (a: number, b: number, x: number): number => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return u * u * (3 - 2 * u)
+}
+
+/** Divides a vertex's share of a jaw and the skull above it by which side of the mouth it is on. */
+function applySplit(split: Split, v: number, px: number, py: number, indices: Uint16Array, weights: Float32Array): void {
+  const span = split.to[0] - split.from[0]
+  // Over the hinge the two have to blend, or the corner of the mouth tears.
+  const forward = ramp(split.from[0] - span * 0.08, split.from[0] + span * 0.14, px)
+  if (forward <= 0) return
+  const along = Math.min(1, Math.max(0, (px - split.from[0]) / span))
+  const lineY = split.from[1] + (split.to[1] - split.from[1]) * along
+  const below = ramp(-span * 0.03, span * 0.03, lineY - py)
+
+  let lowerSlot = -1
+  let upperSlot = -1
+  let weakest = 0
+  for (let i = 0; i < MAX_INFLUENCES; i++) {
+    const bone = indices[v * 4 + i]!
+    if (bone === split.lower) lowerSlot = i
+    else if (bone === split.upper) upperSlot = i
+    if (weights[v * 4 + i]! < weights[v * 4 + weakest]!) weakest = i
+  }
+  if (lowerSlot < 0 && upperSlot < 0) return
+  // One of the two may not have made the top four. It takes the weakest slot,
+  // whose weight goes into the pool being divided, so the total stays at one.
+  if (lowerSlot < 0) lowerSlot = weakest === upperSlot ? (upperSlot + 1) % MAX_INFLUENCES : weakest
+  if (upperSlot < 0) upperSlot = weakest === lowerSlot ? (lowerSlot + 1) % MAX_INFLUENCES : weakest
+
+  const pool = weights[v * 4 + lowerSlot]! + weights[v * 4 + upperSlot]!
+  indices[v * 4 + lowerSlot] = split.lower
+  indices[v * 4 + upperSlot] = split.upper
+  weights[v * 4 + lowerSlot] = weights[v * 4 + lowerSlot]! + (pool * below - weights[v * 4 + lowerSlot]!) * forward
+  weights[v * 4 + upperSlot] = weights[v * 4 + upperSlot]! + (pool * (1 - below) - weights[v * 4 + upperSlot]!) * forward
 }
 
 /** Raw-space tooth row, laid along the jaw before normalisation. */
@@ -404,6 +461,7 @@ export function buildCreature(
     ...b,
     head: map(b.head),
     tip: b.tip ? map(b.tip) : undefined,
+    below: b.below ? { upper: b.below.upper, from: map(b.below.from), to: map(b.below.to) } : undefined,
   }))
 
   const { skinIndices, skinWeights } = computeSkinning(positions, bones)
@@ -560,6 +618,9 @@ const DINOSAUR_BONES: BoneSpec[] = [
   { name: 'neck1', parent: 'spine2', head: [0.86, 0.32, 0] },
   { name: 'neck2', parent: 'neck1', head: [1.18, 0.43, 0] },
   { name: 'head', parent: 'neck2', head: [1.6, 0.5, 0], tip: [2.32, 0.42, 0] },
+  // Runs along the core of the lower jaw, so the carved gape divides the skin
+  // between this and the skull. At rest it changes nothing.
+  { name: 'jaw', parent: 'head', head: [1.62, 0.33, 0], tip: [2.28, 0.27, 0], below: { upper: 'head', from: [1.6, 0.39, 0], to: [2.46, 0.39, 0] } },
 
   { name: 'tail1', parent: 'root', head: [-0.75, 0.0, 0] },
   { name: 'tail2', parent: 'tail1', head: [-1.25, 0.02, 0] },
@@ -651,7 +712,7 @@ const TURTLE_BONES: BoneSpec[] = [
 
 /** Generates one creature. Pure computation — safe to call from a worker. */
 /** Sits just inside each carved socket so only the wet outer cap shows. */
-const DINOSAUR_EYE: EyeSpec = { bone: 'head', at: [1.686, 0.604, 0.215], radius: 0.072 }
+export const DINOSAUR_EYE: EyeSpec = { bone: 'head', at: [1.686, 0.604, 0.215], radius: 0.072 }
 const TURTLE_EYE: EyeSpec = { bone: 'head', at: [1.362, 0.092, 0.178], radius: 0.06 }
 
 /** Upper and lower rows, sized to interlock across the carved gape. */

@@ -50,6 +50,10 @@ export const FIELD = {
   uWaves: { value: Array.from({ length: WAVE_SLOTS }, () => new Vector4(0, 0, -100, 0)) },
   /** How much of each wave is an explosion, as opposed to a ripple. */
   uWaveCore: { value: new Array<number>(WAVE_SLOTS).fill(0) },
+  /** What has been bitten out of the number: x, y, radius and how much is gone. */
+  uBite: { value: new Vector4(0, 0, 0.6, 0) },
+  /** Where the mouth is, in stage space, and how hard it is pulling. */
+  uBiteTo: { value: new Vector4(0, 0, 0, 0) },
   /** How hot everything is running; jumps on an impact and cools back to 1. */
   uLava: { value: 1 },
   /** 1 in the dark theme. */
@@ -146,6 +150,8 @@ const COLUMN_VERTEX_HEAD = /* glsl */ `
   uniform vec3 uHover;
   uniform vec4 uWaves[WAVE_SLOTS];
   uniform float uWaveCore[WAVE_SLOTS];
+  uniform vec4 uBite;
+  uniform vec4 uBiteTo;
   varying float vDepth;
   varying float vCap;
   varying float vHeat;
@@ -222,6 +228,18 @@ const COLUMN_VERTEX_BODY = /* glsl */ `
       nfH *= 0.62;
     } else if (phase < 0.12) {
       nfRegrow = smoothstep(0.0, 0.12, phase);
+    }
+  }
+
+  // ---- Bitten ----------------------------------------------------------------
+  // Columns near the mouth are dragged into it and go; afterwards they grow back
+  // in place, from the edges of the wound inward.
+  if (uBite.w > 0.0) {
+    float nfBitten = smoothstep(uBite.z, uBite.z * 0.5, length(aHome - uBite.xy) + aSeed.y * 0.08) * uBite.w;
+    if (nfBitten > 0.0) {
+      nfThrown += (uBiteTo.xyz - vec3(aHome, 0.0)) * nfBitten * nfBitten * uBiteTo.w;
+      nfTumble += nfBitten * 2.5 * uBiteTo.w;
+      nfRegrow *= 1.0 - nfBitten;
     }
   }
 
@@ -899,6 +917,16 @@ export function makeBurstMaterial(theme: Theme, dust: boolean): ShaderMaterial {
       varying float vLife;
       void main() {
         float life = clamp(uAge / mix(0.7, 1.5, aSeed.w), 0.0, 1.0);
+        vLife = life;
+        #ifndef DUST
+          // A small burst is a few sparks, not all of them packed into less room,
+          // which adds up to a white ball. These are also the shortest-lived.
+          if (aSeed.w > uPower * 1.6) {
+            gl_PointSize = 0.0;
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            return;
+          }
+        #endif
         float t = uAge;
         float a = aSeed.x * 6.2832;
         float u = aSeed.y * 2.0 - 1.0;
@@ -909,10 +937,9 @@ export function makeBurstMaterial(theme: Theme, dust: boolean): ShaderMaterial {
           vec3 p = uOrigin + dir * uPower * (1.0 + aSeed.z * 2.4) * slow;
         #else
           vec3 dir = vec3(s * cos(a), abs(u) * 0.9 + 0.15, s * sin(a) * 0.8 + 0.3);
-          vec3 p = uOrigin + dir * uPower * (2.2 + aSeed.z * 5.5) * t;
+          vec3 p = uOrigin + dir * max(uPower, 0.4) * (2.2 + aSeed.z * 5.5) * t;
           p.y -= 3.6 * t * t;
         #endif
-        vLife = life;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         #ifdef DUST
           float size = 26.0 + aSeed.z * 34.0;

@@ -335,6 +335,96 @@ function renderStomp(seed: number): Float32Array {
   return out
 }
 
+/** Teeth meeting: two hard clacks and the thud of the jaw behind them. */
+function renderChomp(seed: number): Float32Array {
+  const r = random(seed)
+  const n = samples(0.3)
+  const left = new Float32Array(n)
+  const right = new Float32Array(n)
+  ping(left, right, 0, 780 + r() * 240, 0.02, 1, 0, r)
+  ping(left, right, 0.014, 1320 + r() * 500, 0.012, 0.8, 0, r)
+  ping(left, right, 0.004, 210, 0.05, 0.7, 0, r)
+  return left
+}
+
+/** Stone between teeth. */
+function renderCrunch(seed: number): Float32Array {
+  const r = random(seed)
+  const n = samples(0.55)
+  const left = new Float32Array(n)
+  const right = new Float32Array(n)
+  stoneShower(left, right, r, 36, 0, 0.34, 1.3)
+  const grit = new Biquad().bandpass(1500, 0.8)
+  for (let i = 0; i < n; i++) {
+    const t = i / RATE
+    left[i]! += grit.run(r() * 2 - 1) * Math.exp(-t / 0.12) * (r() > 0.6 ? 1.6 : 0.2) * 0.9
+  }
+  return left
+}
+
+/** Something large going down: a falling, closing bubble and a thump at the bottom. */
+function renderGulp(seed: number): Float32Array {
+  const r = random(seed)
+  const n = samples(0.7)
+  const out = new Float32Array(n)
+  let phase = 0
+  for (let i = 0; i < n; i++) {
+    const t = i / RATE
+    phase += (340 * Math.exp(-t / 0.14) + 70) / RATE
+    out[i] = Math.sin(TAU * phase) * Math.sin(Math.min(1, t / 0.32) * Math.PI) ** 0.7 * 0.8
+  }
+  bubble(out, 0.36, 72, 1.6, 0.09, 1)
+  bubble(out, 0.05 + r() * 0.03, 260, 4, 0.03, 0.3)
+  return out
+}
+
+/** A very large animal, very bored. */
+function renderYawn(seed: number): Float32Array {
+  return renderVocal({
+    ...rex,
+    seconds: 2.9,
+    seed,
+    pitch: [[0, 58], [0.7, 96], [1.5, 84], [2.3, 58], [2.9, 40]],
+    level: [[0, 0], [0.5, 0.45], [1.3, 1], [2.3, 0.6], [2.9, 0]],
+    open: [[0, 0.1], [1.2, 1], [2.2, 0.8], [2.9, 0.2]],
+    breath: [[0, 0.9], [0.8, 0.6], [1.6, 0.55], [2.9, 0.95]],
+    rough: [[0, 0.5], [1.4, 0.72]],
+    flutter: [[0, 0.1], [1.6, 0.34]],
+    flutterRate: 26,
+    bend: 0.06,
+    chest: 0.3,
+    drive: 2.2,
+  })
+}
+
+/** Air going in through the nose, quickly, to see what is there. */
+function renderSniff(seed: number): Float32Array {
+  const r = random(seed)
+  const n = samples(0.32)
+  const out = new Float32Array(n)
+  const band = new Biquad()
+  for (let i = 0; i < n; i++) {
+    const u = i / n
+    if (i % 32 === 0) band.bandpass(1100 + u * 1500, 1.8)
+    out[i] = band.run(r() * 2 - 1) * Math.sin(Math.PI * u) ** 1.6
+  }
+  return out
+}
+
+/** A tail, going past quickly. */
+function renderSwish(seed: number): Float32Array {
+  const r = random(seed)
+  const n = samples(0.42)
+  const out = new Float32Array(n)
+  const band = new Biquad()
+  for (let i = 0; i < n; i++) {
+    const u = i / n
+    if (i % 32 === 0) band.bandpass(280 + Math.sin(Math.PI * u) * 1500, 1)
+    out[i] = band.run(r() * 2 - 1) * Math.sin(Math.PI * u) ** 2
+  }
+  return out
+}
+
 /* -------------------------------------------------------------------------- */
 /* Meteors                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -686,6 +776,13 @@ export const VOICES = {
   snarl: () => peak(renderSnarl(13), 0.95),
   growl: () => peak(renderGrowl(14), 0.92),
   snort: () => peak(renderSnort(15), 0.85),
+  chomp: () => peak(renderChomp(16), 0.95),
+  crunchA: () => peak(renderCrunch(17), 0.9),
+  crunchB: () => peak(renderCrunch(18), 0.9),
+  gulp: () => peak(renderGulp(19), 0.9),
+  yawn: () => peak(renderYawn(20), 0.92),
+  sniff: () => peak(renderSniff(24), 0.75),
+  swish: () => peak(renderSwish(25), 0.8),
   screechLong: () => peak(renderScreech(81, 'long'), 0.9),
   screechDouble: () => peak(renderScreech(82, 'double'), 0.9),
   wing: () => peak(renderWing(83), 0.8),
