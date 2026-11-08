@@ -245,6 +245,18 @@ export const uz: Dictionary = {
     label: 'Til',
     names: { uz: 'O‘zbek', oz: 'Özbek (yangi alifbo)', en: 'English', de: 'Deutsch', ru: 'Русский' },
   },
+  notFound: {
+    metaTitle: '404 — Bu sahifa yo‘q bo‘lib ketgan · Dilshodjon Haydarov',
+    metaDescription: 'Siz izlagan sahifa bu manzilda yo‘q. Bosh sahifaga qayting.',
+    code: 'Xato 404',
+    title: 'Bu sahifa yo‘q bo‘lib ketgan.',
+    text: 'Unga meteorit tushgan bo‘lishi mumkin — yoki havola shunchaki noto‘g‘ri. Nima bo‘lganda ham, bu manzilda hech narsa yo‘q.',
+    home: 'Bosh sahifaga qaytish',
+    roar: 'Bo‘kirtirish',
+    hint: 'Istalgan joyni bosing — meteorit tushadi',
+    pathLabel: 'So‘ralgan manzil',
+    sceneLabel: 'Uch o‘lchamli sahna: bazalt ustunlardan yasalgan 404 raqami, uning ostida bo‘kirayotgan tiranozavr va tutilgan quyosh',
+  },
   cursor: {
     open: 'Ochish',
     view: 'Ko‘rish',

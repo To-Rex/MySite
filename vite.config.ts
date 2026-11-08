@@ -22,6 +22,11 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 900,
     rollupOptions: {
+      // Netlify serves dist/404.html, with a 404 status, for any path it has no file for.
+      input: {
+        index: fileURLToPath(new URL('./index.html', import.meta.url)),
+        notFound: fileURLToPath(new URL('./404.html', import.meta.url)),
+      },
       output: {
         // three.js gets its own cacheable chunk; fiber/drei are chunked automatically behind the lazy scenes.
         manualChunks(id) {

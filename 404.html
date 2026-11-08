@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="uz-Latn-UZ-x-yangi" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#070708" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f5f1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <title>404 — Bu sahifa yöq bölib ketgan · Dilşodjon Haydarov</title>
+    <meta name="description" content="Siz izlagan sahifa bu manzilda yöq. Boş sahifaga qayting." />
+    <meta name="robots" content="noindex" />
+
+    <script>
+      // Apply persisted theme + language before first paint to avoid flashes.
+      (function () {
+        try {
+          var t = localStorage.getItem('dh.theme');
+          var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = t === 'light' || t === 'dark' ? t : (dark ? 'dark' : 'light');
+          var sp = new URLSearchParams(location.search);
+          var qt = sp.get('theme');
+          if (qt === 'light' || qt === 'dark') theme = qt;
+          document.documentElement.setAttribute('data-theme', theme);
+          var q = sp.get('lang');
+          var l = q || localStorage.getItem('dh.lang.choice');
+          // The same tags as LOCALE_TAGS in src/i18n/context.ts; tests/unit/seo.test.tsx keeps them equal.
+          var tags = { oz: 'uz-Latn-UZ-x-yangi', uz: 'uz-Latn-UZ', en: 'en', de: 'de', ru: 'ru' };
+          if (Object.prototype.hasOwnProperty.call(tags, l)) document.documentElement.lang = tags[l];
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <div style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">
+        404 — Bu sahifa yöq bölib ketgan. <a href="/">Boş sahifaga qaytiş</a>
+      </div>
+    </noscript>
+    <script type="module" src="/src/not-found.tsx"></script>
+  </body>
+</html>

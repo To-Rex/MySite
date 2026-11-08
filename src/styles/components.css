@@ -329,3 +329,55 @@
   .skeleton::after { animation: none; }
   .lang-bar { animation: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   The 404 page
+--------------------------------------------------------------------------- */
+.not-found-sky {
+  background:
+    radial-gradient(40vmin 40vmin at 50% 33%, var(--glow), transparent 70%),
+    var(--bg);
+}
+
+/* What is there before the 3D has arrived, and all there is without WebGL. */
+.not-found-number {
+  position: fixed;
+  inset-inline: 0;
+  top: clamp(4.5rem, 10vh, 7rem);
+  text-align: center;
+  font-size: clamp(8rem, min(36vw, 42vh), 30rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.06em;
+  user-select: none;
+  pointer-events: none;
+  background: linear-gradient(115deg, var(--fg) 20%, var(--accent) 45%, #e0601c 55%, var(--fg) 80%);
+  background-size: 240% 100%;
+  background-clip: text;
+  color: transparent;
+  opacity: 0.9;
+  animation: not-found-burn 7s linear infinite;
+  transition: opacity 0.35s var(--ease-out);
+}
+.not-found-number[data-gone='true'] {
+  opacity: 0;
+}
+@keyframes not-found-burn {
+  to {
+    background-position: -240% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .not-found-number {
+    animation: none;
+  }
+}
+
+/* Keeps the words readable over whatever the ground is doing behind them. */
+.not-found-scrim {
+  position: fixed;
+  inset: 45% 0 0;
+  pointer-events: none;
+  background:
+    radial-gradient(90% 100% at 0% 100%, color-mix(in srgb, var(--bg) 82%, transparent), transparent 72%);
+}

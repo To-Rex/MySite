@@ -12,13 +12,17 @@
  * https://docs.netlify.com/manage/projects/powered-by-netlify-badge/
  */
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const dist = join(root, 'dist')
-const html = readFileSync(join(dist, 'index.html'), 'utf8')
+
+/** Every page at the root of the site: the policy is one header, shared by all of them. */
+const pages = readdirSync(dist)
+  .filter((name) => name.endsWith('.html'))
+  .map((name) => readFileSync(join(dist, name), 'utf8'))
 
 /**
  * Hash every inline <script> the browser would actually run, so the CSP allows
@@ -30,14 +34,16 @@ const html = readFileSync(join(dist, 'index.html'), 'utf8')
  * whenever the description does.
  */
 const EXECUTABLE_TYPE = /^(?:module|text\/javascript|application\/javascript)?$/i
-const inlineScripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
-  .filter(([, attrs]) => !/\ssrc\s*=/.test(attrs))
-  .filter(([, attrs]) => EXECUTABLE_TYPE.test(attrs.match(/\stype\s*=\s*["']?([^"'\s>]*)/)?.[1] ?? ''))
-  .map(([, , body]) => body)
-const hashes = inlineScripts.map((body) => `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`)
+const inlineScripts = pages.flatMap((html) =>
+  [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+    .filter(([, attrs]) => !/\ssrc\s*=/.test(attrs))
+    .filter(([, attrs]) => EXECUTABLE_TYPE.test(attrs.match(/\stype\s*=\s*["']?([^"'\s>]*)/)?.[1] ?? ''))
+    .map(([, , body]) => body),
+)
+const hashes = [...new Set(inlineScripts.map((body) => `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`))]
 
 if (!hashes.length) {
-  console.warn('[headers] no inline scripts found in dist/index.html — check the build output')
+  console.warn('[headers] no inline scripts found in dist/*.html — check the build output')
 }
 
 // Remote origins the app genuinely talks to. Keep this list minimal and explicit.

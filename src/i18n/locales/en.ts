@@ -244,6 +244,18 @@ export const en: Dictionary = {
     label: 'Language',
     names: { uz: 'O‘zbek', oz: 'Özbek (yangi alifbo)', en: 'English', de: 'Deutsch', ru: 'Русский' },
   },
+  notFound: {
+    metaTitle: '404 — This page went extinct · Dilshodjon Haydarov',
+    metaDescription: 'There is no page at this address. Head back to the home page.',
+    code: 'Error 404',
+    title: 'This page went extinct.',
+    text: 'A meteor may have got to it first, or the link may simply be wrong. Either way, there is nothing at this address.',
+    home: 'Back to the home page',
+    roar: 'Make it roar',
+    hint: 'Click or tap anywhere to call down a meteor',
+    pathLabel: 'Requested address',
+    sceneLabel: 'A 3D scene: the number 404 built from basalt columns, a tyrannosaur roaring beneath it and an eclipsed sun',
+  },
   cursor: {
     open: 'Open',
     view: 'View',

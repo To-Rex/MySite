@@ -244,6 +244,18 @@ export const de: Dictionary = {
     label: 'Sprache',
     names: { uz: 'O‘zbek', oz: 'Özbek (yangi alifbo)', en: 'English', de: 'Deutsch', ru: 'Русский' },
   },
+  notFound: {
+    metaTitle: '404 — Diese Seite ist ausgestorben · Dilshodjon Haydarov',
+    metaDescription: 'Unter dieser Adresse gibt es keine Seite. Zurück zur Startseite.',
+    code: 'Fehler 404',
+    title: 'Diese Seite ist ausgestorben.',
+    text: 'Vielleicht hat sie ein Meteor erwischt, vielleicht ist der Link einfach falsch. So oder so: Unter dieser Adresse gibt es nichts.',
+    home: 'Zurück zur Startseite',
+    roar: 'Brüllen lassen',
+    hint: 'Irgendwo klicken oder tippen, um einen Meteor zu rufen',
+    pathLabel: 'Angefragte Adresse',
+    sceneLabel: 'Eine 3D-Szene: die Zahl 404 aus Basaltsäulen, darunter ein brüllender Tyrannosaurus und eine verfinsterte Sonne',
+  },
   cursor: {
     open: 'Öffnen',
     view: 'Ansehen',

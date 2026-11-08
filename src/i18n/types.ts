@@ -233,6 +233,18 @@ export interface Dictionary {
     label: string
     names: Record<Language, string>
   }
+  notFound: {
+    metaTitle: string
+    metaDescription: string
+    code: string
+    title: string
+    text: string
+    home: string
+    roar: string
+    hint: string
+    pathLabel: string
+    sceneLabel: string
+  }
   cursor: {
     open: string
     view: string
