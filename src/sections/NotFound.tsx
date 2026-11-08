@@ -108,7 +108,7 @@ export function NotFound() {
             )}
           </motion.p>
 
-          <h1 className="display-tight mt-4 max-w-[13ch] text-[clamp(2.4rem,5.3vw,4.7rem)] short:text-[clamp(1.8rem,9vh,2.8rem)]">
+          <h1 className="display-tight mt-4 max-w-[13ch] text-balance text-[clamp(2.4rem,5.3vw,4.7rem)] short:text-[clamp(1.8rem,9vh,2.8rem)]">
             <SplitText text={t.notFound.title} trigger="manual" show={revealed} delay={0.1} stagger={0.05} duration={0.95} />
           </h1>
 
