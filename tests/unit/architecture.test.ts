@@ -99,6 +99,10 @@ describe('lazy 3D', () => {
     expect(leaks).toEqual([])
     expect(files.has(join(THREE_DIR, 'NotFoundStage.tsx'))).toBe(true)
     expect(files.has(join(THREE_DIR, 'NotFoundScene.tsx'))).toBe(false)
+    // The sound's first download is its store; the engine and voices come when wanted.
+    expect(files.has(join(SRC, 'features/sound/store.ts'))).toBe(true)
+    expect(files.has(join(SRC, 'features/sound/engine.ts'))).toBe(false)
+    expect(files.has(join(SRC, 'features/sound/voices.ts'))).toBe(false)
   })
 
   it('reaches every scene only through a dynamic import', () => {
@@ -116,6 +120,22 @@ describe('lazy 3D', () => {
     // A worker is its own bundle: anything it imports is shipped a second time.
     expect([...packages.keys()]).toEqual([])
     expect([...files.keys()].map((file) => relative(THREE_DIR, file)).sort()).toEqual(['creatures.ts', 'creatures.worker.ts', 'mascots.ts', 'sdf.ts'])
+  })
+})
+
+describe('sound', () => {
+  it('keeps the voice worker free of every package', () => {
+    const SOUND = join(SRC, 'features/sound')
+    const { files, packages } = closure(join(SOUND, 'voices.worker.ts'))
+    expect([...packages.keys()]).toEqual([])
+    expect([...files.keys()].map((file) => relative(SOUND, file)).sort()).toEqual(['dsp.ts', 'voices.ts', 'voices.worker.ts'])
+  })
+
+  it('ships no audio files: every sound on the site is written in code', () => {
+    const audio = /\.(mp3|wav|ogg|m4a|aac|flac|webm|opus)$/i
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]))
+    expect([...walk(SRC), ...walk(join(ROOT, 'public'))].filter((file) => audio.test(file))).toEqual([])
   })
 })
 

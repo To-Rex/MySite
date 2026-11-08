@@ -107,4 +107,9 @@ describe('the 404 page', () => {
     expect(screen.queryByRole('button', { name: dictionaries.en.notFound.roar })).toBeNull()
     expect(screen.queryByText(dictionaries.en.notFound.hint)).toBeNull()
   })
+
+  it('does not offer sound when there is nothing to hear', () => {
+    const view = visit('/nope?lang=en')
+    expect(view.container.querySelector('[data-sound]')).toBeNull()
+  })
 })

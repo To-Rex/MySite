@@ -2,7 +2,7 @@
 
 Personal brand site of Dilshodjon Haydarov (To-Rex), live at https://torexdev.uz on Netlify (repo `To-Rex/MySite`).
 React 19 · Vite 7 · TypeScript strict · Tailwind 4 · three.js / R3F / drei · motion · lenis.
-Everything 3D is procedural: there are no model or texture files anywhere.
+Everything 3D is procedural, and so is all the sound: there are no model, texture or audio files anywhere.
 
 ## Commands
 
@@ -44,6 +44,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 | `Cameo.tsx`, `useCameoDirector.ts` | Cameos |
 | `Valley.tsx`, `ValleyScene.tsx`, `valley*.ts(x)`, `lib/valley.ts` | The extinction cinematic |
 | `404.html`, `NotFound*.tsx`, `notFound*.ts`, `lib/notFound.ts` | The 404 page |
+| `src/features/sound/*` | The 404 page → Sound |
 | any `<Canvas>` | Canvases and the pointer · Parked canvases and the clock |
 | layout, breakpoints | Responsive |
 | `scripts/`, `netlify.toml`, `site.ts` | Deployment |

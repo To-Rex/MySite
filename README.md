@@ -653,6 +653,51 @@ sees when something has already gone wrong, and it should not be able to fail to
 `prefers-reduced-motion` gets the finished tableau on a parked canvas, with
 nothing to set off.
 
+#### Sound
+
+The 404 page has a voice, and like everything else on the site none of it is a
+file. `src/features/sound/voices.ts` writes every sound as arithmetic in a worker,
+`engine.ts` is a small mixing desk in Web Audio, and `store.ts` is the only part
+in the first download.
+
+| Sound | How it is made |
+| --- | --- |
+| Roar, snarl, growl | A source-filter throat: uneven glottal pulses through a bank of resonators, breaking up as the voice strains |
+| Footfalls | A sine dropping under the hearing, a knock in the middle for small speakers, then the dirt settling |
+| Meteors | Noise through a band climbing all the way to the moment of landing; the buffer is played at whatever speed makes it end on the impact |
+| Impacts | A crack, a falling boom, a wall of noise closing from bright to dark, and the debris coming back down in stereo |
+| The number | Hundreds of separate stones seating themselves; stone dragging under a moving cursor |
+| Pterosaurs, turtles | Raspy falling cries panned across the sky as they cross it; bubbles; a chime when one goes through the zero |
+| The place | A seamless 16 s loop of ground, wind, fire and a low beat, lava giving way at random, and a canyon's impulse response for all of it to ring in |
+
+**What makes it sound big is not that it is low.** A listener judges the size of
+an animal from its formants: low and close together means a very long throat. The
+tyrannosaur's start below 100 Hz, and most of its energy is still deliberately
+kept between 300 Hz and 5 kHz, because a phone speaker
+plays nothing much below a few hundred hertz and a roar that lives down there is
+silence. A clean pulse train through fixed filters sounds like a machine saying a
+vowel, so the pulses have jitter, shimmer and period doubling, the pitch is
+modulated at the rate of the rattle in the throat, and the formants drift.
+
+**Sound waits for a gesture.** Browsers will not start audio before the visitor
+has done something, so the page starts `locked` with a visible invitation, and the
+first click anywhere opens it. The `AudioContext` has to be made inside that
+click, so it is made by the store, synchronously: a dynamic import would come back
+too late to count. The voices are rendered ahead of time so the click can be
+answered at once. Turning it off is remembered (`dh.sound`); a hidden tab
+suspends it, because the scene stops too.
+
+**A convolver's buffer must be at the context's own sample rate.** Every other
+buffer is resampled on playback, so the voices are all rendered at 44.1 kHz, but
+`ConvolverNode` throws on a mismatch and most devices run at 48 kHz, so the impulse
+response alone is converted on arrival. The cue that fires a roar goes at the start
+of the wind-up, because the recording starts with the intake of breath: the voice
+arrives as the head comes up.
+
+Ears are the one test nobody has written. `tests/unit/sound-voices.test.ts` checks
+that nothing is silent, clipped or discontinuous and that the animal has its
+energy where it should, but whether it is frightening is for someone to listen to.
+
 ### Canvases and the pointer
 
 Every full-bleed canvas here — the companion's, the valley's — sits in a layer

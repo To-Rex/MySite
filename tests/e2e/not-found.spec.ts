@@ -28,6 +28,11 @@ test('runs clean under the production policy, however deep the address, 3D and a
   const roar = page.getByRole('button', { name: ROAR })
   await expect(roar).toBeVisible({ timeout: 90_000 })
 
+  // With the sound on, so the voice worker and the whole mix run under the policy too.
+  await page.locator('[data-sound]').click()
+  await expect(page.locator('[data-sound]')).toHaveAttribute('data-sound', 'on')
+  await page.waitForTimeout(1500)
+
   await page.mouse.click(page.viewportSize()!.width * 0.5, page.viewportSize()!.height * 0.25)
   await roar.click()
   await page.waitForTimeout(2500)
@@ -69,6 +74,57 @@ test('its language and theme controls work', async ({ page }) => {
   expect(problems).toEqual([])
 })
 
+test.describe('sound', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      const contexts: AudioContext[] = []
+      ;(window as unknown as { contexts: AudioContext[] }).contexts = contexts
+      const Real = window.AudioContext
+      window.AudioContext = class extends Real {
+        constructor(options?: AudioContextOptions) {
+          super(options)
+          contexts.push(this)
+        }
+      }
+    })
+  })
+
+  const opened = (page: import('@playwright/test').Page) => page.evaluate(() => (window as unknown as { contexts: AudioContext[] }).contexts.length)
+  const toggle = (page: import('@playwright/test').Page) => page.locator('[data-sound]')
+
+  test('waits to be asked, opens on the button, and stays off once turned off', async ({ page }) => {
+    await page.goto('/nope?lang=en')
+    await expect(toggle(page)).toHaveAttribute('data-sound', 'locked')
+    await expect(toggle(page)).toHaveAccessibleName('Turn sound on')
+    expect(await opened(page)).toBe(0)
+
+    await toggle(page).click()
+    await expect(toggle(page)).toHaveAttribute('data-sound', 'on')
+    await expect(toggle(page)).toHaveAttribute('aria-pressed', 'true')
+    await expect(toggle(page)).toHaveAccessibleName('Turn sound off')
+    expect(await opened(page)).toBe(1)
+
+    await toggle(page).click()
+    await expect(toggle(page)).toHaveAttribute('data-sound', 'off')
+    expect(await page.evaluate(() => localStorage.getItem('dh.sound'))).toBe('off')
+
+    await page.reload()
+    await expect(toggle(page)).toHaveAttribute('data-sound', 'off')
+    await page.mouse.click(40, 300)
+    await page.waitForTimeout(150)
+    await expect(toggle(page)).toHaveAttribute('data-sound', 'off')
+    expect(await opened(page)).toBe(0)
+  })
+
+  test('is opened by the first click anywhere on the page', async ({ page }) => {
+    await page.goto('/nope?lang=en')
+    await expect(toggle(page)).toHaveAttribute('data-sound', 'locked')
+    await page.mouse.click(40, 300)
+    await expect(toggle(page)).toHaveAttribute('data-sound', 'on')
+    expect(await opened(page)).toBe(1)
+  })
+})
+
 test.describe('with a browser the site has no language for', () => {
   test.use({ locale: 'fr-FR' })
 
@@ -89,6 +145,7 @@ test.describe('reduced motion', () => {
     await expect(page.locator('canvas')).toHaveCount(1, { timeout: 30_000 })
     await page.waitForTimeout(1500)
     await expect(page.getByRole('button', { name: ROAR })).toHaveCount(0)
+    await expect(page.locator('[data-sound]')).toHaveCount(0)
     expect(problems).toEqual([])
   })
 })
@@ -119,6 +176,7 @@ test.describe('without WebGL', () => {
     await expect(page.locator('.not-found-number')).toHaveCSS('opacity', '0.9')
     await expect(page.locator('canvas')).toHaveCount(0)
     await expect(page.getByRole('button', { name: ROAR })).toHaveCount(0)
+    await expect(page.locator('[data-sound]')).toHaveCount(0)
     await expect(page.getByRole('link', { name: /Back to the home page/ })).toBeVisible()
     expect(problems).toEqual([])
   })

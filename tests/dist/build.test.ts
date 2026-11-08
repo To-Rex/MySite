@@ -206,6 +206,15 @@ describe('404.html', () => {
     expect(scene).toBeDefined()
     expect(kB(statSync(join(ASSETS, scene)).size)).toBeLessThan(90)
   })
+
+  it('keeps the sound out of the first download, and the voice worker small', () => {
+    const chunks = upFront(page())
+    expect(chunks.filter((name) => /^(engine|voices)/.test(name))).toEqual([])
+    const worker = assets.find((name) => /^voices\.worker-.*\.js$/.test(name))!
+    expect(worker).toBeDefined()
+    expect(kB(statSync(join(ASSETS, worker)).size)).toBeLessThan(40)
+    expect(read('assets', worker)).not.toContain('WebGLRenderer')
+  })
 })
 
 describe('robots.txt and sitemap.xml', () => {
