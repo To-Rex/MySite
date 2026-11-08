@@ -127,3 +127,19 @@ export const Globe = ({ size = 16, ...p }: IconProps) => (
     <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
   </svg>
 )
+
+export const Volume = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" />
+    <path d="M15.5 9a4.2 4.2 0 0 1 0 6" />
+    <path d="M18 6.5a7.8 7.8 0 0 1 0 11" />
+  </svg>
+)
+
+export const VolumeOff = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" />
+    <path d="m16 9.5 5 5" />
+    <path d="m21 9.5-5 5" />
+  </svg>
+)

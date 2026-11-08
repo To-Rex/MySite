@@ -254,6 +254,8 @@ export const uz: Dictionary = {
     home: 'Bosh sahifaga qaytish',
     roar: 'Bo‘kirtirish',
     hint: 'Istalgan joyni bosing — meteorit tushadi',
+    soundOn: 'Ovozni yoqish',
+    soundOff: 'Ovozni o‘chirish',
     pathLabel: 'So‘ralgan manzil',
     sceneLabel: 'Uch o‘lchamli sahna: bazalt ustunlardan yasalgan 404 raqami, uning ostida bo‘kirayotgan tiranozavr va tutilgan quyosh',
   },

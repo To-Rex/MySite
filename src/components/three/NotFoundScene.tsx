@@ -24,6 +24,7 @@ import {
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { pointer } from '@/lib/pointer'
 import { CAMERA, OPENING, VIEW_HEIGHT, drainCommands, setNotFoundAct, stageLayout, toStage } from '@/lib/notFound'
+import { cue, grindSound } from '@/features/sound/store'
 import type { Theme } from '@/theme/context'
 import type { CreatureDetail } from './creatures'
 import { DETAIL_BY_TIER, MASCOT_SKIN, animateDinoRun, animateFlap, animateTurtleSwim, poseLeg, useBind, useCreature, type Rig } from './creatureRig'
@@ -76,6 +77,8 @@ interface Quality {
   turtles: number
   flyers: number
 }
+
+const FAR_METEORS = 5
 
 const QUALITY: Record<DeviceTier, Quality> = {
   high: { dpr: [1, 2], cell: 0.052, embers: 620, stars: 900, rocks: 44, bloom: true, bump: 0.03, turtles: 3, flyers: 3 },
@@ -149,6 +152,18 @@ const show = {
   /** One sharp downward knock per footfall. */
   thump: 0,
   opened: false,
+  /** Whether the first meteor has landed: it gets the big bang. */
+  landed: false,
+  /** Sounds that go with a moment rather than an event. */
+  stonesCued: false,
+  roarCued: true,
+  roars: 0,
+  /** When it next mutters to itself, and when it last did. */
+  nextGrumble: 0,
+  grumbleAt: -100,
+  /** Which pass each far meteor is on, so a new one can be heard. */
+  streakCycles: [] as number[],
+  grindLevel: 0,
   /** When a meteor comes down by itself, and how many have. */
   nextAuto: 0,
   autos: 0,
@@ -180,6 +195,14 @@ function resetShow(): void {
   show.shake = 0
   show.thump = 0
   show.opened = false
+  show.landed = false
+  show.stonesCued = false
+  show.roarCued = true
+  show.roars = 0
+  show.nextGrumble = OPENING.alive + 7
+  show.grumbleAt = -100
+  show.streakCycles = []
+  show.grindLevel = 0
   show.nextAuto = OPENING.alive + 7
   show.autos = 0
   show.walkFrom = Infinity
@@ -239,6 +262,12 @@ function spawnDust(at: Vector3, power: number): void {
   burst.born = show.t
 }
 
+/** Where a world x is across the stereo field. */
+function panOf(x: number): number {
+  const half = (VIEW_HEIGHT * Math.max(0.5, show.layout.aspect)) / 2
+  return MathUtils.clamp(finite(x) / half, -1, 1)
+}
+
 function launchMeteor(to: Vector3, flight: number, power: number): void {
   const strike = show.strikes.find((candidate) => !candidate.live)
   if (!strike) return
@@ -249,11 +278,14 @@ function launchMeteor(to: Vector3, flight: number, power: number): void {
   strike.to.copy(to)
   // Always out of the top right, so a run of them reads as one storm.
   strike.from.set(to.x + 6.5 + seeded(show.nextRing, 1) * 2, to.y + 8 + seeded(show.nextRing, 2) * 2, to.z - 4)
+  cue({ kind: 'meteor', flight, from: panOf(strike.from.x), to: panOf(to.x), power })
 }
 
 function landMeteor(strike: Strike): void {
   strike.live = false
   const { to, power } = strike
+  cue({ kind: 'impact', pan: panOf(to.x), power, first: !show.landed })
+  show.landed = true
   pushWave(to.x, to.y, power, power)
   spawnRing(to, 9 * power, 1.1, 0.5)
   spawnRing(to, 5 * power, 0.8, 0.42, 0.07)
@@ -267,6 +299,7 @@ function landMeteor(strike: Strike): void {
     show.look.copy(to)
     show.lookUntil = show.t + 1.9
     if (show.t - show.roarAt > 2.6) startRoar(0.35)
+    else cue({ kind: 'snarl', pan: panOf(show.mouth.x) })
   }
 }
 
@@ -274,6 +307,7 @@ function startRoar(delay = 0): void {
   if (show.t + delay - show.roarAt < 2.4) return
   show.roarAt = show.t + delay
   show.roarFired = false
+  show.roarCued = false
 }
 
 /** How long a roar's wind-up takes, then how long the mouth stays open. */
@@ -357,6 +391,10 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
       launchMeteor(scratch2, OPENING.impact - OPENING.meteor, 1.3)
       GROUND.uCrackFrom.value.set(L.stageX, 0.2)
     }
+    if (!show.stonesCued && t >= OPENING.rise) {
+      show.stonesCued = true
+      cue({ kind: 'stones' })
+    }
     if (t >= OPENING.impact) {
       setNotFoundAct(t >= OPENING.alive ? 'alive' : 'impact')
       SKY.uReveal.value = smooth(OPENING.impact, OPENING.impact + 1.1, t)
@@ -366,11 +404,17 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
     for (const strike of show.strikes) if (strike.live && t >= strike.lands) landMeteor(strike)
 
     // ---- Roar ----------------------------------------------------------------
+    // Cued at the start of the wind-up: the recording starts with the breath in.
+    if (!show.roarCued && t >= show.roarAt) {
+      show.roarCued = true
+      cue({ kind: 'roar', pan: panOf(show.mouth.x), short: show.roars++ % 2 === 1 })
+    }
     if (!show.roarFired && t >= show.roarAt + ROAR_WIND + ROAR_RISE) {
       show.roarFired = true
       const { mouth } = show
       for (let i = 0; i < 3; i++) spawnRing(mouth, 3.4 + i * 1.5, 0.95, 0.62 - i * 0.14, i * 0.14)
       spawnSparks(mouth, 0.42)
+      cue({ kind: 'rattle', pan: panOf(mouth.x), power: 1 })
       scratch2.set(mouth.x, Math.min(mouth.y, L.stageY - DIGIT_HEIGHT * 0.5 * L.stageScale), 0)
       pushWave(scratch2.x, scratch2.y, 1, 0)
       show.shake = Math.max(show.shake, 0.62)
@@ -391,6 +435,24 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
         scratch2.y = MathUtils.clamp(scratch2.y, L.stageY - halfH, L.stageY + halfH)
         launchMeteor(scratch2, 0.5, 0.82)
       }
+    }
+
+    // It mutters to itself, between roars.
+    if (show.arrived && t >= show.nextGrumble && t - show.roarAt > 3.4) {
+      const n = Math.floor(t)
+      show.nextGrumble = t + 6.5 + seeded(n, 41) * 7.5
+      show.grumbleAt = t
+      cue({ kind: seeded(n, 42) < 0.62 ? 'growl' : 'snort', pan: panOf(show.mouth.x) })
+    }
+
+    // The far meteors are timed in their own shader; this is the same sum.
+    for (let i = 0; i < FAR_METEORS; i++) {
+      const period = 7 + seeded(i, 50) * 11
+      const pass = Math.floor((t + seeded(i, 51) * period) / period)
+      if (show.streakCycles[i] !== undefined && pass !== show.streakCycles[i] && t > OPENING.impact) {
+        cue({ kind: 'farStreak', pan: (seeded(i, 53) - 0.5) * 1.4 })
+      }
+      show.streakCycles[i] = pass
     }
 
     // Left alone, it carries on without you.
@@ -415,6 +477,14 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
     } else {
       onNumberPlane(pointer.nx, pointer.ny, camera, scratch2)
       const [sx, sy] = toStage(scratch2.x, scratch2.y, L)
+      // Stone dragging on stone, for as long as the cursor is moving over it.
+      const moved = Math.hypot(sx - FIELD.uHover.value.x, sy - FIELD.uHover.value.y) / Math.max(step, 0.001)
+      const over = Math.abs(sx) < NUMBER_WIDTH / 2 && Math.abs(sy) < DIGIT_HEIGHT / 2
+      const level = over ? Math.min(1, moved * 0.14) * hoverPower.current : 0
+      if (Math.abs(level - show.grindLevel) > 0.02) {
+        show.grindLevel = level
+        grindSound(level, MathUtils.clamp(sx / (NUMBER_WIDTH / 2), -1, 1))
+      }
       FIELD.uHover.value.set(sx, sy, hoverPower.current)
     }
 
@@ -716,6 +786,7 @@ function driveRex(b: Group, s: RexState, bones: RexBones, feet: number, camera: 
   if (walking && Math.floor(beforePace * 2 - 0.5) !== Math.floor(s.pace * 2 - 0.5) && s.gait > 0.4) {
     show.thump = 1
     show.shake = Math.max(show.shake, 0.14)
+    cue({ kind: 'footfall', pan: panOf(s.x) })
     const which = Math.floor(s.pace * 2 - 0.5) % 2 === 0 ? bones.footL : bones.footR
     which.getWorldPosition(scratch)
     scratch.y = L.groundY + 0.04
@@ -727,7 +798,9 @@ function driveRex(b: Group, s: RexState, bones: RexBones, feet: number, camera: 
   const since = t - show.roarAt
   const wind = since > 0 ? smooth(0, ROAR_WIND, since) * (1 - smooth(ROAR_WIND, ROAR_WIND + 0.2, since)) : 0
   const roar = since > 0 ? smooth(ROAR_WIND, ROAR_WIND + ROAR_RISE, since) * (1 - smooth(ROAR_WIND + ROAR_HOLD - 0.4, ROAR_WIND + ROAR_HOLD + 0.25, since)) : 0
-  const tremble = roar * (0.6 + Math.sin(t * 13) * 0.4)
+  const muttering = t - show.grumbleAt
+  const grumble = muttering >= 0 && muttering < 2.4 ? Math.sin((muttering / 2.4) * Math.PI) : 0
+  const tremble = roar * (0.6 + Math.sin(t * 13) * 0.4) + grumble * 0.3
 
   // ---- Heading -------------------------------------------------------------
   s.yaw = MathUtils.damp(s.yaw, show.arrived ? HEADING_REST : HEADING_WALK, 2.2, step)
@@ -922,13 +995,26 @@ function SwimmerBody({ rig, swim, index, theme, bump, bloom, reducedMotion }: Sw
   const tangent = useMemo(() => new Vector3(), [])
   const invalidate = useThree((three) => three.invalidate)
   useEffect(() => invalidate(), [invalidate, rig])
+  const lastZ = useRef(0)
+  const nextBubbles = useRef(index * 3.7 + OPENING.alive + 3)
 
   useFrame(() => {
     const g = group.current
     if (!g) return
     const t = show.t
     const u = (swim.phase + t / swim.lap) % 1
+    lastZ.current = g.position.z
     swim.path.getPointAt(u, g.position)
+    if (!reducedMotion && t > OPENING.alive) {
+      const L = show.layout
+      const pan = panOf(L.stageX + g.position.x * L.stageScale)
+      // The first one's path goes through the hole in the zero.
+      if (index === 0 && lastZ.current > 0 && g.position.z <= 0 && Math.abs(g.position.x) < 1.2) cue({ kind: 'portal', pan })
+      if (t >= nextBubbles.current) {
+        nextBubbles.current = t + 5 + seeded(Math.floor(t), index + 60) * 9
+        cue({ kind: 'bubbles', pan })
+      }
+    }
     swim.path.getTangentAt(u, tangent)
     g.rotation.order = 'YZX'
     g.rotation.y = finite(Math.atan2(-tangent.z, tangent.x))
@@ -964,6 +1050,8 @@ function FlyerBody({ rig, index, theme }: { rig: Rig; index: number; theme: Them
   const mesh = useRef<SkinnedMesh>(null)
   const { geometry, root, skeleton, byName } = rig
   useBind(mesh, skeleton)
+  const nextCall = useRef(0)
+  const lastBeat = useRef(0)
 
   useFrame(() => {
     const g = group.current
@@ -977,6 +1065,18 @@ function FlyerBody({ rig, index, theme }: { rig: Rig; index: number; theme: Them
     g.position.set(span * (0.5 - u), L.stageY + 1.5 + index * 0.42 + Math.sin(t * 0.6 + index) * 0.25 + lift * 0.8, -5.5 - index * 0.8)
     g.rotation.set(0.1, Math.PI + Math.sin(t * 0.4 + index) * 0.1, 0.04)
     g.scale.setScalar(Math.max(0.0001, (1.15 - index * 0.14) * smooth(OPENING.impact, OPENING.impact + 1, t)))
+
+    // Only worth hearing while they are on the screen.
+    const pan = g.position.x / ((VIEW_HEIGHT * Math.max(0.5, L.aspect)) / 2)
+    if (Math.abs(pan) < 1.05 && t > OPENING.impact + 1) {
+      if (t >= nextCall.current) {
+        nextCall.current = t + 2.2 + seeded(Math.floor(t), index + 40) * 4.5
+        cue({ kind: 'screech', pan: MathUtils.clamp(pan, -1, 1) })
+      }
+      const beat = Math.floor((t + index * 0.7) * 1.05)
+      if (index === 0 && beat !== lastBeat.current) cue({ kind: 'wing', pan: MathUtils.clamp(pan, -1, 1) })
+      lastBeat.current = beat
+    }
   })
 
   return (
@@ -1317,7 +1417,7 @@ export default function NotFoundScene({ theme, tier, reducedMotion }: NotFoundSc
       <Lights theme={theme} />
       <Sky />
       {theme === 'dark' && <Stars count={q.stars} />}
-      {!reducedMotion && <FarMeteors theme={theme} count={5} />}
+      {!reducedMotion && <FarMeteors theme={theme} count={FAR_METEORS} />}
       <Ground />
       <Stage reducedMotion={reducedMotion}>
         <Columns theme={theme} cell={q.cell} bloom={bloom} />

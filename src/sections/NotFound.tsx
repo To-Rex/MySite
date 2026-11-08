@@ -9,6 +9,8 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { NotFoundStage } from '@/components/three/NotFoundStage'
 import { Button, LinkButton } from '@/components/ui/Button'
 import { SplitText } from '@/components/ui/SplitText'
+import { SoundToggle } from '@/features/sound/SoundToggle'
+import { offerSound, unlockSound } from '@/features/sound/store'
 import { callRoar, callStrike, useNotFoundAct } from '@/lib/notFound'
 import { EASE } from '@/lib/motion'
 
@@ -37,6 +39,19 @@ export function NotFound() {
     const giveUp = window.setTimeout(() => setPatient(false), PATIENCE)
     return () => window.clearTimeout(giveUp)
   }, [])
+
+  // Browsers hold sound back until the visitor has done something, so the first
+  // thing they do opens it — except pressing the sound button, which decides
+  // for itself and would otherwise be undone by this in the same click.
+  useEffect(() => {
+    if (!webgl || reduced) return
+    offerSound()
+    const open = (event: Event) => {
+      if (!(event.target as Element | null)?.closest?.('[data-sound]')) unlockSound()
+    }
+    window.addEventListener('click', open, true)
+    return () => window.removeEventListener('click', open, true)
+  }, [webgl, reduced])
 
   // There is no <Seo> here: this page is never indexed, so it only needs a
   // title and description that match the language being read.
@@ -130,6 +145,7 @@ export function NotFound() {
                 {t.notFound.roar}
               </Button>
             )}
+            <SoundToggle />
           </motion.div>
 
           {interactive && (

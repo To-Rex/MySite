@@ -242,6 +242,8 @@ export interface Dictionary {
     home: string
     roar: string
     hint: string
+    soundOn: string
+    soundOff: string
     pathLabel: string
     sceneLabel: string
   }

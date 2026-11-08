@@ -381,3 +381,17 @@
   background:
     radial-gradient(90% 100% at 0% 100%, color-mix(in srgb, var(--bg) 82%, transparent), transparent 72%);
 }
+
+/* The page has a voice and no way of using it until someone asks. */
+.sound-invite {
+  animation: sound-invite 2.4s var(--ease-in-out) infinite;
+}
+@keyframes sound-invite {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
