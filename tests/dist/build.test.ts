@@ -35,6 +35,30 @@ const attr = (tag: string, name: string) => tag.match(new RegExp(`\\s${name}="([
 const tags = (name: string) => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, 'g'))].map((match) => match[0])
 const meta = (key: string) => tags('meta').find((tag) => attr(tag, 'property') === key || attr(tag, 'name') === key)
 
+/** Chunks a document asks for, then every chunk those import statically. */
+function upFront(document: string): string[] {
+  const of = (name: string) => [...document.matchAll(new RegExp(`<${name}\\b[^>]*>`, 'g'))].map((match) => match[0])
+  const entry = [
+    ...of('script').map((tag) => attr(tag, 'src')),
+    ...of('link').filter((tag) => attr(tag, 'rel') === 'modulepreload').map((tag) => attr(tag, 'href')),
+  ]
+    .filter((src): src is string => !!src?.endsWith('.js'))
+    .map((src) => src.replace(/^\/assets\//, ''))
+  const seen = new Set(entry)
+  const queue = [...entry]
+  while (queue.length) {
+    const code = read('assets', queue.pop()!)
+    // `import … from"./x.js"` and bare `import"./x.js"` — not `import("./x.js")`.
+    for (const match of code.matchAll(/(?:^|[;}\n])\s*(?:import|export)\s*(?:[^"'()]*?\bfrom\s*)?["']\.\/([^"']+\.js)["']/g)) {
+      if (!seen.has(match[1]!)) {
+        seen.add(match[1]!)
+        queue.push(match[1]!)
+      }
+    }
+  }
+  return [...seen]
+}
+
 describe('index.html', () => {
   it('has the site URL baked in everywhere it was asked for', () => {
     expect(html).not.toMatch(/%VITE_[A-Z_]+%/)
@@ -97,31 +121,8 @@ describe('Content-Security-Policy', () => {
 })
 
 describe('bundle', () => {
-  /** Chunks the document asks for, then every chunk those import statically. */
-  const upFront = () => {
-    const entry = [
-      ...tags('script').map((tag) => attr(tag, 'src')),
-      ...tags('link').filter((tag) => attr(tag, 'rel') === 'modulepreload').map((tag) => attr(tag, 'href')),
-    ]
-      .filter((src): src is string => !!src?.endsWith('.js'))
-      .map((src) => src.replace(/^\/assets\//, ''))
-    const seen = new Set(entry)
-    const queue = [...entry]
-    while (queue.length) {
-      const code = read('assets', queue.pop()!)
-      // `import … from"./x.js"` and bare `import"./x.js"` — not `import("./x.js")`.
-      for (const match of code.matchAll(/(?:^|[;}\n])\s*(?:import|export)\s*(?:[^"'()]*?\bfrom\s*)?["']\.\/([^"']+\.js)["']/g)) {
-        if (!seen.has(match[1]!)) {
-          seen.add(match[1]!)
-          queue.push(match[1]!)
-        }
-      }
-    }
-    return [...seen]
-  }
-
   it('loads no three.js before it is asked for', () => {
-    const chunks = upFront()
+    const chunks = upFront(html)
     expect(chunks.length).toBeGreaterThanOrEqual(3)
     expect(chunks.filter((name) => /^three-/.test(name))).toEqual([])
     for (const name of chunks) expect(read('assets', name), name).not.toContain('WebGLRenderer')
@@ -130,7 +131,7 @@ describe('bundle', () => {
   })
 
   it('stays inside its size budget', () => {
-    const chunks = upFront()
+    const chunks = upFront(html)
     const size = (name: string) => statSync(join(ASSETS, name)).size
     const entry = chunks.find((name) => name.startsWith('index-'))!
     // Tripwires, not targets. The app chunk is ~145 kB; the one time a scene
@@ -149,7 +150,8 @@ describe('bundle', () => {
 })
 
 describe('stylesheet', () => {
-  const css = () => read('assets', assets.find((name) => /^index-.*\.css$/.test(name))!)
+  // Both pages share one stylesheet, so go by what the document links to.
+  const css = () => read(attr(tags('link').find((tag) => attr(tag, 'rel') === 'stylesheet')!, 'href')!.slice(1))
   const rule = (selector: string) => css().match(new RegExp(`${selector.replace(/[.[\]]/g, '\\$&')}\\{([^}]*)\\}`))?.[1] ?? ''
 
   it('ships backdrop-filter in the form every browser reads', () => {
@@ -164,6 +166,45 @@ describe('stylesheet', () => {
     expect(rule('.universe-label')).toContain('white-space:nowrap')
     expect(rule('.universe-label')).toContain('cursor:pointer')
     expect(rule('.universe-label')).toContain('transition:')
+  })
+})
+
+describe('404.html', () => {
+  const page = () => read('404.html')
+
+  it('was built, and asks only for hashed assets at absolute paths', () => {
+    const urls = [...page().matchAll(/<(?:script|link)\b[^>]*(?:src|href)="([^"]+)"/g)].map((match) => match[1]!)
+    expect(urls.some((url) => /^\/assets\/notFound-.*\.js$/.test(url))).toBe(true)
+    // Served at /any/depth/you/like, so nothing can be relative.
+    for (const url of urls) expect(url, url).toMatch(/^\//)
+    expect(page()).not.toMatch(/%VITE_[A-Z_]+%/)
+  })
+
+  it('is pinned by the same policy as the home page', () => {
+    const policy = headers.match(/Content-Security-Policy: (.*)/)![1]!
+    const inline = [...page().matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+      .filter(([, attrs]) => !/\ssrc=/.test(attrs!))
+      .map(([, , body]) => `'sha256-${createHash('sha256').update(body!, 'utf8').digest('base64')}'`)
+    expect(inline).toHaveLength(1)
+    expect(policy).toContain(inline[0]!)
+  })
+
+  it('loads no three.js until the words are on screen', () => {
+    const chunks = upFront(page())
+    expect(chunks.filter((name) => /^three-/.test(name))).toEqual([])
+    for (const name of chunks) expect(read('assets', name), name).not.toContain('WebGLRenderer')
+  })
+
+  it('stays small up front', () => {
+    const total = upFront(page()).reduce((sum, name) => sum + statSync(join(ASSETS, name)).size, 0)
+    // Someone who mistyped an address has not asked for a download.
+    expect(kB(total), 'JS loaded up front (kB)').toBeLessThan(460)
+  })
+
+  it('keeps the scene in its own chunk', () => {
+    const scene = assets.find((name) => /^NotFoundScene-.*\.js$/.test(name))!
+    expect(scene).toBeDefined()
+    expect(kB(statSync(join(ASSETS, scene)).size)).toBeLessThan(90)
   })
 })
 

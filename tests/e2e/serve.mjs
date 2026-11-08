@@ -59,11 +59,13 @@ const rules = parseHeaders(readFileSync(join(dist, '_headers'), 'utf8'))
 createServer((request, response) => {
   const { pathname } = new URL(request.url ?? '/', `http://${request.headers.host}`)
   const path = pathname.endsWith('/') ? `${pathname}index.html` : pathname
-  const file = normalize(join(dist, path))
+  let file = normalize(join(dist, path))
 
+  // As on Netlify: anything without a file gets dist/404.html, at the address
+  // that was asked for, with a real 404 status and the same response headers.
   if (!file.startsWith(dist) || !existsSync(file) || !statSync(file).isFile()) {
-    response.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found')
-    return
+    file = join(dist, '404.html')
+    response.statusCode = 404
   }
 
   response.setHeader('Content-Type', TYPES[extname(file)] ?? 'application/octet-stream')

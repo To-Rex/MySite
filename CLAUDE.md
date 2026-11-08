@@ -43,6 +43,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 | `Spectacle.tsx`, `stage.ts`, `mascots.ts`, `lib/spectacle.ts` | The hero's easter egg |
 | `Cameo.tsx`, `useCameoDirector.ts` | Cameos |
 | `Valley.tsx`, `ValleyScene.tsx`, `valley*.ts(x)`, `lib/valley.ts` | The extinction cinematic |
+| `404.html`, `NotFound*.tsx`, `notFound*.ts`, `lib/notFound.ts` | The 404 page |
 | any `<Canvas>` | Canvases and the pointer · Parked canvases and the clock |
 | layout, breakpoints | Responsive |
 | `scripts/`, `netlify.toml`, `site.ts` | Deployment |
@@ -54,7 +55,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 ## Layout
 
 ```
-src/app          shell, provider order, section order
+src/app          shell, provider order, section order (NotFoundApp is the shell of 404.html)
 src/config       site identity (site.ts), section ids / nav
 src/content      language-neutral data: projects, technologies, socials
 src/i18n         Dictionary type; oz (default, derived from uz by newLatin.ts) / uz / en / de / ru
@@ -101,6 +102,9 @@ Each of these was a debugging round the first time. The README section explains 
     one. Change a tag in either and change the other; `tests/unit/seo.test.tsx` requires them equal.
 13. **Anything that covers the page uses `useFocusTrap`**, with every element that must stay
     usable passed as a root. Never `inert` by hand.
+14. **`404.html` is a second Vite entry, not a route.** Its inline pre-paint script must stay
+    byte-identical to `index.html`'s: one header, one hash, and `tests/unit/seo.test.tsx` requires
+    it. Everything in it is asked for by absolute path, because it is served at any depth.
 
 ## graphify
 

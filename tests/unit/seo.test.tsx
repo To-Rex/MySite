@@ -163,3 +163,34 @@ describe('the pre-paint script', () => {
     expect(script).toContain(`'${LANGUAGE_CHOICE_KEY}'`)
   })
 })
+
+describe('404.html', () => {
+  const page = readFileSync(resolve(process.cwd(), '404.html'), 'utf8')
+  const copy = dictionaries[DEFAULT_LANGUAGE].notFound
+  const script = (html: string) => html.match(/<script>([\s\S]*?)<\/script>/)![1]!
+
+  it('is the same pre-paint script as the home page, byte for byte', () => {
+    // Both are pinned by one Content-Security-Policy. Two scripts would mean two
+    // hashes, and a theme that behaves differently on one page.
+    expect(script(page)).toBe(script(builtHead))
+  })
+
+  it('carries the default language, the same as the page it becomes', () => {
+    expect(page).toContain(`<html lang="${LOCALE_TAGS[DEFAULT_LANGUAGE]}"`)
+    expect(page).toContain(`<title>${copy.metaTitle}</title>`)
+    expect(page).toContain(`<meta name="description" content="${copy.metaDescription}" />`)
+  })
+
+  it('tells crawlers to leave it alone', () => {
+    expect(page).toMatch(/<meta name="robots" content="noindex" \/>/)
+    expect(page).not.toMatch(/rel="canonical"/)
+  })
+
+  it('asks for everything by absolute path, because it is served at any depth', () => {
+    for (const [, url] of page.matchAll(/(?:href|src)="([^"]+)"/g)) expect(url, url).toMatch(/^\//)
+  })
+
+  it('still says something with JavaScript off', () => {
+    expect(page).toMatch(/<noscript>[\s\S]*href="\/"[\s\S]*<\/noscript>/)
+  })
+})

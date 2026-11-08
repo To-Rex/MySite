@@ -67,15 +67,19 @@ export async function mockGithub(page: Page): Promise<void> {
  * console error — which is where a CSP violation shows up — a request for one
  * of our own files that failed, or a request to an origin nobody mocked.
  */
-export function watch(page: Page): string[] {
+export function watch(page: Page, { missingDocument = false }: { missingDocument?: boolean } = {}): string[] {
   const problems: string[] = []
   const own = (url: string) => url.startsWith('http://127.0.0.1')
+  // On the 404 page the document itself is the one request that is meant to fail.
+  const isTheDocument = (url: string) => missingDocument && url === page.url()
   page.on('pageerror', (error) => problems.push(`exception: ${error.message}`))
   page.on('console', (message) => {
-    if (message.type() === 'error') problems.push(`console.error: ${message.text()}`)
+    if (message.type() === 'error' && !isTheDocument(message.location().url)) problems.push(`console.error: ${message.text()}`)
   })
   page.on('response', (response) => {
-    if (own(response.url()) && response.status() >= 400) problems.push(`${response.status()}: ${response.url()}`)
+    if (own(response.url()) && response.status() >= 400 && !(missingDocument && response.request().isNavigationRequest())) {
+      problems.push(`${response.status()}: ${response.url()}`)
+    }
   })
   page.on('requestfailed', (request) => {
     // An aborted request is the page changing its mind, not a failure.

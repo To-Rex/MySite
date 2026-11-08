@@ -589,6 +589,70 @@ minutes, which is exactly what accumulating clamped deltas did. It does wait for
 one thing before starting the clock — all five species meshed — because a herd
 that turns up during the second act is worse than a beat of empty sky.
 
+### The 404 page
+
+Any address Netlify has no file for gets `dist/404.html`, with a real 404 status
+and the same response headers as everything else. It is a page of its own, a
+second Vite entry (`404.html` → `src/not-found.tsx`), rather than a route in the
+app, because someone who has mistyped an address should not download the whole
+site to be told so: up front it is the chunks it shares with the home page and
+6 kB of its own, and three.js arrives behind `NotFoundStage`, a three-free gate
+like `Companion` and `Valley`. In development it lives at `/404.html`, since
+Vite answers every other unknown path with the home page.
+
+The joke is that the page went extinct.
+
+| Seconds | What happens |
+| --- | --- |
+| 0.3 | A meteor comes in from the top right, past the flat `404` the page has been showing while the renderer loaded |
+| 1.3 | It lands: white-out, shockwave, and the flat number is gone. The sky comes up, the ground cracks outward from the impact and the words rise |
+| 1.4 | Three digits of basalt columns fly out of the crater and seat themselves, nearest first |
+| 2.2 | The tyrannosaur walks in from off screen, the camera and the number both feeling each footfall |
+| ~5.5 | It stops, turns, winds up and roars. The rings are drawn at its mouth and the wave goes through the number |
+| after | It watches the cursor, turtles swim through the zero, pterosaurs cross the sun, columns let go and grow back, and every so often a meteor comes down by itself |
+
+Clicking anywhere calls a meteor down on that spot and the animal turns to look.
+`src/lib/notFound.ts` holds the act and the visitor's requests, `NotFoundScene.tsx`
+plays it, `notFoundGlyphs.ts` is the geometry and `notFoundMaterials.ts` the shaders.
+
+**The number is done on the GPU.** Each column carries only its home, radius,
+height and four random numbers. Flying out of the crater, seating, rising under
+the cursor, leaning away from a shockwave, being thrown clear by a meteor and
+dropping off the number are all closed-form in the vertex shader from a handful
+of uniforms, so a few thousand columns in motion cost one uniform upload a frame.
+Flat shading takes its normals from screen-space derivatives, which is why all of
+that is lit correctly with no normal maths at all.
+
+**A column is hot underneath.** The emissive is a function of distance *below the
+column's top*, so at rest only the seams glow, and anything that makes a column
+stand proud of its neighbours peels the crust away and shows the lava: a wave
+going through is visible because of what it uncovers. Under the columns is the
+digit's exact outline, extruded and molten, which keeps the silhouette crisp where
+the hexagons shrink to fit the ink.
+
+**The digits and the columns come from the same polygons.** `notFoundGlyphs.ts`
+is free of three.js and has its own tests: every hexagon stays inside the ink,
+the hole in the zero is wide enough for the turtle whose path goes through it.
+
+**Glow is laid over the frame, not baked into it.** The usual post-processing
+route tone-maps the whole frame at the end, which turns the light theme's paper
+grey and changes the creatures' hides, which were tuned for per-material tone
+mapping. So the frame is drawn exactly as on any other canvas, whatever is on
+`GLOW_LAYER` is drawn again on black into a small target, blurred down and back
+up a short pyramid and added on top. The target has a fixed height rather than a
+fraction of the canvas, or the blur is a fixed number of pixels and the glow all
+but vanishes on a 5K display; point sprites are scaled down for that pass for the
+same reason. The animals are drawn into it in black, or the number shines
+straight through them. By day the ash and the flashes stay out of it: added on
+top of paper, glow only turns the page yellow.
+
+**The words come first.** They do not wait for the 3D for more than 2.6 s, and
+without WebGL, or if the chunk cannot be fetched, the page is the flat number and
+the words, with an error boundary to keep it that way: this is what a visitor
+sees when something has already gone wrong, and it should not be able to fail too.
+`prefers-reduced-motion` gets the finished tableau on a parked canvas, with
+nothing to set off.
+
 ### Canvases and the pointer
 
 Every full-bleed canvas here — the companion's, the valley's — sits in a layer
@@ -722,10 +786,10 @@ split by *what has to exist* for a check to be possible.
 | --- | --- | --- | --- |
 | Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the architecture rules |
 | Build | `npm run test:dist` | `dist/` | the CSP and its hashes, what loads up front and how big it is, what the minifier did to the CSS |
-| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard |
+| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the 404 page behind a real 404 |
 
 **The architecture rules are tests.** `tests/unit/architecture.test.ts` follows
-static imports from `main.tsx` and fails if three.js is reachable without
+static imports from `main.tsx` and `not-found.tsx` and fails if three.js is reachable without
 crossing a dynamic `import()`; does the same for the worker; parses every scene
 for a read of `state.clock`; checks each `<Canvas>` for the pointer-events it
 needs; and scans the stylesheets for a hand-written prefix or a declaration

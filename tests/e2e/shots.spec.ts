@@ -29,7 +29,7 @@ const SETTLE = 4500
 for (const viewport of VIEWPORTS) {
   for (const theme of ['dark', 'light'] as const) {
     test(`${viewport.name} · ${theme}`, async ({ browser }) => {
-      test.setTimeout(180_000)
+      test.setTimeout(420_000)
       const context = await browser.newContext({
         viewport: { width: viewport.width, height: viewport.height },
         deviceScaleFactor: 2,
@@ -97,6 +97,12 @@ for (const viewport of VIEWPORTS) {
         await page.waitForTimeout(1200)
         await shot('11-menu')
       }
+
+      // An address that does not exist, after the opening has played out.
+      await page.goto(`/no-such-page?lang=en&theme=${theme}`)
+      await page.getByRole('button', { name: 'Make it roar' }).waitFor({ timeout: 300_000 })
+      await page.waitForTimeout(SETTLE)
+      await shot('12-not-found')
       await context.close()
     })
   }

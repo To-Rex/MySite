@@ -93,9 +93,17 @@ describe('lazy 3D', () => {
     expect(leaks, 'three.js reached the entry bundle through a static import').toEqual([])
   })
 
+  it('keeps three.js out of the 404 page too, whose words must not wait for it', () => {
+    const { files, packages } = closure(join(SRC, 'not-found.tsx'))
+    const leaks = [...packages].filter(([name]) => isThree(name)).map(([name, importer]) => `${name}  ←  ${trail(files, importer)}`)
+    expect(leaks).toEqual([])
+    expect(files.has(join(THREE_DIR, 'NotFoundStage.tsx'))).toBe(true)
+    expect(files.has(join(THREE_DIR, 'NotFoundScene.tsx'))).toBe(false)
+  })
+
   it('reaches every scene only through a dynamic import', () => {
     const { files } = closure(join(SRC, 'main.tsx'))
-    for (const scene of ['HeroScene.tsx', 'UniverseScene.tsx', 'CompanionTurtle.tsx', 'ValleyScene.tsx', 'Spectacle.tsx', 'Cameo.tsx']) {
+    for (const scene of ['HeroScene.tsx', 'UniverseScene.tsx', 'CompanionTurtle.tsx', 'ValleyScene.tsx', 'Spectacle.tsx', 'Cameo.tsx', 'NotFoundScene.tsx']) {
       expect(files.has(join(THREE_DIR, scene)), `${scene} is statically imported: ${trail(files, join(THREE_DIR, scene))}`).toBe(false)
     }
     // …while the gates that decide whether they load are in the entry, as intended.
@@ -147,13 +155,14 @@ describe('3D scenes', () => {
       }
       visit(source)
     }
-    expect([...canvases.keys()].sort()).toEqual(['CompanionTurtle.tsx', 'HeroScene.tsx', 'UniverseScene.tsx', 'ValleyScene.tsx'])
+    expect([...canvases.keys()].sort()).toEqual(['CompanionTurtle.tsx', 'HeroScene.tsx', 'NotFoundScene.tsx', 'UniverseScene.tsx', 'ValleyScene.tsx'])
     const passesClicksThrough = (name: string) => /pointerEvents:\s*'none'/.test(canvases.get(name) ?? '')
     // Full-bleed and fixed: R3F sets pointer-events:auto on its own wrapper, so
     // a `pointer-events-none` on the layer around it is not enough, and the
     // canvas eats every click on the page beneath it.
     expect(passesClicksThrough('CompanionTurtle.tsx')).toBe(true)
     expect(passesClicksThrough('ValleyScene.tsx')).toBe(true)
+    expect(passesClicksThrough('NotFoundScene.tsx')).toBe(true)
     // The one canvas whose meshes are meant to be clicked.
     expect(passesClicksThrough('UniverseScene.tsx')).toBe(false)
   })
