@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="uz" data-theme="dark">
+<html lang="uz-Latn-UZ-x-yangi" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -9,9 +9,9 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <title>Dilshodjon Haydarov — Dasturchi · Ijodkor · Bunyodkor</title>
-    <meta name="description" content="Dilshodjon Haydarov (To-Rex) — mobil dasturchi, ijodkor va bunyodkor. Men g‘oyalarni haqiqiy raqamli mahsulotlarga aylantiraman. Flutter, Python, React va boshqalar." />
-    <meta name="keywords" content="Dilshodjon Haydarov, To-Rex, dasturchi, Flutter dasturchi, mobil dasturchi, O‘zbekiston" />
+    <title>Dilşodjon Haydarov — Dasturçi · Ijodkor · Bunyodkor</title>
+    <meta name="description" content="Dilşodjon Haydarov (To-Rex) — mobil dasturçi, ijodkor va bunyodkor. Men ğoyalarni haqiqiy raqamli mahsulotlarga aylantiraman. Flutter, Python, React va boşqalar." />
+    <meta name="keywords" content="Dilşodjon Haydarov, To-Rex, dasturçi, Flutter dasturçi, mobil dasturçi, Özbekiston" />
     <meta name="author" content="Dilshodjon Haydarov" />
     <meta name="robots" content="index,follow" />
 
@@ -23,7 +23,7 @@
       tests/unit/seo.test.tsx fails if this block and <Seo> ever disagree.
     -->
     <link rel="canonical" href="%VITE_SITE_URL%/" />
-    <link rel="alternate" hreflang="uz-Latn" href="%VITE_SITE_URL%/?lang=uz" />
+    <link rel="alternate" hreflang="uz-Latn" href="%VITE_SITE_URL%/?lang=oz" />
     <link rel="alternate" hreflang="en" href="%VITE_SITE_URL%/?lang=en" />
     <link rel="alternate" hreflang="de" href="%VITE_SITE_URL%/?lang=de" />
     <link rel="alternate" hreflang="ru" href="%VITE_SITE_URL%/?lang=ru" />
@@ -31,24 +31,24 @@
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Dilshodjon Haydarov" />
-    <meta property="og:title" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
-    <meta property="og:description" content="Men g‘oyalarni haqiqiy mahsulotlarga aylantiraman. Dasturchi · Ijodkor · Bunyodkor." />
+    <meta property="og:title" content="Dilşodjon Haydarov — şaxsiy raqamli olam" />
+    <meta property="og:description" content="Men ğoyalarni haqiqiy mahsulotlarga aylantiraman. Dasturçi · Ijodkor · Bunyodkor." />
     <meta property="og:url" content="%VITE_SITE_URL%/" />
     <meta property="og:image" content="%VITE_SITE_URL%/og.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
+    <meta property="og:image:alt" content="Dilşodjon Haydarov — şaxsiy raqamli olam" />
     <meta property="og:locale" content="uz_UZ" />
     <meta property="og:locale:alternate" content="en_US" />
     <meta property="og:locale:alternate" content="de_DE" />
     <meta property="og:locale:alternate" content="ru_RU" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
-    <meta name="twitter:description" content="Men g‘oyalarni haqiqiy mahsulotlarga aylantiraman. Dasturchi · Ijodkor · Bunyodkor." />
+    <meta name="twitter:title" content="Dilşodjon Haydarov — şaxsiy raqamli olam" />
+    <meta name="twitter:description" content="Men ğoyalarni haqiqiy mahsulotlarga aylantiraman. Dasturçi · Ijodkor · Bunyodkor." />
     <meta name="twitter:image" content="%VITE_SITE_URL%/og.png" />
-    <meta name="twitter:image:alt" content="Dilshodjon Haydarov — shaxsiy raqamli olam" />
+    <meta name="twitter:image:alt" content="Dilşodjon Haydarov — şaxsiy raqamli olam" />
 
     <script type="application/ld+json" id="ld-person">
       {
@@ -58,8 +58,8 @@
         "givenName": "Dilshodjon",
         "familyName": "Haydarov",
         "alternateName": "To-Rex",
-        "jobTitle": "Mobil dasturchi",
-        "description": "Men g‘oyalarni haqiqiy mahsulotlarga aylantiraman. Dasturchi · Ijodkor · Bunyodkor.",
+        "jobTitle": "Mobil dasturçi",
+        "description": "Men ğoyalarni haqiqiy mahsulotlarga aylantiraman. Dasturçi · Ijodkor · Bunyodkor.",
         "url": "%VITE_SITE_URL%/",
         "image": "%VITE_SITE_URL%/og.png",
         "email": "mailto:torex.amaki@gmail.com",
@@ -91,8 +91,10 @@
           if (qt === 'light' || qt === 'dark') theme = qt;
           document.documentElement.setAttribute('data-theme', theme);
           var q = sp.get('lang');
-          var l = q || localStorage.getItem('dh.lang');
-          if (l === 'uz' || l === 'en' || l === 'de' || l === 'ru') document.documentElement.lang = l;
+          var l = q || localStorage.getItem('dh.lang.choice');
+          // The same tags as LOCALE_TAGS in src/i18n/context.ts; tests/unit/seo.test.tsx keeps them equal.
+          var tags = { oz: 'uz-Latn-UZ-x-yangi', uz: 'uz-Latn-UZ', en: 'en', de: 'de', ru: 'ru' };
+          if (Object.prototype.hasOwnProperty.call(tags, l)) document.documentElement.lang = tags[l];
         } catch (e) {}
       })();
     </script>

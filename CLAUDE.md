@@ -57,7 +57,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 src/app          shell, provider order, section order
 src/config       site identity (site.ts), section ids / nav
 src/content      language-neutral data: projects, technologies, socials
-src/i18n         Dictionary type + uz (default) / en / de / ru; oz derived from uz (newLatin.ts)
+src/i18n         Dictionary type; oz (default, derived from uz by newLatin.ts) / uz / en / de / ru
 src/sections     one file per page section
 src/components   ui, layout, cursor, loader, seo, three (all 3D)
 src/lib          module stores (pointer, spectacle, valley), helpers

@@ -63,16 +63,16 @@ src/
   hooks/, lib/    shared utilities (media queries, device tier, pointer store…)
 ```
 
-### Languages (uz default · oz · en · de · ru)
+### Languages (oz default · uz · en · de · ru)
 
-Every UI string lives in `src/i18n/locales/*.ts` and must satisfy the `Dictionary` type — adding a key without translating it in the four written files (`uz`, `en`, `de`, `ru`) is a **compile error**. The choice persists in `localStorage` (`dh.lang`) and can be forced with `?lang=uz|oz|en|de|ru`.
+Every UI string lives in `src/i18n/locales/*.ts` and must satisfy the `Dictionary` type — adding a key without translating it in the four written files (`uz`, `en`, `de`, `ru`) is a **compile error**. A choice made on the switcher persists in `localStorage` (`dh.lang.choice`); a language the page merely resolved — from `?lang=`, the browser or the default — is not stored, so a changed default reaches everyone who never chose. Any language can be forced with `?lang=oz|uz|en|de|ru`.
 
-`oz` is Uzbek in the new 28-letter Latin alphabet (A B D E F G Ğ H I J K L M N O Ö P Q R S Ş Ç T U V X Y Z), shown as **ÖZ** in the switcher. It is not written by hand: `src/i18n/newLatin.ts` respells `uz` letter for letter — Oʻ→Ö, Gʻ→Ğ, Sh→Ş, Ch→Ç, and nothing else changes — so editing `uz.ts` updates both. Two things to know when writing Uzbek copy:
+`oz`, the default, is Uzbek in the new 28-letter Latin alphabet (A B D E F G Ğ H I J K L M N O Ö P Q R S Ş Ç T U V X Y Z), shown as **ÖZ** in the switcher; `uz` is the 1995 alphabet, kept for readers who prefer it, and a browser that asks for Uzbek in any script gets `oz`. It is not written by hand: `src/i18n/newLatin.ts` respells `uz` letter for letter — Oʻ→Ö, Gʻ→Ğ, Sh→Ş, Ch→Ç, and nothing else changes — so editing `uz.ts` updates both. Two things to know when writing Uzbek copy:
 
 - A foreign word that must keep its own spelling (a product name, an English term used as-is) goes in `LOANWORDS` in `newLatin.ts`; language names are already exempt. `tests/unit/new-latin.test.ts` fails on any `sh`, `ch`, `oʻ` or `gʻ` left in `oz`, which is how an unlisted loanword shows up.
 - Intl has no data for the new alphabet. `oz` uses the tag `uz-Latn-UZ-x-yangi`, which Intl formats as `uz-Latn-UZ` ("kecha", "oʻtgan oy"), and `respell()` fixes that output wherever it is shown: `formatRelative`, `formatCompact`, the contribution graph. A new `Intl` call that shows text needs the same wrapper.
 
-Search engines know Uzbek Latin as one language, so `oz` has no `hreflang` or sitemap entry of its own, and its `og:locale` is `uz_UZ` like `uz`'s.
+Search engines know Uzbek Latin as one language, so there is one `uz-Latn` hreflang and sitemap entry, pointing at the default (`?lang=oz`); `uz` has none of its own, and both share the `og:locale` `uz_UZ`. The static head in `index.html` is written in `oz`.
 
 ### Themes
 

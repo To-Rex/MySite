@@ -81,6 +81,26 @@ test.describe('language', () => {
     expect(await page.locator('link[rel="alternate"][hreflang]').count()).toBe(5)
   })
 
+  test.describe('with a browser the site has no language for', () => {
+    test.use({ locale: 'fr-FR' })
+
+    test('a first visit lands on the default, the new alphabet, and stores nothing', async ({ page }) => {
+      await open(page, '/')
+      await expect(page.locator('html')).toHaveAttribute('lang', 'uz-Latn-UZ-x-yangi')
+      await expect(page).toHaveTitle(/Dasturçi/)
+      expect(await page.evaluate(() => localStorage.getItem('dh.lang.choice'))).toBeNull()
+    })
+  })
+
+  test.describe('with an Uzbek browser', () => {
+    test.use({ locale: 'uz-UZ' })
+
+    test('gets the new alphabet as well', async ({ page }) => {
+      await open(page, '/')
+      await expect(page.locator('html')).toHaveAttribute('lang', 'uz-Latn-UZ-x-yangi')
+    })
+  })
+
   test.describe('with a Russian browser', () => {
     test.use({ locale: 'ru-RU' })
 

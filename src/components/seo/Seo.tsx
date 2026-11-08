@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { HREFLANG, OG_LOCALE, useI18n } from '@/i18n/context'
-import { LANGUAGES } from '@/i18n/types'
+import { DEFAULT_LANGUAGE, LANGUAGES } from '@/i18n/types'
 import { site } from '@/config/site'
 import { technologies } from '@/content/technologies'
 
@@ -74,7 +74,7 @@ export function Seo() {
     upsertMeta('property', 'og:site_name', site.name)
     upsertMeta('property', 'og:title', t.meta.ogTitle)
     upsertMeta('property', 'og:description', t.meta.ogDescription)
-    upsertMeta('property', 'og:url', lang === 'uz' ? canonical : `${base}/?lang=${lang}`)
+    upsertMeta('property', 'og:url', lang === DEFAULT_LANGUAGE ? canonical : `${base}/?lang=${lang}`)
     upsertMeta('property', 'og:image', ogImage)
     upsertMeta('property', 'og:image:type', 'image/png')
     upsertMeta('property', 'og:image:width', '1200')

@@ -6,11 +6,11 @@ import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Seo } from '@/components/seo/Seo'
 import { site } from '@/config/site'
-import { I18nProvider } from '@/i18n/I18nProvider'
-import { HREFLANG, OG_LOCALE, dictionaries, useI18n, type I18nContextValue } from '@/i18n/context'
-import { LANGUAGES } from '@/i18n/types'
+import { I18nProvider, LANGUAGE_CHOICE_KEY } from '@/i18n/I18nProvider'
+import { HREFLANG, LOCALE_TAGS, OG_LOCALE, dictionaries, useI18n, type I18nContextValue } from '@/i18n/context'
+import { DEFAULT_LANGUAGE, LANGUAGES } from '@/i18n/types'
 
-// `oz` shares uz-Latn and uz_UZ with `uz`, so it adds no alternate of either kind.
+// The two Uzbek alphabets share one hreflang and one og:locale, so five languages make four alternates of each kind.
 const ALTERNATES = Object.keys(HREFLANG).length
 const OG_ALTERNATES = new Set(Object.values(OG_LOCALE)).size - 1
 
@@ -79,7 +79,7 @@ describe('static head', () => {
 
   it('is exactly what <Seo> writes for the default language', () => {
     const shipped = describeHead()
-    mount('/?lang=uz')
+    mount(`/?lang=${DEFAULT_LANGUAGE}`)
     // Not "contains": equal. A tag added to one side and not the other fails here.
     expect(describeHead()).toEqual(shipped)
   })
@@ -95,7 +95,7 @@ describe('static head', () => {
   })
 
   it('carries the default-language copy from the dictionary', () => {
-    const { meta } = dictionaries.uz
+    const { meta } = dictionaries[DEFAULT_LANGUAGE]
     expect(document.head.querySelector('title')?.textContent).toBe(meta.title)
     expect(content('meta[name="description"]')).toBe(meta.description)
     expect(content('meta[property="og:title"]')).toBe(meta.ogTitle)
@@ -110,7 +110,7 @@ describe('static head', () => {
 
 describe('<Seo>', () => {
   it('adopts the static tags instead of adding a second set', () => {
-    mount('/?lang=uz')
+    mount(`/?lang=${DEFAULT_LANGUAGE}`)
     for (const selector of [
       'title',
       'meta[name="description"]',
@@ -128,14 +128,14 @@ describe('<Seo>', () => {
   })
 
   it.each(LANGUAGES)('rewrites the head in place when the language becomes %s', (lang) => {
-    mount('/?lang=uz')
+    mount(`/?lang=${DEFAULT_LANGUAGE}`)
     act(() => i18n().setLang(lang))
     const { meta } = dictionaries[lang]
     expect(document.title).toBe(meta.title)
     expect(content('meta[name="description"]')).toBe(meta.description)
     expect(content('meta[property="og:title"]')).toBe(meta.ogTitle)
     expect(content('meta[name="twitter:description"]')).toBe(meta.ogDescription)
-    expect(content('meta[property="og:url"]')).toBe(lang === 'uz' ? `${site.url}/` : `${site.url}/?lang=${lang}`)
+    expect(content('meta[property="og:url"]')).toBe(lang === DEFAULT_LANGUAGE ? `${site.url}/` : `${site.url}/?lang=${lang}`)
     expect((JSON.parse(document.getElementById('ld-person')!.textContent!) as { jobTitle: string }).jobTitle).toBe(meta.jobTitle)
     // Still one of each, however many times the language has changed.
     expect(count('meta[property="og:title"]')).toBe(1)
@@ -151,5 +151,15 @@ describe('<Seo>', () => {
     expect(content('meta[property="og:image"]')).toBe(`${site.url}/og.png`)
     expect(count('link[rel="alternate"]')).toBe(ALTERNATES + 1)
     expect(count('script[type="application/ld+json"]')).toBe(2)
+  })
+})
+
+describe('the pre-paint script', () => {
+  // Runs before React to set html[lang] without a flash; it has to agree with the provider.
+  const script = builtHead.match(/<script>([\s\S]*?)<\/script>/)![1]!
+
+  it('knows every language tag and the key a choice is stored under', () => {
+    for (const lang of LANGUAGES) expect(script).toContain(`${lang}: '${LOCALE_TAGS[lang]}'`)
+    expect(script).toContain(`'${LANGUAGE_CHOICE_KEY}'`)
   })
 })

@@ -116,9 +116,9 @@ describe('the oz locale', () => {
     expect(respell(LOCALE_TAGS.en, 'kecha')).toBe('kecha')
   })
 
-  it('shares the search-engine tags with uz instead of inventing new ones', () => {
-    expect(HREFLANG.oz).toBeUndefined()
-    expect(HREFLANG.uz).toBe('uz-Latn')
+  it('holds the one Uzbek hreflang, as the default, and shares og:locale with uz', () => {
+    expect(HREFLANG.oz).toBe('uz-Latn')
+    expect(HREFLANG.uz).toBeUndefined()
     expect(OG_LOCALE.oz).toBe(OG_LOCALE.uz)
   })
 })

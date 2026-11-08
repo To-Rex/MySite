@@ -23,10 +23,11 @@ export const OG_LOCALE: Record<Language, string> = { uz: 'uz_UZ', oz: 'uz_UZ', e
 
 /**
  * hreflang per language, for the languages search engines can tell apart.
- * Uzbek Latin is one language to them whatever its orthography, so `oz` has
- * no alternate of its own — a visitor still reaches it with `?lang=oz`.
+ * Uzbek Latin is one language to them whatever its orthography, so the one
+ * `uz-Latn` alternate goes to the default alphabet and `uz` has none of its
+ * own — a visitor still reaches it with `?lang=uz`.
  */
-export const HREFLANG: Partial<Record<Language, string>> = { uz: 'uz-Latn', en: 'en', de: 'de', ru: 'ru' }
+export const HREFLANG: Partial<Record<Language, string>> = { oz: 'uz-Latn', en: 'en', de: 'de', ru: 'ru' }
 
 export function isLanguage(value: unknown): value is Language {
   return typeof value === 'string' && (LANGUAGES as readonly string[]).includes(value)

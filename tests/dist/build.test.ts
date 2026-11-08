@@ -172,7 +172,7 @@ describe('robots.txt and sitemap.xml', () => {
     expect(read('robots.txt')).toContain(`Sitemap: ${site}/sitemap.xml`)
     const sitemap = read('sitemap.xml')
     expect(sitemap).toContain(`<loc>${site}/</loc>`)
-    for (const lang of ['uz', 'en', 'de', 'ru']) expect(sitemap).toContain(`href="${site}/?lang=${lang}"`)
+    for (const lang of ['oz', 'en', 'de', 'ru']) expect(sitemap).toContain(`href="${site}/?lang=${lang}"`)
   })
 })
 

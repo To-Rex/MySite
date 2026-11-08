@@ -1,11 +1,11 @@
 /**
- * In switcher order. `uz` is the 1995 Latin alphabet and the default; `oz` is
- * the same Uzbek in the new 28-letter alphabet, derived from `uz` by
- * `newLatin.ts` rather than translated.
+ * In switcher order. `oz` — Uzbek in the new 28-letter Latin alphabet, derived
+ * from `uz` by `newLatin.ts` rather than translated — is the default and comes
+ * first; `uz` is the same Uzbek in the 1995 alphabet.
  */
-export const LANGUAGES = ['uz', 'oz', 'en', 'de', 'ru'] as const
+export const LANGUAGES = ['oz', 'uz', 'en', 'de', 'ru'] as const
 export type Language = (typeof LANGUAGES)[number]
-export const DEFAULT_LANGUAGE: Language = 'uz'
+export const DEFAULT_LANGUAGE: Language = 'oz'
 
 /** What the compact switcher shows; `oz` is spelled in its own alphabet. */
 export const LANGUAGE_LABELS: Record<Language, string> = { uz: 'UZ', oz: 'ÖZ', en: 'EN', de: 'DE', ru: 'RU' }
