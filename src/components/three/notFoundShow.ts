@@ -99,7 +99,7 @@ export const show = {
   /** The current roar's start. May be in the future. */
   roarAt: -100,
   /** Something asked of the animal, and from when. */
-  rexRequest: null as { name: RexActName; at: number } | null,
+  rexRequest: null as { name: RexActName; at: number; urgent: boolean } | null,
   /** Whether it is in the middle of something and should be left alone. */
   rexBusy: false,
   /** It has been clicked on. */
@@ -242,9 +242,14 @@ export function landMeteor(strike: Strike): void {
   }
 }
 
-/** Asks the animal to do something: taken up as soon as it is free, or dropped if it never is. */
-export function requestAct(name: RexActName, delay = 0): void {
-  show.rexRequest = { name, at: show.t + delay }
+/**
+ * Asks the animal to do something: taken up as soon as it is free, or dropped if
+ * it never is. `urgent` is for what a visitor asked for, which cuts in instead,
+ * and which nothing the animal thinks of for itself may take the place of.
+ */
+export function requestAct(name: RexActName, delay = 0, urgent = false): void {
+  if (show.rexRequest?.urgent && !urgent) return
+  show.rexRequest = { name, at: show.t + delay, urgent }
 }
 
 /**

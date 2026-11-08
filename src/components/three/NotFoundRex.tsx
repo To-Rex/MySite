@@ -11,7 +11,7 @@ import { animateDinoRun, poseLeg, useBind, useCreature, type Rig } from './creat
 import { Eyes, Teeth } from './creatureFittings'
 import { GLOW_LAYER } from './notFoundBloom'
 import { FIELD, EMBERS } from './notFoundMaterials'
-import { ACTS, IDLE_ORDER, POKE_ORDER, newPose, turnFacingCamera, walkHeading, type RexAct, type RexActName, type RexBeat, type RexPose } from './notFoundRexActs'
+import { ACTS, IDLE_ORDER, POKE_ORDER, newPose, takesRequest, turnFacingCamera, walkHeading, type RexAct, type RexActName, type RexBeat, type RexPose } from './notFoundRexActs'
 import { biteNumber, biteSpot, finite, healBite, panOf, pushWave, requestAct, seeded, show, smooth, spawnDust, spawnRing, spawnSparks } from './notFoundShow'
 import { SkinMaterial } from './skinMaterial'
 
@@ -175,6 +175,13 @@ const newRexState = (): RexState => ({
 })
 
 function startAct(s: RexState, name: RexActName): void {
+  // Whatever it was on its way to do is off, if it was on its way to anything.
+  if (s.act?.approaching) {
+    s.goalX = s.x
+    s.goalZ = s.z
+  }
+  s.aiming = false
+  s.restYaw = HEADING_REST
   const def = ACTS[name]
   const L = show.layout
   s.act = { def, start: show.t, approaching: false, nextBeat: 0 }
@@ -402,15 +409,16 @@ function driveRex(b: Group, s: RexState, bones: RexBones, feet: number, camera: 
   // ---- What to do next ------------------------------------------------------
   if (show.rexPoked) {
     show.rexPoked = false
-    requestAct(POKE_ORDER[s.pokeIndex++ % POKE_ORDER.length]!)
+    requestAct(POKE_ORDER[s.pokeIndex++ % POKE_ORDER.length]!, 0, true)
     s.nextSnap = t + 1.2
   }
   const request = show.rexRequest
   if (request && t >= request.at && show.arrived) {
-    if (!s.act || s.act.def.interruptible) {
+    const current = s.act && { name: s.act.def.name, interruptible: s.act.def.interruptible, approaching: s.act.approaching, left: s.act.def.seconds - (t - s.act.start) }
+    if (takesRequest(current, request.urgent)) {
       show.rexRequest = null
       startAct(s, request.name)
-    } else if (t > request.at + 2.5) {
+    } else if (!request.urgent && t > request.at + 2.5) {
       show.rexRequest = null
     }
   }
@@ -428,9 +436,9 @@ function driveRex(b: Group, s: RexState, bones: RexBones, feet: number, camera: 
     const along = (show.mouth.z - camera.position.z) / scratch2.z
     scratch2.multiplyScalar(along).add(camera.position)
     if (scratch2.distanceTo(show.mouth) < L.rexScale * 0.17) {
+      startAct(s, 'snap')
       s.aim.copy(scratch2)
       s.aiming = true
-      startAct(s, 'snap')
       s.nextSnap = t + 1.5
     }
   }

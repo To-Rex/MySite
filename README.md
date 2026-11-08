@@ -682,6 +682,10 @@ The idle list is a fixed order and not dice: chance left the bite for the third
 minute, by which time a visitor has gone. Each act is non-interruptible unless
 being cut short would look fine, and every act has to end at rest, so the next
 one starts without a jolt; `tests/unit/not-found-rex.test.ts` holds them to that.
+What a visitor asks for is the exception: a bite and the walk to it take seven
+seconds, and someone who has just pressed a button should not have to sit through
+that to find out whether it works, so a press or a click cuts in unless what is
+going on is nearly over or is already a roar.
 
 **It never turns its back.** The first version walked straight at wherever it was
 going, and when that was further into the scene the visitor got a long look at its

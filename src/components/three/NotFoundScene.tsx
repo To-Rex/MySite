@@ -194,7 +194,7 @@ function Director({ theme, reducedMotion }: { theme: Theme; reducedMotion: boole
     for (const command of drainCommands()) {
       if (command.kind === 'roar') {
         // Not mid-stride: it stops to do this.
-        if (show.arrived) requestAct('roar')
+        if (show.arrived) requestAct('roar', 0, true)
       } else if (show.arrived && hitsTheAnimal(command.nx, command.ny, camera)) {
         show.rexPoked = true
       } else if (show.strikes.some((strike) => !strike.live)) {

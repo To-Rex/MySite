@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ACTS, ACT_NAMES, IDLE_ORDER, POKE_ORDER, ROAR_RISE, ROAR_WIND, newPose, turnFacingCamera, walkHeading, type RexPose } from '@/components/three/notFoundRexActs'
+import { ACTS, ACT_NAMES, IDLE_ORDER, POKE_ORDER, ROAR_RISE, ROAR_WIND, newPose, takesRequest, turnFacingCamera, walkHeading, type ActInProgress, type RexPose } from '@/components/three/notFoundRexActs'
 
 /**
  * What the tyrannosaur does, as numbers. Whether it looks right is a job for
@@ -207,5 +207,32 @@ describe('being left alone', () => {
     expect(at('snarl', 0.3).jaw).toBeGreaterThan(0.4)
     expect(at('snarl', 0.3).jaw).toBeLessThan(0.7)
     expect(ACTS.snarl.interruptible).toBe(true)
+  })
+})
+
+describe('doing as it is asked', () => {
+  const busy = (over: Partial<ActInProgress>): ActInProgress => ({ name: 'bite', interruptible: false, approaching: false, left: 4, ...over })
+
+  it('takes anything when it is free, or doing something it can be talked out of', () => {
+    expect(takesRequest(null, false)).toBe(true)
+    expect(takesRequest(busy({ name: 'yawn', interruptible: true }), false)).toBe(true)
+  })
+
+  it('makes its own ideas wait for whatever it is in the middle of', () => {
+    expect(takesRequest(busy({}), false)).toBe(false)
+    expect(takesRequest(busy({ approaching: true }), false)).toBe(false)
+  })
+
+  it('does not keep a visitor waiting through a long act', () => {
+    expect(takesRequest(busy({ left: 4 }), true)).toBe(true)
+    expect(takesRequest(busy({ approaching: true, left: 5.1 }), true)).toBe(true)
+  })
+
+  it('lets something nearly over finish first', () => {
+    expect(takesRequest(busy({ name: 'tailSlam', left: 0.4 }), true)).toBe(false)
+  })
+
+  it('never cuts one roar off with another', () => {
+    expect(takesRequest(busy({ name: 'roar', left: 2.5 }), true)).toBe(false)
   })
 })

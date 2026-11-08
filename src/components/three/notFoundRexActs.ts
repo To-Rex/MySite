@@ -338,3 +338,28 @@ export function walkHeading(dx: number, dz: number, facingLeft: boolean): number
   if (Math.abs(offset) > Math.PI / 2) return side
   return side + Math.min(MOST_OBLIQUE, Math.max(-MOST_OBLIQUE, offset))
 }
+
+/** The longest a visitor is kept waiting for something that is about to finish anyway. */
+const VISITOR_PATIENCE = 1.2
+
+export interface ActInProgress {
+  name: RexActName
+  interruptible: boolean
+  /** Still walking to where it has to be. */
+  approaching: boolean
+  /** Seconds it still has to go. */
+  left: number
+}
+
+/**
+ * Whether it takes up a new request now. What it decides for itself can wait its
+ * turn, but a bite with the walk to it is seven seconds long, and someone who
+ * has just pressed a button should not have to sit through that to find out
+ * whether the button works. So what a visitor asks for cuts in, unless what is
+ * going on is nearly over anyway, or is already a roar.
+ */
+export function takesRequest(running: ActInProgress | null, urgent: boolean): boolean {
+  if (!running || running.interruptible) return true
+  if (!urgent || running.name === 'roar') return false
+  return running.approaching || running.left > VISITOR_PATIENCE
+}
