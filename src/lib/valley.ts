@@ -76,3 +76,19 @@ export function setValleyAct(act: ValleyAct): void {
   state = { ...state, act }
   emit()
 }
+
+/**
+ * How much the cinematic does, from the device tier and the graphics card.
+ * `ultra` is for a desktop with a card that can take it: twice the resolution,
+ * soft shadows at 4096, glow, and two or three times the fire, smoke and sparks.
+ * The scene still measures itself during the opening and steps down if it has
+ * guessed wrong, so a generous guess costs a second of mist, not the show.
+ */
+export type ValleyQuality = 'low' | 'medium' | 'high' | 'ultra'
+
+export function valleyQuality(tier: 'high' | 'medium' | 'low', gpu: 'strong' | 'modest' | 'unknown', touch: boolean): ValleyQuality {
+  if (tier === 'low') return 'low'
+  if (gpu === 'strong' && !touch) return tier === 'high' ? 'ultra' : 'high'
+  return tier
+}
+

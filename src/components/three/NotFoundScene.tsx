@@ -27,7 +27,7 @@ import type { Theme } from '@/theme/context'
 import type { CreatureDetail } from './creatures'
 import { DETAIL_BY_TIER, MASCOT_SKIN, animateFlap, animateTurtleSwim, useBind, useCreature, type Rig } from './creatureRig'
 import { Eyes } from './creatureFittings'
-import { GLOW_LAYER, createBloom } from './notFoundBloom'
+import { GLOW_LAYER, createBloom } from './glowPass'
 import { DIGIT_HEIGHT, NUMBER_WIDTH, buildColumns } from './notFoundGlyphs'
 import {
   EMBERS,
@@ -862,7 +862,20 @@ function BloomPass({ strength }: { strength: number }) {
   const bloom = useRef<ReturnType<typeof createBloom> | null>(null)
 
   useEffect(() => {
-    const created = createBloom()
+    const pointScale = { value: 1 }
+    const created = createBloom({
+      // The ground is drawn into the glow with only its cracks, and point sprites
+      // shrink with the glow's target.
+      beforeGlow: (scale) => {
+        GROUND.uGlowPass.value = 1
+        pointScale.value = FIELD.uPointScale.value
+        FIELD.uPointScale.value *= scale
+      },
+      afterGlow: () => {
+        GROUND.uGlowPass.value = 0
+        FIELD.uPointScale.value = pointScale.value
+      },
+    })
     bloom.current = created
     return () => {
       bloom.current = null

@@ -1,6 +1,6 @@
 import { RATE } from './dsp'
-import type { VoiceName } from './voices'
-import type { VoiceMessage } from './voices.worker'
+import { ENTRY_SECONDS, type BankName, type LoopName, type VoiceName } from './voices'
+import type { VoiceMessage, VoiceRequest } from './voices.worker'
 
 /**
  * Plays what `voices.ts` renders: a small mixing desk in Web Audio.
@@ -11,6 +11,10 @@ import type { VoiceMessage } from './voices.worker'
  * Everything is panned to where it is on screen, and whatever is loud pushes the
  * ambience down out of its way. Separate from the store so that none of it is
  * in the page's first download.
+ *
+ * Each page has a bank of its own (see `BANKS`), and two kinds of sound: cues,
+ * which are one-shots fired at a moment, and loops, which run all the time and
+ * are only ever turned up and down by the scene.
  */
 
 export type Cue =
@@ -35,13 +39,25 @@ export type Cue =
   | { kind: 'bubbles'; pan: number }
   | { kind: 'portal'; pan: number }
   | { kind: 'farStreak'; pan: number }
+  // The valley.
+  | { kind: 'call'; species: 'sauropod' | 'stegosaur' | 'pterosaur' | 'rex'; pan: number; distance: number; alarm?: boolean }
+  | { kind: 'dying'; pan: number; distance: number }
+  | { kind: 'entry'; seconds: number }
+  | { kind: 'sonicBoom' }
+  | { kind: 'flash' }
+  | { kind: 'blast' }
+  | { kind: 'airBlast' }
+  | { kind: 'debris'; pan: number }
+  | { kind: 'fall'; pan: number; size: number }
+  | { kind: 'thunder'; pan: number; near: boolean }
+  | { kind: 'dawn' }
 
 export interface SoundEngine {
-  /** Hands over the context, once a gesture has made one possible, and starts the bed. */
+  /** Hands over the context, once a gesture has made one possible, and starts the loops. */
   attach(context: AudioContext): void
   cue(cue: Cue): void
-  /** Stone dragging under the cursor: 0..1, and where. */
-  grind(level: number, pan: number): void
+  /** How loud a loop is, 0..1, and where it sits. */
+  level(name: LoopName, value: number, pan?: number): void
   muted(muted: boolean): void
 }
 
@@ -55,6 +71,21 @@ const MASTER = 0.62
 
 /** Beyond this many sounding at once the oldest are let go. */
 const MOST_VOICES = 30
+
+/** Which group each loop belongs to, and how loud it is at full. */
+const LOOP: Record<LoopName, { bus: Bus; gain: number }> = {
+  bed: { bus: 'bed', gain: 1 },
+  grind: { bus: 'stone', gain: 0.5 },
+  valleyAir: { bus: 'bed', gain: 1 },
+  fire: { bus: 'bed', gain: 0.8 },
+  ashWind: { bus: 'bed', gain: 1 },
+}
+
+/** What each page starts with, before its scene has said anything. */
+const BANK_SETUP: Record<BankName, { levels: Partial<Record<LoopName, number>>; tick: boolean }> = {
+  notFound: { levels: { bed: 1 }, tick: true },
+  valley: { levels: {}, tick: false },
+}
 
 interface PlayOptions {
   bus: Bus
@@ -90,17 +121,25 @@ interface Graph {
   master: GainNode
   reverb: ConvolverNode
   buses: Record<Bus, GainNode>
-  grindGain: GainNode | null
-  grindPan: StereoPannerNode | null
 }
 
-export function createEngine(): SoundEngine {
+interface Loop {
+  gain: GainNode
+  pan: StereoPannerNode | null
+}
+
+export function createEngine(bank: BankName): SoundEngine {
+  const setup = BANK_SETUP[bank]
   const rendered = new Map<VoiceName, Float32Array[]>()
   const ready = new Map<VoiceName, AudioBuffer>()
   const sounding: { source: AudioBufferSourceNode; bus: Bus }[] = []
+  const loops = new Map<LoopName, Loop>()
+  /** What the scene last asked of each loop, kept for a loop that has not started yet. */
+  const levels = new Map<LoopName, { value: number; pan: number }>(
+    Object.entries(setup.levels).map(([name, value]) => [name as LoopName, { value, pan: 0 }]),
+  )
   let graph: Graph | null = null
   let isMuted = false
-  let bedStarted = false
   let ticking = false
 
   const asBuffer = (name: VoiceName, context: AudioContext): AudioBuffer | null => {
@@ -128,35 +167,33 @@ export function createEngine(): SoundEngine {
       reverb.buffer = buffer
       rendered.delete('reverb')
     }
-    if (!bedStarted) {
-      const bed = asBuffer('bed', context)
-      if (bed) {
-        bedStarted = true
-        const source = context.createBufferSource()
-        source.buffer = bed
-        source.loop = true
-        const fadeIn = context.createGain()
-        fadeIn.gain.setValueAtTime(0, context.currentTime)
-        fadeIn.gain.linearRampToValueAtTime(1, context.currentTime + 2.2)
-        source.connect(fadeIn).connect(buses.bed)
-        source.start()
-      }
+    for (const name of Object.keys(LOOP) as LoopName[]) {
+      if (loops.has(name)) continue
+      const buffer = asBuffer(name, context)
+      if (!buffer) continue
+      // Running from the start, at whatever level has been asked for: a loop
+      // that is turned up later comes in mid-phrase, the way ambience does.
+      const source = context.createBufferSource()
+      source.buffer = buffer
+      source.loop = true
+      const gain = context.createGain()
+      gain.gain.value = 0
+      const pan = 'createStereoPanner' in context ? context.createStereoPanner() : null
+      ;(pan ? source.connect(pan) : source).connect(gain).connect(buses[LOOP[name].bus])
+      source.start()
+      loops.set(name, { gain, pan })
+      applyLevel(name, 0.7)
     }
-    if (!graph.grindGain && 'createStereoPanner' in context) {
-      const grinding = asBuffer('grind', context)
-      if (grinding) {
-        const source = context.createBufferSource()
-        source.buffer = grinding
-        source.loop = true
-        const gain = context.createGain()
-        gain.gain.value = 0
-        const pan = context.createStereoPanner()
-        source.connect(pan).connect(gain).connect(buses.stone)
-        source.start()
-        graph.grindGain = gain
-        graph.grindPan = pan
-      }
-    }
+  }
+
+  /** Moves a loop towards what was last asked of it, over roughly `over` seconds. */
+  const applyLevel = (name: LoopName, over = 0.25) => {
+    const loop = loops.get(name)
+    const wanted = levels.get(name)
+    if (!graph || !loop) return
+    const now = graph.context.currentTime
+    loop.gain.gain.setTargetAtTime((wanted?.value ?? 0) * LOOP[name].gain, now, over / 3)
+    loop.pan?.pan.setTargetAtTime(wanted?.pan ?? 0, now, 0.05)
   }
 
   const receive = (name: VoiceName, channels: Float32Array[]) => {
@@ -166,8 +203,8 @@ export function createEngine(): SoundEngine {
 
   // ---- Voices arrive from the worker; if there can be no worker, from here -----
   const renderHere = async () => {
-    const { VOICES, VOICE_NAMES } = await import('./voices')
-    for (const name of VOICE_NAMES) {
+    const { VOICES, BANKS } = await import('./voices')
+    for (const name of BANKS[bank]) {
       if (rendered.has(name)) continue
       await new Promise((done) => setTimeout(done, 30))
       receive(name, VOICES[name]())
@@ -177,6 +214,8 @@ export function createEngine(): SoundEngine {
     const worker = new Worker(new URL('./voices.worker.ts', import.meta.url), { type: 'module' })
     worker.onmessage = (event: MessageEvent<VoiceMessage>) => receive(event.data.name, event.data.channels)
     worker.onerror = () => void renderHere()
+    const request: VoiceRequest = { bank }
+    worker.postMessage(request)
   } catch {
     void renderHere()
   }
@@ -235,6 +274,26 @@ export function createEngine(): SoundEngine {
     source.start()
   }
 
+  /**
+   * Everything but the sky gone for a moment, the way hearing goes when
+   * something lands close: only what is on the sky bus, the ring and the blast
+   * behind it, gets through, and the rest comes back slowly.
+   */
+  const deafen = (hold: number): void => {
+    if (!graph) return
+    const { context, buses } = graph
+    const now = context.currentTime
+    for (const name of ['rex', 'stone', 'life', 'bed'] as const) {
+      const level = buses[name].gain
+      level.cancelScheduledValues(now)
+      level.setTargetAtTime(BUS_LEVEL[name] * 0.04, now, 0.015)
+      level.setTargetAtTime(BUS_LEVEL[name], now + hold, 0.9)
+    }
+  }
+
+  /** Further off is quieter, duller, and more of it is the canyon. */
+  const far = (distance: number) => ({ gain: 1 - distance * 0.55, lowpass: 9000 - distance * 6500, send: 0.5 + distance * 0.35 })
+
   /** Pushes the ambience down for something loud, then lets it back. */
   const duck = (amount: number, hold: number): void => {
     if (!graph) return
@@ -264,6 +323,11 @@ export function createEngine(): SoundEngine {
     if (ticking) return
     ticking = true
     window.setTimeout(tick, 900)
+  }
+
+  /** Whatever the scene has asked of the loops, for a context that has just arrived. */
+  const applyAll = () => {
+    for (const name of loops.keys()) applyLevel(name)
   }
 
   return {
@@ -300,9 +364,10 @@ export function createEngine(): SoundEngine {
         }),
       ) as Record<Bus, GainNode>
 
-      graph = { context, master, reverb, buses, grindGain: null, grindPan: null }
+      graph = { context, master, reverb, buses }
       settle()
-      startTicking()
+      applyAll()
+      if (setup.tick) startTicking()
     },
 
     cue(cue) {
@@ -380,14 +445,68 @@ export function createEngine(): SoundEngine {
         case 'farStreak':
           play('farStreak', { bus: 'sky', gain: 0.1, rate: between(0.85, 1.2), pan: cue.pan, send: 0.55 })
           break
+
+        // ---- The valley ----------------------------------------------------
+        case 'call': {
+          const { gain, lowpass, send } = far(cue.distance)
+          const voice =
+            cue.species === 'sauropod'
+              ? cue.alarm
+                ? 'sauropodHonk'
+                : 'sauropodCall'
+              : cue.species === 'stegosaur'
+                ? 'stegoGrunt'
+                : cue.species === 'pterosaur'
+                  ? pick(['screechLong', 'screechDouble'] as const)
+                  : cue.alarm
+                    ? 'snarl'
+                    : 'roar'
+          const level = cue.species === 'rex' ? 0.75 : cue.species === 'pterosaur' ? 0.5 : 0.85
+          play(voice, { bus: 'life', gain: level * gain, rate: between(0.92, 1.08), pan: cue.pan, send, lowpass })
+          break
+        }
+        case 'dying': {
+          const { gain, lowpass, send } = far(cue.distance)
+          play('sauropodMoan', { bus: 'life', gain: 0.8 * gain, rate: between(0.9, 1.05), pan: cue.pan, send, lowpass })
+          break
+        }
+        case 'entry':
+          // Loud, but not as loud as what it does when it lands.
+          play('entry', { bus: 'sky', gain: 0.72, rate: ENTRY_SECONDS / cue.seconds, pan: -0.75, panTo: 0.15, panOver: cue.seconds, send: 0.35 })
+          duck(0.5, cue.seconds)
+          break
+        case 'sonicBoom':
+          play('sonicBoom', { bus: 'sky', gain: 0.8, pan: 0.1, send: 0.6 })
+          break
+        case 'flash':
+          deafen(1.1)
+          play('flashRing', { bus: 'sky', gain: 0.9, send: 0.1 })
+          break
+        case 'blast':
+          play('blastBoom', { bus: 'sky', gain: 1, pan: 0.1, send: 0.55 })
+          duck(0.9, 3)
+          break
+        case 'airBlast':
+          play('airBlast', { bus: 'sky', gain: 0.95, send: 0.25 })
+          break
+        case 'debris':
+          play('debrisFall', { bus: 'stone', gain: 0.9, pan: cue.pan, send: 0.4 })
+          break
+        case 'fall':
+          play(pick(['stompA', 'stompB'] as const), { bus: 'rex', gain: 0.35 + cue.size * 0.45, rate: between(0.55, 0.7), pan: cue.pan, send: 0.45, lowpass: 2500 })
+          break
+        case 'thunder':
+          play(cue.near ? 'thunderNear' : 'thunderFar', { bus: 'sky', gain: cue.near ? 0.9 : 0.6, pan: cue.pan, send: 0.5 })
+          break
+        case 'dawn':
+          play('dawn', { bus: 'life', gain: 0.55, send: 0.6 })
+          break
       }
     },
 
-    grind(level, pan) {
-      if (!graph?.grindGain || !graph.grindPan) return
-      const now = graph.context.currentTime
-      graph.grindGain.gain.setTargetAtTime(isMuted ? 0 : level * 0.5, now, 0.07)
-      graph.grindPan.pan.setTargetAtTime(pan, now, 0.05)
+    level(name, value, pan = 0) {
+      levels.set(name, { value, pan })
+      applyLevel(name)
     },
 
     muted(muted) {
@@ -396,7 +515,7 @@ export function createEngine(): SoundEngine {
       const now = graph.context.currentTime
       graph.master.gain.cancelScheduledValues(now)
       graph.master.gain.setTargetAtTime(muted ? 0 : MASTER, now, 0.08)
-      if (!muted) startTicking()
+      if (!muted && setup.tick) startTicking()
     },
   }
 }

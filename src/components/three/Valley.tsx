@@ -1,8 +1,11 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from '@/theme/context'
-import { useDeviceTier, supportsWebGL } from '@/hooks/useDeviceTier'
+import { gpuClass, useDeviceTier, supportsWebGL } from '@/hooks/useDeviceTier'
+import { useIsTouch } from '@/hooks/useMediaQuery'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
-import { useValley } from '@/lib/valley'
+import { soundLevel } from '@/features/sound/store'
+import { SoundToggle } from '@/features/sound/SoundToggle'
+import { useValley, valleyQuality } from '@/lib/valley'
 
 /**
  * Decides *whether* the extinction cinematic exists; the valley itself lives in
@@ -27,8 +30,20 @@ export function Valley() {
   const { act, run } = useValley()
   const { theme } = useTheme()
   const tier = useDeviceTier()
+  const touch = useIsTouch()
+  const quality = useMemo(() => valleyQuality(tier, gpuClass(), touch), [tier, touch])
+  // The forest and the warm-up only know three levels.
+  const plantTier = quality === 'ultra' ? 'high' : quality
   const reduced = useReducedMotion()
   const usable = !reduced && supportsWebGL()
+
+  // When a showing is over, nothing of it should still be playing.
+  useEffect(() => {
+    if (act !== 'idle') return
+    soundLevel('valleyAir', 0)
+    soundLevel('fire', 0)
+    soundLevel('ashWind', 0)
+  }, [act])
 
   /** The showing number the parked scene is built for, once there is one. */
   const [builtFor, setBuiltFor] = useState(0)
@@ -43,13 +58,13 @@ export function Valley() {
     const warm = window.setTimeout(() => {
       warmed.current = true
       void import('./valleyWarm')
-        .then((m) => m.warmValley(tier))
+        .then((m) => m.warmValley(plantTier))
         .then(() => setBuiltFor(runNow.current + 1))
     }, WARM_AT)
     return () => {
       window.clearTimeout(warm)
     }
-  }, [usable, tier])
+  }, [usable, plantTier])
 
   // A showing has just ended: build a fresh scene for the next one, later,
   // rather than on the heels of the last with the hero back in view.
@@ -73,23 +88,24 @@ export function Valley() {
   // and nothing here needs React to re-render to do it.
   const hidden = act === 'idle' || act === 'load'
   const leaving = act === 'return'
+  const fade = {
+    opacity: hidden ? 0 : undefined,
+    animation: hidden ? 'none' : leaving ? 'valley-out 1200ms ease-in 1400ms forwards' : 'valley-in 900ms ease-out both',
+  }
   return (
-    <div
-      aria-hidden
-      data-valley={act}
-      className="pointer-events-none fixed inset-0 z-[40]"
-      style={{
-        opacity: hidden ? 0 : undefined,
-        animation: hidden
-          ? 'none'
-          : leaving
-            ? 'valley-out 1200ms ease-in 1400ms forwards'
-            : 'valley-in 900ms ease-out both',
-      }}
-    >
-      <Suspense fallback={null}>
-        <ValleyScene key={showing ? run : builtFor} theme={theme} tier={tier} />
-      </Suspense>
-    </div>
+    <>
+      <div aria-hidden data-valley={act} className="pointer-events-none fixed inset-0 z-[40]" style={fade}>
+        <Suspense fallback={null}>
+          <ValleyScene key={showing ? run : builtFor} theme={theme} quality={quality} />
+        </Suspense>
+      </div>
+      {/* Outside the hidden layer, so a screen reader can find it, and only
+          while there is something to hear. */}
+      {showing && !hidden && (
+        <div className="pointer-events-auto fixed right-[var(--gutter)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] z-[41]" style={fade}>
+          <SoundToggle compact />
+        </div>
+      )}
+    </>
   )
 }

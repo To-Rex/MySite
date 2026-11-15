@@ -105,6 +105,15 @@ describe('lazy 3D', () => {
     expect(files.has(join(SRC, 'features/sound/voices.ts'))).toBe(false)
   })
 
+  it('keeps the sound out of the home page until the valley asks for it', () => {
+    const { files } = closure(join(SRC, 'main.tsx'))
+    // The click on the name has to open the AudioContext itself, so the store is here...
+    expect(files.has(join(SRC, 'features/sound/store.ts'))).toBe(true)
+    // ...and the engine and the voices, which only a showing needs, are not.
+    expect(files.has(join(SRC, 'features/sound/engine.ts'))).toBe(false)
+    expect(files.has(join(SRC, 'features/sound/voices.ts'))).toBe(false)
+  })
+
   it('reaches every scene only through a dynamic import', () => {
     const { files } = closure(join(SRC, 'main.tsx'))
     for (const scene of ['HeroScene.tsx', 'UniverseScene.tsx', 'CompanionTurtle.tsx', 'ValleyScene.tsx', 'Spectacle.tsx', 'Cameo.tsx', 'NotFoundScene.tsx']) {

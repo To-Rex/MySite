@@ -9,12 +9,19 @@ interface NavigatorExtras extends Navigator {
 }
 
 let webglSupport: boolean | null = null
+/** What the card called itself, read off the same context that answered the question above. */
+let rendererName = ''
 
 export function supportsWebGL(): boolean {
   if (webglSupport !== null) return webglSupport
   try {
     const canvas = document.createElement('canvas')
-    webglSupport = !!(canvas.getContext('webgl2') || canvas.getContext('webgl'))
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
+    webglSupport = !!gl
+    // One context for both questions: making a second is not free, least of
+    // all on the software renderers this is partly here to catch.
+    const info = gl?.getExtension('WEBGL_debug_renderer_info')
+    if (gl && info) rendererName = String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
   } catch {
     webglSupport = false
   }
@@ -54,3 +61,30 @@ export function qualityFor(tier: DeviceTier) {
       return { dpr: [1, 1] as [number, number], detail: 3, particles: 0, lines: false, env: 64 }
   }
 }
+
+/**
+ * What the graphics card is, as far as the browser will say. The tier above is
+ * a guess from the CPU and says nothing about the GPU; this reads the renderer
+ * string, which Chrome and Edge give in full, and which is the difference
+ * between an Apple M-series or a discrete card and the integrated graphics most
+ * laptops have. Safari and Firefox mostly decline to say, and get `unknown`.
+ */
+export type GpuClass = 'strong' | 'modest' | 'unknown'
+
+let gpuCache: GpuClass | null = null
+
+const STRONG = /Apple M\d|RTX|GTX ?(9[6-9]0|1[0-9]{3}|16\d0)|Radeon (RX|Pro) ?([5-7]\d{3}|[5-9]\d{2}[XM]?)|Radeon RX|Arc(\(TM\))? A\d/i
+const MODEST = /Intel|UHD|Iris|Mali|Adreno|PowerVR|SwiftShader|llvmpipe|Software|Basic Render|Apple GPU|Vega \d\b|Radeon\(TM\) Graphics/i
+
+/** A renderer string, sorted. Strong is tested first: Intel's Arc cards say "Intel". */
+export function classifyRenderer(renderer: string): GpuClass {
+  if (STRONG.test(renderer)) return 'strong'
+  if (MODEST.test(renderer)) return 'modest'
+  return 'unknown'
+}
+
+export function gpuClass(): GpuClass {
+  gpuCache ??= supportsWebGL() ? classifyRenderer(rendererName) : 'unknown'
+  return gpuCache
+}
+

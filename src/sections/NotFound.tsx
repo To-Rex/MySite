@@ -45,7 +45,7 @@ export function NotFound() {
   // for itself and would otherwise be undone by this in the same click.
   useEffect(() => {
     if (!webgl || reduced) return
-    offerSound()
+    offerSound('notFound')
     const open = (event: Event) => {
       if (!(event.target as Element | null)?.closest?.('[data-sound]')) unlockSound()
     }
@@ -145,7 +145,14 @@ export function NotFound() {
                 {t.notFound.roar}
               </Button>
             )}
-            <SoundToggle />
+            <SoundToggle
+              // Turning it on is answered: there is no point having just asked to
+              // hear a tyrannosaur and then waiting for one.
+              onEnable={() => {
+                callStrike(0.12, 0.4)
+                callRoar()
+              }}
+            />
           </motion.div>
 
           {interactive && (

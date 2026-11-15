@@ -753,6 +753,399 @@ function renderReverb(seed: number): Float32Array[] {
 }
 
 /* -------------------------------------------------------------------------- */
+/* The valley                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Equal-power gains for a position from -1 (left) to 1 (right). */
+const sides = (pan: number): [number, number] => [Math.cos(((pan + 1) * Math.PI) / 4), Math.sin(((pan + 1) * Math.PI) / 4)]
+
+/**
+ * A late afternoon in the Jurassic, as a loop: wind moving through ferns, the
+ * leaves answering it, insects trilling from different places at different
+ * rates, and water lapping at the lake shore off to the right.
+ */
+function renderValleyAir(seed: number): Float32Array[] {
+  const r = random(seed)
+  const fade = 1.5
+  const n = samples(10 + fade)
+  const callers = Array.from({ length: 7 }, () => ({
+    carrier: 3800 + r() * 3600,
+    trill: 18 + r() * 45,
+    on: 0.35 + r() * 1.1,
+    off: 0.5 + r() * 2.4,
+    level: 0.035 + r() * 0.05,
+    gains: sides(r() * 1.8 - 0.9),
+    offset: r() * 3,
+  }))
+  const channels = [new Float32Array(n), new Float32Array(n)]
+  channels.forEach((channel, side) => {
+    const air = pink(r)
+    const wind = new Biquad()
+    const leaves = new Biquad().highpass(2600, 0.7)
+    const lap = new Biquad().lowpass(420, 0.8)
+    const sweep = wander(r, 0.09)
+    const gust = wander(r, 0.12)
+    const flutter = wander(r, 9)
+    const lapping = wander(r, 0.7)
+    for (let i = 0; i < n; i++) {
+      const t = i / RATE
+      const s = sweep()
+      if (i % 64 === 0) wind.bandpass(430 + s * 210, 0.8)
+      const g = 0.55 + gust() * 0.4
+      const noise = air()
+      let value = wind.run(noise) * g * 1.4
+      value += leaves.run(noise) * Math.max(0, g - 0.45) * (0.6 + flutter() * 0.4) * 0.9
+      const wave = Math.max(0, lapping())
+      value += lap.run(r() * 2 - 1) * wave * wave * (side ? 0.5 : 0.18)
+      for (const caller of callers) {
+        const cycle = caller.on + caller.off
+        const phase = (t + caller.offset) % cycle
+        if (phase >= caller.on) continue
+        const edge = Math.min(1, phase / 0.04, (caller.on - phase) / 0.06)
+        const pulse = 0.5 + 0.5 * Math.sin(TAU * caller.trill * t)
+        value += Math.sin(TAU * caller.carrier * t) * pulse * pulse * edge * caller.level * caller.gains[side]!
+      }
+      channel[i] = value
+    }
+  })
+  return normalize(
+    channels.map((channel) => closeLoop(channel, fade)),
+    0.8,
+  )
+}
+
+/** The throat of a twenty-five metre animal: formants low and close together. */
+const SAUROPOD = {
+  formantsClosed: [55, 150, 310, 560, 900],
+  formantsOpen: [80, 210, 420, 720, 1150],
+  widths: [2.2, 2.6, 3, 3.4, 4],
+  gains: [0.7, 1, 1, 0.8, 0.5],
+} as const
+
+/**
+ * A long, low call that carries down the valley. The fundamental is mostly
+ * below what a phone can play; the formants are what make it audible there.
+ */
+function renderSauropod(seed: number, kind: 'call' | 'honk' | 'moan'): Float32Array {
+  if (kind === 'honk') {
+    return renderVocal({
+      ...SAUROPOD,
+      seconds: 1.7,
+      seed,
+      pitch: [[0, 60], [0.16, 124], [0.8, 108], [1.7, 52]],
+      level: [[0, 0], [0.1, 1], [0.9, 0.75], [1.7, 0]],
+      open: [[0, 0.4], [0.18, 1], [1.7, 0.4]],
+      breath: [[0, 0.25], [1.7, 0.5]],
+      rough: [[0, 0.45], [1, 0.7]],
+      flutter: [[0, 0.2], [1.2, 0.5]],
+      flutterRate: 16,
+      bend: 0.08,
+      chest: 0.35,
+      drive: 2.6,
+    })
+  }
+  if (kind === 'moan') {
+    return renderVocal({
+      ...SAUROPOD,
+      seconds: 3,
+      seed,
+      pitch: [[0, 42], [1, 35], [3, 18]],
+      level: [[0, 0], [0.4, 1], [1.8, 0.6], [3, 0]],
+      open: [[0, 0.6], [3, 0.1]],
+      breath: [[0, 0.5], [3, 0.9]],
+      rough: [[0, 0.7], [2, 1]],
+      flutter: [[0, 0.3], [3, 0.8]],
+      flutterRate: 9,
+      bend: 0.1,
+      chest: 0.5,
+      drive: 2.2,
+    })
+  }
+  return renderVocal({
+    ...SAUROPOD,
+    seconds: 3.2,
+    seed,
+    pitch: [[0, 26], [0.5, 38], [1.6, 44], [2.6, 34], [3.2, 24]],
+    level: [[0, 0], [0.4, 0.8], [1.5, 1], [2.6, 0.6], [3.2, 0]],
+    open: [[0, 0.2], [1.2, 0.9], [3.2, 0.3]],
+    breath: [[0, 0.3], [3.2, 0.5]],
+    rough: [[0, 0.3], [2, 0.45]],
+    flutter: [[0, 0.15], [3.2, 0.4]],
+    flutterRate: 12,
+    bend: 0.05,
+    chest: 0.6,
+    drive: 2,
+  })
+}
+
+/** A short, snorting grunt from something armoured and grazing. */
+function renderStego(seed: number): Float32Array {
+  return renderVocal({
+    formantsClosed: [210, 620, 1280, 2300],
+    formantsOpen: [270, 780, 1520, 2700],
+    widths: [3, 3.5, 4, 5],
+    gains: [1, 0.9, 0.65, 0.4],
+    seconds: 0.9,
+    seed,
+    pitch: [[0, 85], [0.12, 125], [0.5, 105], [0.9, 62]],
+    level: [[0, 0], [0.06, 1], [0.5, 0.6], [0.9, 0]],
+    open: [[0, 0.3], [0.15, 0.8], [0.9, 0.2]],
+    breath: [[0, 0.45]],
+    rough: [[0, 0.75]],
+    flutter: [[0, 0.5]],
+    flutterRate: 30,
+    bend: 0.12,
+    chest: 0.12,
+    drive: 3,
+  })
+}
+
+/**
+ * Something coming in from space: a rumble that grows until it is everything,
+ * air tearing round it, the crackle of a body breaking up, and a falling roar
+ * as it goes overhead.
+ */
+function renderEntry(seed: number, seconds: number): Float32Array[] {
+  const r = random(seed)
+  const n = samples(seconds)
+  const channels = [new Float32Array(n), new Float32Array(n)]
+  channels.forEach((channel) => {
+    const rumble = new Biquad()
+    const tear = new Biquad()
+    const crack = new Biquad().highpass(1800, 0.7)
+    const doppler = new Biquad()
+    const low = brown(r)
+    let spark = 0
+    for (let i = 0; i < n; i++) {
+      const u = i / n
+      if (i % 32 === 0) {
+        rumble.lowpass(70 + u * u * 420, 0.8)
+        tear.bandpass(1400 + u * 2600, 0.7)
+        doppler.bandpass(u < 0.7 ? 900 - u * 200 : 760 - ((u - 0.7) / 0.3) * 480, 2.2)
+      }
+      const noise = r() * 2 - 1
+      const swell = 0.05 + u ** 2.2
+      let value = rumble.run(low()) * 2.4 * swell
+      value += tear.run(noise) * (0.02 + u * u * 0.6)
+      if (r() < 0.0004 + u * u * 0.004) spark = 0.6 + r() * 1.4
+      value += crack.run(noise * spark) * 0.8
+      spark *= 0.9
+      value += doppler.run(noise) * Math.max(0, Math.min(1, (u - 0.5) / 0.35)) * 1.2
+      channel[i] = softClip(value, 1.6)
+    }
+    fadeEdges(channel, 0.2, 0.04)
+  })
+  return channels
+}
+
+/** The double crack of a shock wave going over: two N-waves and the rumble after. */
+function renderSonicBoom(seed: number): Float32Array {
+  const r = random(seed)
+  const n = samples(1.8)
+  const out = new Float32Array(n)
+  const soften = new Biquad().lowpass(5200, 0.7)
+  const tail = new Biquad().lowpass(160, 0.7)
+  const low = brown(r)
+  const nwave = (t: number, start: number, length: number) => (t >= start && t < start + length ? 1 - (2 * (t - start)) / length : 0)
+  const edge = (t: number, at: number) => (Math.abs(t - at) < 0.0025 ? (r() * 2 - 1) * 1.4 : 0)
+  for (let i = 0; i < n; i++) {
+    const t = i / RATE
+    const pressure = nwave(t, 0.01, 0.09) + nwave(t, 0.14, 0.09) * 0.85
+    const clicks = edge(t, 0.01) + edge(t, 0.1) + edge(t, 0.14) + edge(t, 0.23)
+    const rumble = tail.run(low()) * 2.2 * Math.exp(-t / 0.6) * Math.min(1, t / 0.05)
+    out[i] = softClip(soften.run(pressure * 0.8 + clicks) + rumble, 1.6)
+  }
+  return out
+}
+
+/**
+ * The moment it lands, heard from too close: a thud felt more than heard, and
+ * then nothing but a high ring while the ears recover. The blast arrives after.
+ */
+function renderFlashRing(): Float32Array {
+  const n = samples(3.2)
+  const out = new Float32Array(n)
+  let phase = 0
+  for (let i = 0; i < n; i++) {
+    const t = i / RATE
+    phase += (24 + 12 * Math.exp(-t / 0.08)) / RATE
+    const thump = (Math.sin(TAU * phase) + Math.sin(TAU * phase * 2) * 0.3) * Math.exp(-t / 0.25) * Math.min(1, t / 0.004)
+    const ring = (Math.sin(TAU * 4100 * t) + Math.sin(TAU * 4127 * t) * 0.6) * Math.min(1, t / 0.05) * Math.exp(-t / 1.3) * 0.14
+    out[i] = thump + ring
+  }
+  return out
+}
+
+/**
+ * The air itself arriving: a wall of wind that comes on in a tenth of a second,
+ * full of everything it picked up on the way, darkening as it passes.
+ */
+function renderAirBlast(seed: number): Float32Array[] {
+  const r = random(seed)
+  const n = samples(4.2)
+  const left = new Float32Array(n)
+  const right = new Float32Array(n)
+  ;[left, right].forEach((channel) => {
+    const filter = new Biquad()
+    const body = new Biquad().lowpass(120, 0.7)
+    const low = brown(r)
+    const gusts = wander(r, 5)
+    for (let i = 0; i < n; i++) {
+      const t = i / RATE
+      if (i % 32 === 0) filter.lowpass(500 + 6500 * Math.exp(-t / 0.9), 0.8)
+      const envelope = Math.min(1, t / 0.12) * Math.exp(-t / 1.15) * (0.75 + gusts() * 0.35)
+      channel[i] = softClip((filter.run(r() * 2 - 1) * 1.5 + body.run(low()) * 2.5) * envelope, 1.8)
+    }
+  })
+  stoneShower(left, right, r, 140, 0.05, 2.2, 1.6)
+  return [left, right]
+}
+
+/** What went up coming down: heavy thuds out across the valley, and stones. */
+function renderDebrisFall(seed: number): Float32Array[] {
+  const r = random(seed)
+  const n = samples(3.4)
+  const left = new Float32Array(n)
+  const right = new Float32Array(n)
+  for (let k = 0; k < 14; k++) {
+    const start = r() ** 1.3 * 2.6
+    const [gl, gr] = sides(r() * 1.8 - 0.9)
+    const pitch = 38 + r() * 34
+    const amplitude = 0.4 + r() * 0.6
+    let phase = 0
+    for (let i = samples(start); i < Math.min(n, samples(start + 0.6)); i++) {
+      const t = i / RATE - start
+      phase += (pitch + 40 * Math.exp(-t / 0.03)) / RATE
+      const value = (Math.sin(TAU * phase) * Math.exp(-t / 0.14) + (r() * 2 - 1) * Math.exp(-t / 0.012) * 0.6) * amplitude
+      left[i]! += value * gl
+      right[i]! += value * gr
+    }
+  }
+  stoneShower(left, right, r, 60, 0.1, 2.8, 1.2)
+  return [left, right]
+}
+
+/** Things burning across the valley floor, as a loop. */
+function renderFire(seed: number): Float32Array {
+  const r = random(seed)
+  const fade = 0.6
+  const n = samples(6 + fade)
+  const out = new Float32Array(n)
+  const roar = new Biquad().lowpass(300, 0.7)
+  const hiss = new Biquad().highpass(3000, 0.7)
+  const crack = new Biquad()
+  const low = brown(r)
+  const air = pink(r)
+  const swell = wander(r, 1.5)
+  let spark = 0
+  for (let i = 0; i < n; i++) {
+    if (r() < 0.0016) {
+      spark = 0.3 + r() ** 2 * 2
+      crack.bandpass(2000 + r() * 3500, 1.5)
+    }
+    const value = roar.run(low()) * 2 * (0.6 + swell() * 0.3) + hiss.run(air()) * 0.12 + crack.run((r() * 2 - 1) * spark)
+    spark *= 0.93
+    out[i] = value
+  }
+  for (let k = 0; k < 10; k++) bubble(out, r() * 6, 90 + r() * 120, 3, 0.04, 0.5)
+  return closeLoop(out, fade)
+}
+
+/**
+ * Thunder, from lightning in the cloud. Close, it starts with the crack of the
+ * channel itself; further off only the roll is left, darker for the distance.
+ */
+function renderThunder(seed: number, near: boolean): Float32Array[] {
+  const r = random(seed)
+  const n = samples(5)
+  const claps = Array.from({ length: 18 }, (_, k) => ({ at: (near ? 0.04 : 0.2) + r() ** 1.6 * 3.2, length: 0.25 + r() * 0.9, amplitude: (0.4 + r() * 0.6) * (1 - k / 24) }))
+  const channels = [new Float32Array(n), new Float32Array(n)]
+  channels.forEach((channel) => {
+    const rumble = new Biquad()
+    const bright = new Biquad().highpass(1500, 0.7)
+    const low = brown(r)
+    for (let i = 0; i < n; i++) {
+      const t = i / RATE
+      if (i % 32 === 0) rumble.lowpass((near ? 600 : 300) * Math.exp(-t / 2.4) + 90, 0.8)
+      let envelope = 0
+      for (const clap of claps) {
+        const x = t - clap.at
+        if (x > 0) envelope += clap.amplitude * Math.min(1, x / 0.04) * Math.exp(-x / clap.length)
+      }
+      const noise = r() * 2 - 1
+      const crack = near && t < 0.15 ? bright.run(noise) * Math.exp(-t / 0.03) * 2.2 : 0
+      channel[i] = softClip(rumble.run(low()) * 3 * envelope + crack, 1.7)
+    }
+    // The roll goes on past the end of the buffer; it should not stop there.
+    fadeEdges(channel, 0.002, 1.2)
+  })
+  return channels
+}
+
+/** Wind over a dead valley, as a loop: two hollow howls and the hiss of ash. */
+function renderAshWind(seed: number): Float32Array[] {
+  const r = random(seed)
+  const fade = 1.5
+  const n = samples(8 + fade)
+  const channels = [new Float32Array(n), new Float32Array(n)]
+  channels.forEach((channel) => {
+    const howlA = new Biquad()
+    const howlB = new Biquad()
+    const base = new Biquad().lowpass(280, 0.7)
+    const ash = new Biquad().highpass(4200, 0.7)
+    const air = pink(r)
+    const low = brown(r)
+    const a = wander(r, 0.15)
+    const b = wander(r, 0.11)
+    const ga = wander(r, 0.3)
+    const gb = wander(r, 0.25)
+    for (let i = 0; i < n; i++) {
+      const sa = a()
+      const sb = b()
+      if (i % 64 === 0) {
+        howlA.bandpass(300 + sa * 120, 6)
+        howlB.bandpass(470 + sb * 160, 7)
+      }
+      const noise = air()
+      channel[i] =
+        howlA.run(noise) * (0.5 + ga() * 0.5) * 2.4 +
+        howlB.run(noise) * (0.4 + gb() * 0.5) * 1.8 +
+        base.run(low()) * 1.2 +
+        ash.run(noise) * 0.08
+    }
+  })
+  return normalize(
+    channels.map((channel) => closeLoop(channel, fade)),
+    0.8,
+  )
+}
+
+/** Morning: a soft chord swelling up under the light coming back. */
+function renderDawn(seed: number): Float32Array[] {
+  const r = random(seed)
+  const n = samples(5.5)
+  const left = new Float32Array(n)
+  const right = new Float32Array(n)
+  // A major with an added ninth, low to high.
+  const notes = [110, 164.81, 220, 277.18, 329.63, 493.88]
+  notes.forEach((note, index) => {
+    const [gl, gr] = sides(Math.sin(index * 2.3) * 0.6)
+    const level = 0.5 / (1 + index * 0.45)
+    const detune = [1 - 0.004, 1, 1 + 0.0045].map((d) => d * (1 + (r() - 0.5) * 0.001))
+    for (let i = 0; i < n; i++) {
+      const t = i / RATE
+      const envelope = Math.min(1, t / (1.6 + index * 0.15)) ** 2 * Math.min(1, (5.5 - t) / 1.7)
+      let value = 0
+      for (const d of detune) value += Math.sin(TAU * note * d * t)
+      value += Math.sin(TAU * note * 2 * t) * 0.12 * (0.5 + 0.5 * Math.sin(TAU * 0.7 * t + index))
+      left[i]! += value * envelope * level * gl
+      right[i]! += value * envelope * level * gr
+    }
+  })
+  return [left, right]
+}
+
+/* -------------------------------------------------------------------------- */
 /* The catalogue                                                               */
 /* -------------------------------------------------------------------------- */
 
@@ -794,11 +1187,57 @@ export const VOICES = {
   pebbleB: () => normalize(renderPebble(54), 0.85),
   grind: () => peak(renderGrind(55), 0.85),
   farStreak: () => peak(renderFarStreak(33), 0.8),
+
+  valleyAir: () => renderValleyAir(101),
+  sauropodCall: () => peak(renderSauropod(102, 'call'), 0.9),
+  sauropodHonk: () => peak(renderSauropod(103, 'honk'), 0.92),
+  sauropodMoan: () => peak(renderSauropod(104, 'moan'), 0.9),
+  stegoGrunt: () => peak(renderStego(105), 0.9),
+  entry: () => normalize(renderEntry(106, ENTRY_SECONDS), 0.95),
+  sonicBoom: () => peak(renderSonicBoom(107), 0.95),
+  flashRing: () => peak(renderFlashRing(), 0.9),
+  blastBoom: () => normalize(renderImpact(108, 8, 1.8), 0.97),
+  airBlast: () => normalize(renderAirBlast(109), 0.95),
+  debrisFall: () => normalize(renderDebrisFall(110), 0.9),
+  fire: () => normalize([renderFire(111)], 0.85),
+  thunderNear: () => normalize(renderThunder(112, true), 0.95),
+  thunderFar: () => normalize(renderThunder(113, false), 0.9),
+  ashWind: () => renderAshWind(114),
+  dawn: () => normalize(renderDawn(115), 0.85),
 } as const satisfies Record<string, () => Float32Array[]>
+
+/** How long the meteor's entry is as rendered; it is played at whatever rate makes it end on the impact. */
+export const ENTRY_SECONDS = 2.9
 
 export type VoiceName = keyof typeof VOICES
 
 export const VOICE_NAMES = Object.keys(VOICES) as VoiceName[]
 
 /** Voices that are played as continuous loops, which `peak`'s fades would ruin. */
-export const LOOPS: readonly VoiceName[] = ['bed', 'grind']
+export const LOOPS = ['bed', 'grind', 'valleyAir', 'fire', 'ashWind'] as const satisfies readonly VoiceName[]
+
+export type LoopName = (typeof LOOPS)[number]
+
+/**
+ * What each page needs, in the order it needs it: the worker renders a bank
+ * front to back, so whatever is heard first is ready first. A page only ever
+ * renders its own bank, which is most of a second of arithmetic it would
+ * otherwise spend on sounds it never plays.
+ */
+export const BANKS = {
+  notFound: [
+    'roar', 'stompA', 'stompB', 'stompC', 'whooshLong', 'whooshShort', 'impactBig', 'impactMid', 'stoneRain', 'rattle',
+    'reverb', 'bed', 'roarShort', 'snarl', 'growl', 'snort', 'chomp', 'crunchA', 'crunchB', 'gulp', 'yawn', 'sniff',
+    'swish', 'screechLong', 'screechDouble', 'wing', 'bubbles', 'blubA', 'blubB', 'chime', 'pebbleA', 'pebbleB', 'grind',
+    'farStreak',
+  ],
+  // The valley's is ordered by its timeline: the ambience and the herd for the
+  // opening, then the rock, then everything after it.
+  valley: [
+    'reverb', 'valleyAir', 'sauropodCall', 'stegoGrunt', 'screechLong', 'screechDouble', 'roar', 'sauropodHonk', 'snarl',
+    'entry', 'sonicBoom', 'flashRing', 'blastBoom', 'airBlast', 'stompA', 'stompB', 'debrisFall', 'sauropodMoan', 'fire',
+    'thunderNear', 'thunderFar', 'ashWind', 'dawn',
+  ],
+} as const satisfies Record<string, readonly VoiceName[]>
+
+export type BankName = keyof typeof BANKS

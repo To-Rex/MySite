@@ -98,6 +98,25 @@ for (const viewport of VIEWPORTS) {
         await shot('11-menu')
       }
 
+      // The extinction cinematic, at the moments that matter, started the way a
+      // visitor starts it.
+      await page.goto(`/?lang=en&theme=${theme}`)
+      await introDone(page)
+      await page.locator('[data-valley]').waitFor({ state: 'attached', timeout: 90_000 })
+      await page.locator('header a[aria-label="Dilshodjon Haydarov"]').click()
+      await page.locator('[data-valley="open"]').waitFor({ state: 'attached', timeout: 60_000 })
+      const start = Date.now()
+      for (const [at, name] of [
+        [4.5, 'graze'],
+        [8.6, 'streak'],
+        [9.6, 'impact'],
+        [12, 'die'],
+        [15.03, 'lightning'],
+      ] as const) {
+        await page.waitForTimeout(Math.max(0, at * 1000 - (Date.now() - start)))
+        await shot(`13-valley-${name}`)
+      }
+
       // An address that does not exist, after the opening has played out.
       await page.goto(`/no-such-page?lang=en&theme=${theme}`)
       await page.getByRole('button', { name: 'Make it roar' }).waitFor({ timeout: 300_000 })

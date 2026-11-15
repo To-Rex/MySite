@@ -10,9 +10,15 @@ import { useIntroDone } from '@/app/intro'
 import { cn } from '@/lib/cn'
 import { EASE, springSnappy } from '@/lib/motion'
 import { startValley } from '@/lib/valley'
+import { openSound } from '@/features/sound/store'
+import { supportsWebGL } from '@/hooks/useDeviceTier'
+import { prefersReducedMotion } from '@/hooks/useReducedMotion'
 import { LanguageSwitcher } from './LanguageSwitcher'
 import { ThemeToggle } from './ThemeToggle'
 import { MobileMenu } from './MobileMenu'
+
+/** Whether the valley will really be shown, so it is worth opening sound for. */
+const valleyCanPlay = () => supportsWebGL() && !prefersReducedMotion()
 
 export function Navigation() {
   const { t } = useI18n()
@@ -84,11 +90,20 @@ export function Navigation() {
           {/* Brand monogram */}
           <a
             href="#home"
+            // The first AudioContext a page makes costs a couple of hundred
+            // milliseconds of main thread while the audio device starts. Made on
+            // the press, that happens while the button is held down; made on the
+            // click, it was a stall between the click and the valley.
+            onPointerDown={(e) => {
+              if (e.button === 0 && valleyCanPlay()) openSound('valley')
+            }}
             onClick={(e) => {
               e.preventDefault()
               go('home')
-              // And, for anyone who clicks their own name, the valley.
-              startValley()
+              // And, for anyone who clicks their own name, the valley — with sound,
+              // opened inside the gesture, which is the only one there will be. On
+              // a phone the press could not unlock it; this click does.
+              if (startValley() && valleyCanPlay()) openSound('valley')
             }}
             className="glass pointer-events-auto flex h-11 items-center gap-3 rounded-full pr-4 pl-1.5 text-fg"
             aria-label={site.name}

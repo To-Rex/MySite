@@ -25,6 +25,8 @@ export const de: Dictionary = {
     newTab: 'öffnet in neuem Tab',
     scroll: 'Scrollen',
     year: 'Jahr',
+    soundOn: 'Ton einschalten',
+    soundOff: 'Ton ausschalten',
   },
   a11y: {
     mainNav: 'Hauptnavigation',
@@ -253,8 +255,6 @@ export const de: Dictionary = {
     home: 'Zurück zur Startseite',
     roar: 'Brüllen lassen',
     hint: 'Irgendwo klicken oder tippen, um einen Meteor zu rufen',
-    soundOn: 'Ton einschalten',
-    soundOff: 'Ton ausschalten',
     pathLabel: 'Angefragte Adresse',
     sceneLabel: 'Eine 3D-Szene: die Zahl 404 aus Basaltsäulen, darunter ein brüllender Tyrannosaurus und eine verfinsterte Sonne',
   },

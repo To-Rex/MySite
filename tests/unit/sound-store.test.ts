@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cue, grindSound, offerSound, resetSoundForTests, toggleSound, unlockSound } from '@/features/sound/store'
+import { cue, grindSound, offerSound, openSound, resetSoundForTests, soundLevel, toggleSound, unlockSound } from '@/features/sound/store'
 
 /**
  * When the page may and may not make noise. The browser's rule is that sound
  * waits for a gesture; the visitor's is that "off" means off, next time too.
  */
 
-const engine = vi.hoisted(() => ({ attach: vi.fn(), cue: vi.fn(), grind: vi.fn(), muted: vi.fn() }))
-vi.mock('@/features/sound/engine', () => ({ createEngine: () => engine }))
+const engine = vi.hoisted(() => ({ attach: vi.fn(), cue: vi.fn(), level: vi.fn(), muted: vi.fn() }))
+const created = vi.hoisted(() => [] as string[])
+vi.mock('@/features/sound/engine', () => ({
+  createEngine: (bank: string) => {
+    created.push(bank)
+    return engine
+  },
+}))
 
 const contexts: FakeContext[] = []
 class FakeContext {
@@ -45,6 +51,7 @@ beforeEach(() => {
   resetSoundForTests()
   localStorage.clear()
   contexts.length = 0
+  created.length = 0
   Object.values(engine).forEach((mock) => mock.mockClear())
   vi.stubGlobal('AudioContext', FakeContext)
 })
@@ -63,14 +70,14 @@ describe('sound', () => {
 
   it('stays unavailable where there is no Web Audio', async () => {
     vi.stubGlobal('AudioContext', undefined)
-    offerSound()
+    offerSound('notFound')
     const refresh = await watchStatus()
     refresh()
     expect(statusOf()).toBe('unavailable')
   })
 
   it('waits for a gesture: offering it makes no audio context at all', async () => {
-    offerSound()
+    offerSound('notFound')
     const refresh = await watchStatus()
     refresh()
     expect(statusOf()).toBe('locked')
@@ -78,7 +85,7 @@ describe('sound', () => {
   })
 
   it('opens on the first gesture, inside that gesture', async () => {
-    offerSound()
+    offerSound('notFound')
     unlockSound()
     // Synchronously: a dynamic import would come back too late to count as the click.
     expect(contexts).toHaveLength(1)
@@ -88,7 +95,7 @@ describe('sound', () => {
   })
 
   it('tries again on a later click if the browser refused the first', async () => {
-    offerSound()
+    offerSound('notFound')
     unlockSound()
     await settled()
     contexts[0]!.state = 'suspended'
@@ -99,7 +106,7 @@ describe('sound', () => {
   })
 
   it('forwards cues only while it is on', async () => {
-    offerSound()
+    offerSound('notFound')
     cue(IMPACT)
     grindSound(1, 0)
     unlockSound()
@@ -108,14 +115,14 @@ describe('sound', () => {
     cue(IMPACT)
     grindSound(0.5, -0.5)
     expect(engine.cue).toHaveBeenCalledWith(IMPACT)
-    expect(engine.grind).toHaveBeenCalledWith(0.5, -0.5)
+    expect(engine.level).toHaveBeenCalledWith('grind', 0.5, -0.5)
     toggleSound()
     cue(IMPACT)
     expect(engine.cue).toHaveBeenCalledTimes(1)
   })
 
   it('remembers being turned off, and a click on the page does not undo it', async () => {
-    offerSound()
+    offerSound('notFound')
     unlockSound()
     await settled()
     toggleSound()
@@ -124,7 +131,7 @@ describe('sound', () => {
 
     resetSoundForTests()
     contexts.length = 0
-    offerSound()
+    offerSound('notFound')
     const refresh = await watchStatus()
     refresh()
     expect(statusOf()).toBe('off')
@@ -134,7 +141,7 @@ describe('sound', () => {
 
   it('comes back on the button, and forgets the "off"', async () => {
     localStorage.setItem('dh.sound', 'off')
-    offerSound()
+    offerSound('notFound')
     toggleSound()
     await settled()
     expect(contexts).toHaveLength(1)
@@ -143,7 +150,7 @@ describe('sound', () => {
   })
 
   it('goes quiet with the tab, as the scene does', async () => {
-    offerSound()
+    offerSound('notFound')
     unlockSound()
     await settled()
     const hidden = vi.spyOn(document, 'hidden', 'get')
@@ -155,5 +162,44 @@ describe('sound', () => {
     document.dispatchEvent(new Event('visibilitychange'))
     expect(contexts[0]!.resume).toHaveBeenCalled()
     hidden.mockRestore()
+  })
+
+  it('opens the valley\'s own bank on the click that starts it, and nothing before', async () => {
+    openSound('valley')
+    expect(contexts).toHaveLength(1)
+    await settled()
+    expect(created).toEqual(['valley'])
+    expect(engine.attach).toHaveBeenCalledWith(contexts[0])
+  })
+
+  it('does not open the valley\'s sound for a visitor who turned it off', async () => {
+    localStorage.setItem('dh.sound', 'off')
+    openSound('valley')
+    await settled()
+    expect(contexts).toHaveLength(0)
+    expect(created).toEqual([])
+  })
+
+  it('remembers what a scene asked of its loops for an engine that arrives later', async () => {
+    offerSound('valley', false)
+    soundLevel('valleyAir', 0.8, 0.2)
+    soundLevel('fire', 0.4)
+    unlockSound()
+    await settled()
+    expect(engine.level).toHaveBeenCalledWith('valleyAir', 0.8, 0.2)
+    expect(engine.level).toHaveBeenCalledWith('fire', 0.4, 0)
+  })
+
+  it('passes on only what has changed, for a scene that asks every frame', async () => {
+    openSound('valley')
+    await settled()
+    engine.level.mockClear()
+    for (let i = 0; i < 30; i++) soundLevel('ashWind', 0.5)
+    soundLevel('ashWind', 0.505)
+    soundLevel('ashWind', 0.7)
+    expect(engine.level.mock.calls).toEqual([
+      ['ashWind', 0.5, 0],
+      ['ashWind', 0.7, 0],
+    ])
   })
 })

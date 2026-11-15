@@ -15,10 +15,10 @@ import {
   type Camera,
   type WebGLRenderer,
 } from 'three'
-import { FIELD, GROUND } from './notFoundMaterials'
 
 /**
- * Glow, for the things on the 404 page that are meant to burn.
+ * Glow, for the things that are meant to burn: the 404 page's number and the
+ * valley's fire.
  *
  * The usual route — render everything to a floating-point target, blur the
  * bright parts, tone-map the lot at the end — does not work here: tone mapping
@@ -56,7 +56,18 @@ export interface Bloom {
   dispose(): void
 }
 
-export function createBloom(): Bloom {
+export interface BloomHooks {
+  /**
+   * Called before the glow is drawn, with how much smaller its target is than
+   * the canvas. Anything sized in pixels (point sprites) has to shrink by that
+   * much, or it comes out several times too big in the glow.
+   */
+  beforeGlow?: (scale: number) => void
+  /** Puts back whatever `beforeGlow` changed. */
+  afterGlow?: () => void
+}
+
+export function createBloom({ beforeGlow, afterGlow }: BloomHooks = {}): Bloom {
   const orthographic = new OrthographicCamera(-1, 1, 1, -1, 0, 1)
   const triangle = new BufferGeometry()
   triangle.setAttribute('position', new BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3))
@@ -172,17 +183,18 @@ export function createBloom(): Bloom {
       gl.setRenderTarget(targets[0]!)
       gl.autoClear = true
       camera.layers.set(GLOW_LAYER)
-      GROUND.uGlowPass.value = 1
-      // Sized in device pixels, and these are not the device's pixels.
-      const pointScale = FIELD.uPointScale.value
-      FIELD.uPointScale.value = pointScale * glowScale
+      beforeGlow?.(glowScale)
       const background = scene.background
       scene.background = null
+      // The shadow maps are for the frame itself; drawing them again for the
+      // glow, at 4096 on the strongest tier, would cost more than the glow does.
+      const shadows = gl.shadowMap.autoUpdate
+      gl.shadowMap.autoUpdate = false
       gl.setClearColor(0x000000, 1)
       gl.render(scene, camera)
+      gl.shadowMap.autoUpdate = shadows
       scene.background = background
-      FIELD.uPointScale.value = pointScale
-      GROUND.uGlowPass.value = 0
+      afterGlow?.()
       camera.layers.mask = mask
 
       // Down the pyramid, each level a wider blur at a quarter of the cost.

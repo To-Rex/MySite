@@ -576,10 +576,78 @@ at eight frames a second. Three things fixed that. The hero's canvas is parked
 once the valley covers it — it is hidden under the cinematic and the two scenes
 together were the bulk of the load — and wakes for the return, so at neither
 end is there a frozen frame under the cross-fade. Shadows are plain PCF on every tier that has them. And the
-scene measures its own frame times over the opening act and, if they average
-worse than thirty a second, drops the shadows, the bump and the extra
-resolution before the herd is in shot. On that same card the valley now holds
-sixty frames a second through every act.
+scene measures its own frame times over the opening act and steps down before
+the herd is in shot: resolution first, since pixels are most of the cost, and
+only if the opening runs worse than thirty a second the shadows, the bump and
+the glow as well. On that same card the valley now holds sixty frames a second
+through every act. What the scene settled on is on its canvas as `data-quality`.
+
+**Quality.** The CPU tier alone would never have known what the card can do in
+the other direction either, so `gpuClass()` reads the renderer string Chrome
+and Edge give (Safari and Firefox mostly decline) and `valleyQuality()` puts a
+desktop with an Apple M-series or a discrete card on `ultra`:
+
+| | low | medium | high | ultra |
+| --- | --- | --- | --- | --- |
+| Resolution | 1× | 1× | up to 1.6× | up to 2× |
+| Shadows | — | 1024 | 2048 | 4096 |
+| Glow | — | — | ✓ | ✓ |
+| Fireball / column / dust sprites | 90 / 460 / 150 | 90 / 460 / 150 | 150 / 640 / 220 | 240 / 960 / 320 |
+| Molten sparks / ground fires | — | 110 / 140 | 220 / 300 | 360 / 520 |
+
+More sprites change the density, not the look: their alphas are divided by how
+many there are, so a column of 960 puffs is as dark as one of 460 and only
+smoother. The glow is the 404 page's pass (`glowPass.ts`), laid over the
+finished frame: the rock, the plasma, the fireball, the sparks, the fires and
+the lightning are drawn again on black into a target a few hundred pixels high,
+blurred and added. The ground goes into it too, in black and without fog, so
+what burns down in the crater is hidden there as well; fog would have turned it
+the colour of the haze and lit the whole glow. The glow dims with the veil of
+dust in front of the lens, or halos float over a black screen. The ejected
+chunks of crater stay out of it — glowing, they read as a row of small suns.
+
+**After the impact.** Molten droplets go up out of the crater on ballistic arcs,
+land, and go on glowing where they land until they cool; fires burn in patches
+across the floor through the dark and go out with the morning; the blast front
+arriving at the camera, a couple of seconds after the flash, shakes it a second
+time and throws dust at the lens; and there is lightning in the column, which is
+what a cloud that size full of grit does — three bolts, each a path split again
+and again with its midpoints pushed sideways and a few branches off it, drawn as
+ribbons facing the camera. A flash lights the sky, the inside of the column and,
+for a moment, the dust in front of the lens. The camera is held by hand
+throughout: it is never quite still.
+
+**Sound.** Clicking the name opens the valley's sound (`src/features/sound/`, the
+same engine as the 404 page with its own bank of voices). The click is the only
+gesture there will be, so the `AudioContext` is made inside it — on the press,
+in fact, because the first context a page makes costs a couple of hundred
+milliseconds while the audio device starts, and made on the click that was a
+stall between the click and the valley. A visitor who has turned sound off
+anywhere on the site gets the valley without it; the button in the corner
+during a showing turns it on and off. The voices are not rendered until the
+click: a home page visitor who never asks pays nothing for them, and the worker
+renders the bank in the order the timeline needs it, so the ambience is ready
+for the opening and the impact long before the rock arrives.
+
+| When | What you hear |
+| --- | --- |
+| `open`, `graze` | Wind in the ferns, insects trilling in different places, water at the shore; a sauropod's call down the valley, pterosaurs, a stegosaur, a tyrannosaur some way off |
+| `streak` | The rock coming in — a rumble that grows until it is everything, the crackle of it breaking up, a falling roar as it goes over — the herd's alarm, and the double crack of the shock wave |
+| `impact` | A thud felt more than heard, then nothing but a ringing in the ears while the hearing goes; the blast a beat behind the light |
+| `die` | The air arriving with the dust wall, everything it picked up hitting the camera; things coming back down; the animals going over, each as it falls; fire |
+| `dark` | Wind over a dead valley; thunder from the lightning, after it — sooner and with a crack when it is close, only the roll when it is far |
+| `return` | A chord swelling up under the light, and the insects coming back |
+
+Sound goes at the speed of sound: the blast follows the flash and thunder its
+lightning. Animals are panned to where they stand and pushed back by distance —
+quieter, duller, more of it the canyon. The sauropod's voice is built the way
+the tyrannosaur's is, for a throat about twice as long: its formants are low and
+close together, and a phone, which plays nothing much below a few hundred hertz,
+still gets them. Cues are fired by the scene's own clock, so a sound lands on
+the frame it belongs to; the three loops (the valley's air, the fires and the
+wind over the dead valley) are turned up and down by the scene every frame and
+remembered by the store for an engine that arrives after it asked.
+
 
 The timeline runs on a **wall clock**, which is the opposite of everything else
 here. The rest of the site accumulates frame deltas so that parking a canvas
@@ -707,7 +775,9 @@ animal and the valley's are untouched by it. The lower teeth ride the jaw.
 The 404 page has a voice, and like everything else on the site none of it is a
 file. `src/features/sound/voices.ts` writes every sound as arithmetic in a worker,
 `engine.ts` is a small mixing desk in Web Audio, and `store.ts` is the only part
-in the first download.
+in the first download. Each page asks for its own bank of voices (`BANKS`) and the
+worker renders only that; the home page's is the extinction cinematic's (see
+there). One-shots are cues; ambience is loops the scene turns up and down.
 
 | Sound | How it is made |
 | --- | --- |

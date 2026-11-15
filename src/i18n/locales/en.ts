@@ -25,6 +25,8 @@ export const en: Dictionary = {
     newTab: 'opens in a new tab',
     scroll: 'Scroll',
     year: 'year',
+    soundOn: 'Turn sound on',
+    soundOff: 'Turn sound off',
   },
   a11y: {
     mainNav: 'Main navigation',
@@ -253,8 +255,6 @@ export const en: Dictionary = {
     home: 'Back to the home page',
     roar: 'Make it roar',
     hint: 'Click or tap anywhere to call down a meteor',
-    soundOn: 'Turn sound on',
-    soundOff: 'Turn sound off',
     pathLabel: 'Requested address',
     sceneLabel: 'A 3D scene: the number 404 built from basalt columns, a tyrannosaur roaring beneath it and an eclipsed sun',
   },

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Biquad, RATE, TAU, at, closeLoop, normalize, random, samples, softClip } from '@/features/sound/dsp'
-import { LOOPS, VOICES, VOICE_NAMES, type VoiceName } from '@/features/sound/voices'
+import { BANKS, LOOPS, VOICES, VOICE_NAMES, type VoiceName } from '@/features/sound/voices'
 
 /**
  * Sound, as numbers. Nothing here can tell you whether the roar is frightening;
@@ -13,9 +13,11 @@ const rendered = new Map<VoiceName, Float32Array[]>()
 const voice = (name: VoiceName) => rendered.get(name)!
 const mono = (name: VoiceName) => voice(name)[0]!
 
+// Every voice on the site, which is a few seconds of arithmetic on its own and
+// more on a CI runner sharing its cores with the rest of the suite.
 beforeAll(() => {
   for (const name of VOICE_NAMES) rendered.set(name, VOICES[name]())
-})
+}, 120_000)
 
 function rms(channel: Float32Array, from: number, to: number): number {
   const a = samples(from)
@@ -131,7 +133,7 @@ describe.each(VOICE_NAMES)('the voice %s', (name) => {
     expect([1, 2]).toContain(voice(name).length)
   })
 
-  it.skipIf(LOOPS.includes(name) || name === 'reverb')('dies away before it ends', () => {
+  it.skipIf((LOOPS as readonly VoiceName[]).includes(name) || name === 'reverb')('dies away before it ends', () => {
     for (const channel of voice(name)) expect(Math.abs(channel[channel.length - 1]!)).toBeLessThan(0.05)
   })
 })
@@ -228,3 +230,70 @@ describe('the rest of the world', () => {
     expect(rms(reverb, 0, 0.3)).toBeGreaterThan(rms(reverb, 3, 3.4) * 80)
   })
 })
+
+describe('the banks', () => {
+  it.each(Object.entries(BANKS))('%s asks only for voices that exist, each once', (_, names) => {
+    for (const name of names) expect(VOICE_NAMES).toContain(name)
+    expect(new Set(names).size).toBe(names.length)
+  })
+
+  it('renders every voice for one page or another', () => {
+    const used = new Set(Object.values(BANKS).flat())
+    expect(VOICE_NAMES.filter((name) => !used.has(name))).toEqual([])
+  })
+
+  it('has the reverb first on both pages, since everything plays through it', () => {
+    expect(BANKS.notFound).toContain('reverb')
+    expect(BANKS.valley[0]).toBe('reverb')
+  })
+
+  it('keeps each page to its own loops', () => {
+    expect(BANKS.valley).not.toContain('bed')
+    expect(BANKS.valley).not.toContain('grind')
+    expect(BANKS.notFound).not.toContain('valleyAir')
+  })
+})
+
+describe('the valley', () => {
+  it('has a herd that sounds the size it is: the sauropod well below the stegosaur', () => {
+    // Size is heard in the formants: more of a small animal's voice is up high.
+    expect(share(mono('stegoGrunt'), 0.1, 0.3, 500, 4000)).toBeGreaterThan(share(mono('sauropodCall'), 1, 1.2, 500, 4000) * 1.5)
+  })
+
+  it('still puts the sauropod where a phone can play it', () => {
+    expect(share(mono('sauropodCall'), 1, 1.2, 120, 2000)).toBeGreaterThan(0.25)
+  })
+
+  it('brings the rock in growing until the moment it lands', () => {
+    const entry = mono('entry')
+    const length = entry.length / RATE
+    expect(rms(entry, length * 0.8, length * 0.98)).toBeGreaterThan(rms(entry, 0, length * 0.2) * 6)
+  })
+
+  it('cracks twice as the shock wave goes over', () => {
+    const boom = mono('sonicBoom')
+    const peaks = [rms(boom, 0, 0.04), rms(boom, 0.13, 0.17)]
+    for (const p of peaks) expect(p).toBeGreaterThan(rms(boom, 1.2, 1.6) * 3)
+  })
+
+  it('leaves a high ring after the flash, the ears not the world', () => {
+    const ring = mono('flashRing')
+    const high = new Biquad().highpass(3000, 0.7)
+    const filtered = ring.map((x) => high.run(x))
+    // Once the thump has gone, what is left is nearly all ring.
+    expect(rms(filtered, 1.2, 1.4)).toBeGreaterThan(rms(ring, 1.2, 1.4) * 0.8)
+    expect(rms(ring, 1.2, 1.4)).toBeGreaterThan(0.01)
+  })
+
+  it('cracks with near thunder and only rolls with far', () => {
+    expect(rms(mono('thunderNear'), 0, 0.08)).toBeGreaterThan(rms(mono('thunderFar'), 0, 0.08) * 3)
+    expect(brightness(mono('thunderFar'), 1, 1.2)).toBeLessThan(brightness(mono('thunderNear'), 1, 1.2))
+  })
+
+  it('brings the morning in slowly, as a chord', () => {
+    const dawn = mono('dawn')
+    expect(rms(dawn, 0, 0.3)).toBeLessThan(rms(dawn, 2.5, 3) / 4)
+    expect(share(dawn, 2.5, 2.7, 100, 520)).toBeGreaterThan(0.6)
+  })
+})
+

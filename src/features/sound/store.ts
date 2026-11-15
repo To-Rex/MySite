@@ -1,14 +1,16 @@
 import { useSyncExternalStore } from 'react'
 import { storage } from '@/lib/storage'
 import type { Cue, SoundEngine } from './engine'
+import type { BankName, LoopName } from './voices'
 
 /**
- * Whether the 404 page is making noise, and the way in for everything that wants
- * it to. Small and free of the engine, which arrives in its own chunk: the scene
- * can call `cue` from a frame callback whether or not any of it has loaded.
+ * Whether the page is making noise, and the way in for everything that wants it
+ * to. Small and free of the engine, which arrives in its own chunk: a scene can
+ * call `cue` from a frame callback whether or not any of it has loaded.
  *
  * Browsers will not start audio before the visitor has done something, so sound
- * starts `locked` and the first click anywhere on the page opens it. The
+ * starts `locked` and a click opens it — on the 404 page the first click
+ * anywhere, on the home page the click on the name that starts the valley. The
  * AudioContext is created here, synchronously, because it has to be made inside
  * that click, and a dynamic import would come back too late to count.
  */
@@ -26,6 +28,9 @@ let status: SoundStatus = 'unavailable'
 let context: AudioContext | null = null
 let engine: SoundEngine | null = null
 let loading: Promise<SoundEngine> | null = null
+let bank: BankName = 'notFound'
+/** What the scene last asked of each loop, for an engine that arrives after it asked. */
+const levels = new Map<LoopName, { value: number; pan: number }>()
 
 const listeners = new Set<() => void>()
 
@@ -54,8 +59,9 @@ function contextClass(): AudioContextClass | undefined {
 
 /** The engine, loading it the first time. Starts the voices rendering. */
 function loadEngine(): Promise<SoundEngine> {
+  const wanted = bank
   loading ??= import('./engine').then(({ createEngine }) => {
-    engine = createEngine()
+    engine = createEngine(wanted)
     return engine
   })
   return loading
@@ -68,15 +74,26 @@ const onVisibility = () => {
 }
 
 /**
- * Says the page is able to make sound, and warms up. The voices are rendered
- * ahead of the first click, so that it can be answered at once.
+ * Says the page is able to make sound, with this bank of voices. `warm` renders
+ * them ahead of the first click, so that it can be answered at once; without it
+ * nothing is spent until somebody asks.
  */
-export function offerSound(): void {
+export function offerSound(which: BankName, warm = true): void {
   if (status !== 'unavailable' || !contextClass()) return
+  bank = which
   setStatus(storage.get(KEY) === 'off' ? 'off' : 'locked')
   document.addEventListener('visibilitychange', onVisibility)
   // The scene gets the first moments of the page to itself.
-  window.setTimeout(() => void loadEngine(), WARM_AFTER)
+  if (warm) window.setTimeout(() => void loadEngine(), WARM_AFTER)
+}
+
+/**
+ * For a click that is itself the request for sound: makes it available and
+ * opens it in one go, unless the visitor has turned it off before.
+ */
+export function openSound(which: BankName): void {
+  offerSound(which, false)
+  unlockSound()
 }
 
 /** Resumes the context from inside a gesture, the only place it is allowed to happen. */
@@ -98,6 +115,7 @@ function open(): void {
   const opened = context
   void loadEngine().then((loaded) => {
     loaded.attach(opened)
+    for (const [name, { value, pan }] of levels) loaded.level(name, value, pan)
     loaded.muted(false)
   })
 }
@@ -131,8 +149,19 @@ export function cue(next: Cue): void {
   if (status === 'on') engine?.cue(next)
 }
 
+/**
+ * How loud one of the bank's loops should be, 0..1. Called every frame by a
+ * scene, so only what has actually changed goes on to the engine.
+ */
+export function soundLevel(name: LoopName, value: number, pan = 0): void {
+  const last = levels.get(name)
+  if (last && Math.abs(last.value - value) < 0.01 && Math.abs(last.pan - pan) < 0.02) return
+  levels.set(name, { value, pan })
+  if (status === 'on') engine?.level(name, value, pan)
+}
+
 export function grindSound(level: number, pan: number): void {
-  if (status === 'on') engine?.grind(level, pan)
+  soundLevel('grind', level, pan)
 }
 
 /** Back to how a fresh page starts. Only tests have a use for this. */
@@ -141,5 +170,7 @@ export function resetSoundForTests(): void {
   context = null
   engine = null
   loading = null
+  bank = 'notFound'
+  levels.clear()
   listeners.clear()
 }
