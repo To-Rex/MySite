@@ -953,7 +953,7 @@ split by *what has to exist* for a check to be possible.
 | --- | --- | --- | --- |
 | Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the architecture rules |
 | Build | `npm run test:dist` | `dist/` | the CSP and its hashes, what loads up front and how big it is, what the minifier did to the CSS |
-| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the 404 page behind a real 404 |
+| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
 
 **The architecture rules are tests.** `tests/unit/architecture.test.ts` follows
 static imports from `main.tsx` and `not-found.tsx` and fails if three.js is reachable without
