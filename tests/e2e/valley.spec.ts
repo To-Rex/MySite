@@ -27,31 +27,37 @@ test.beforeEach(async ({ page }) => {
 
 const contexts = (page: Page) => page.evaluate(() => (window as unknown as { contexts: AudioContext[] }).contexts.length)
 
-test('clicking the name starts the valley with sound, and the sound can be turned off', async ({ page, isMobile }) => {
-  test.skip(isMobile, 'the same code on a phone; once is enough for a twenty-second showing')
-  test.slow()
-  const problems = await open(page, '/?lang=en')
-  expect(await contexts(page)).toBe(0)
+test.describe('a showing', () => {
+  // Small, because on CI the valley is drawn in software, and a showing runs on
+  // a wall clock: at full size frames took seconds and it was over before the
+  // checks had run.
+  test.use({ viewport: { width: 800, height: 500 } })
 
-  // Built ahead of time, nine seconds in; a click before that builds it on the spot.
-  await page.locator('[data-valley]').waitFor({ state: 'attached', timeout: 60_000 })
-  await page.locator(NAME).click()
-  // Inside the click, or a browser will not let it start.
-  expect(await contexts(page)).toBe(1)
+  test('clicking the name starts the valley with sound, and the sound can be turned off', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'the same code on a phone; once is enough for a twenty-second showing')
+    test.slow()
+    const problems = await open(page, '/?lang=en')
+    expect(await contexts(page)).toBe(0)
 
-  const toggle = page.locator('[data-sound]')
-  await expect(toggle).toBeVisible({ timeout: 60_000 })
-  await expect(toggle).toHaveAttribute('data-sound', 'on')
-  await expect(toggle).toHaveAccessibleName('Turn sound off')
-  await expect(page.locator('[data-valley] canvas')).toHaveAttribute('data-quality', /\w/)
+    // Built ahead of time, nine seconds in; a click before that builds it on the spot.
+    await page.locator('[data-valley]').waitFor({ state: 'attached', timeout: 60_000 })
+    await page.locator(NAME).click()
+    // Inside the click, or a browser will not let it start.
+    expect(await contexts(page)).toBe(1)
 
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('data-sound', 'off')
-  expect(await page.evaluate(() => localStorage.getItem('dh.sound'))).toBe('off')
-  expect(problems).toEqual([])
-  // Not sat through to the end: on a software renderer the showing takes the
-  // cores the rest of the suite is running on. `npm run shots` plays it through.
-  await page.close()
+    // Turned off as soon as it is offered, while the showing is certainly still on.
+    const toggle = page.locator('[data-sound="on"]')
+    await toggle.waitFor({ timeout: 60_000 })
+    const label = await toggle.getAttribute('aria-label')
+    await toggle.click()
+    expect(label).toBe('Turn sound off')
+    await expect(page.locator('[data-sound]')).toHaveAttribute('data-sound', 'off')
+    expect(await page.evaluate(() => localStorage.getItem('dh.sound'))).toBe('off')
+    expect(problems).toEqual([])
+    // Not sat through to the end: on a software renderer the showing takes the
+    // cores the rest of the suite is running on. `npm run shots` plays it through.
+    await page.close()
+  })
 })
 
 test('a visitor who turned sound off gets the valley without it', async ({ page }) => {

@@ -585,7 +585,10 @@ through every act. What the scene settled on is on its canvas as `data-quality`.
 **Quality.** The CPU tier alone would never have known what the card can do in
 the other direction either, so `gpuClass()` reads the renderer string Chrome
 and Edge give (Safari and Firefox mostly decline) and `valleyQuality()` puts a
-desktop with an Apple M-series or a discrete card on `ultra`:
+desktop with an Apple M-series or a discrete card on `ultra` — and WebGL drawn
+by the CPU (SwiftShader, llvmpipe: a blocklisted driver, a virtual machine, a
+CI runner) on `low` whatever the CPU, after the valley was measured there at
+under one frame a second on `high`:
 
 | | low | medium | high | ultra |
 | --- | --- | --- | --- | --- |

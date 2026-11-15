@@ -68,16 +68,22 @@ export function qualityFor(tier: DeviceTier) {
  * string, which Chrome and Edge give in full, and which is the difference
  * between an Apple M-series or a discrete card and the integrated graphics most
  * laptops have. Safari and Firefox mostly decline to say, and get `unknown`.
+ *
+ * `software` is no card at all: WebGL drawn by the CPU, which is what a
+ * blocklisted driver, a virtual machine or a CI runner gets. The valley ran at
+ * under one frame a second there, at the quality the CPU had earned it.
  */
-export type GpuClass = 'strong' | 'modest' | 'unknown'
+export type GpuClass = 'strong' | 'modest' | 'software' | 'unknown'
 
 let gpuCache: GpuClass | null = null
 
 const STRONG = /Apple M\d|RTX|GTX ?(9[6-9]0|1[0-9]{3}|16\d0)|Radeon (RX|Pro) ?([5-7]\d{3}|[5-9]\d{2}[XM]?)|Radeon RX|Arc(\(TM\))? A\d/i
-const MODEST = /Intel|UHD|Iris|Mali|Adreno|PowerVR|SwiftShader|llvmpipe|Software|Basic Render|Apple GPU|Vega \d\b|Radeon\(TM\) Graphics/i
+const SOFTWARE = /SwiftShader|llvmpipe|softpipe|Software|Basic Render|Mesa OffScreen/i
+const MODEST = /Intel|UHD|Iris|Mali|Adreno|PowerVR|Apple GPU|Vega \d\b|Radeon\(TM\) Graphics/i
 
-/** A renderer string, sorted. Strong is tested first: Intel's Arc cards say "Intel". */
+/** A renderer string, sorted. Strong before modest: Intel's Arc cards say "Intel". */
 export function classifyRenderer(renderer: string): GpuClass {
+  if (SOFTWARE.test(renderer)) return 'software'
   if (STRONG.test(renderer)) return 'strong'
   if (MODEST.test(renderer)) return 'modest'
   return 'unknown'

@@ -86,8 +86,8 @@ export function setValleyAct(act: ValleyAct): void {
  */
 export type ValleyQuality = 'low' | 'medium' | 'high' | 'ultra'
 
-export function valleyQuality(tier: 'high' | 'medium' | 'low', gpu: 'strong' | 'modest' | 'unknown', touch: boolean): ValleyQuality {
-  if (tier === 'low') return 'low'
+export function valleyQuality(tier: 'high' | 'medium' | 'low', gpu: 'strong' | 'modest' | 'software' | 'unknown', touch: boolean): ValleyQuality {
+  if (tier === 'low' || gpu === 'software') return 'low'
   if (gpu === 'strong' && !touch) return tier === 'high' ? 'ultra' : 'high'
   return tier
 }
