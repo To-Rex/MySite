@@ -1,5 +1,5 @@
-import { useFrame } from '@react-three/fiber'
-import { useLayoutEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
+import { useFrame, useThree } from '@react-three/fiber'
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
 import {
   Color,
   DoubleSide,
@@ -8,17 +8,21 @@ import {
   Vector3,
   type BufferGeometry,
   type InstancedMesh,
+  type PerspectiveCamera,
 } from 'three'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
+import type { ValleyQuality } from '@/lib/valley'
+import { GRASS_DENSITY, bakeGrass, canBake, disposeGrass, grassDraws, grassHeights, holdHeights, layGrass, setGrassPixel } from './valleyGrass'
 import { smoothstep, type Spot } from './valleyLand'
 import { foliageProgram } from './valleyMaterials'
-import { geometryFor, leaf, spotsFor } from './valleyForest'
+import { geometryFor, leaf, needles, spotsFor } from './valleyForest'
 
 /**
- * The forest, planted. Each kind in `valleyForest.ts` becomes one
+ * What grows, planted. Each kind in `valleyForest.ts` becomes one
  * `InstancedMesh` here, so the whole forest is four draw calls; the plants
- * sway on their own phase and the ones within reach of the impact go over as
- * the blast front passes.
+ * lean and rock in the same gusting wind the meadow does, and the ones within
+ * reach of the impact go over as the blast front passes. The meadow itself is
+ * two more draws (see `Grass` below and `valleyGrass.ts`).
  */
 
 export interface Blast {
@@ -129,6 +133,7 @@ export function Flora({ tier, shadows, groundZero, beat }: FloraProps) {
     [],
   )
   const map = useMemo(() => leaf(), [])
+  const needleMap = useMemo(() => needles(), [])
   const spots = useMemo(
     () => ({
       umbrella: spotsFor(tier, 'umbrella'),
@@ -141,9 +146,9 @@ export function Flora({ tier, shadows, groundZero, beat }: FloraProps) {
 
   const programs = useMemo(
     () => ({
-      conifer: foliageProgram(17),
-      treeFern: foliageProgram(5),
-      fern: foliageProgram(2),
+      conifer: foliageProgram(17, 0.013),
+      treeFern: foliageProgram(5, 0.03),
+      fern: foliageProgram(2, 0.035),
     }),
     [],
   )
@@ -158,12 +163,21 @@ export function Flora({ tier, shadows, groundZero, beat }: FloraProps) {
 
   return (
     <>
-      <Planted geometry={geometries.umbrella} spots={spots.umbrella} shadows={shadows} tint={coniferTint} knock={knock}>
-        <meshStandardMaterial vertexColors roughness={0.92} envMapIntensity={0.3} onBeforeCompile={programs.conifer} customProgramCacheKey={keys.conifer} />
-      </Planted>
-      <Planted geometry={geometries.tiered} spots={spots.tiered} shadows={shadows} tint={coniferTint} knock={knock}>
-        <meshStandardMaterial vertexColors roughness={0.92} envMapIntensity={0.3} onBeforeCompile={programs.conifer} customProgramCacheKey={keys.conifer} />
-      </Planted>
+      {(['umbrella', 'tiered'] as const).map((kind) => (
+        <Planted key={kind} geometry={geometries[kind]} spots={spots[kind]} shadows={shadows} tint={coniferTint} knock={knock}>
+          <meshStandardMaterial
+            map={needleMap}
+            vertexColors
+            alphaTest={0.45}
+            alphaToCoverage
+            side={DoubleSide}
+            roughness={0.9}
+            envMapIntensity={0.25}
+            onBeforeCompile={programs.conifer}
+            customProgramCacheKey={keys.conifer}
+          />
+        </Planted>
+      ))}
       <Planted geometry={geometries.treeFern} spots={spots.treeFern} shadows={shadows} tint={fernTint} knock={knock}>
         <meshStandardMaterial
           map={map}
@@ -188,6 +202,37 @@ export function Flora({ tier, shadows, groundZero, beat }: FloraProps) {
           customProgramCacheKey={keys.fern}
         />
       </Planted>
+    </>
+  )
+}
+
+/**
+ * The meadow (see `valleyGrass.ts`): two instanced draws of one blade each,
+ * the near one curling, the far one a single triangle. Drawn before the
+ * ground, so the ground's fragments behind the blades are never shaded.
+ */
+export function Grass({ quality, shadows }: { quality: ValleyQuality; shadows: boolean }) {
+  const width = useThree((state) => state.size.width)
+  const height = useThree((state) => state.size.height)
+  const camera = useThree((state) => state.camera) as PerspectiveCamera
+  const gl = useThree((state) => state.gl)
+  const draws = useMemo(() => grassDraws(canBake(gl)), [gl])
+  const heights = useMemo(() => grassHeights(), [])
+
+  useLayoutEffect(() => holdHeights(heights), [heights])
+  useEffect(() => () => disposeGrass(draws), [draws])
+  useLayoutEffect(() => {
+    layGrass(draws, quality, camera.fov, width / Math.max(1, height))
+    bakeGrass(gl)
+  }, [draws, quality, camera, width, height, gl])
+  // In device pixels, so a sharper screen gets finer blades.
+  useFrame((state) => setGrassPixel(camera.fov, state.gl.domElement.height))
+
+  if (!GRASS_DENSITY[quality]) return null
+  return (
+    <>
+      <mesh geometry={draws.near.geometry} material={draws.near.material} frustumCulled={false} receiveShadow={shadows} renderOrder={-1} />
+      <mesh geometry={draws.far.geometry} material={draws.far.material} frustumCulled={false} receiveShadow={shadows} renderOrder={-1} />
     </>
   )
 }

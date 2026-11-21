@@ -68,9 +68,14 @@ const SEG = TERRAIN_SIZE / TERRAIN_SEGMENTS
 const X0 = -TERRAIN_SIZE / 2
 const Z0 = -TERRAIN_SIZE / 2 - TERRAIN_SHIFT
 
+/** Where the grid starts, how far apart its vertices are, and how many quads a side. */
+export const GRID = { x0: X0, z0: Z0, step: SEG, segments: TERRAIN_SEGMENTS } as const
+
 /** A lake on the floor, off to the left where the ground is lowest. */
 export const LAKE = { x: -36, z: -96, r: 30 } as const
 export const WATER_LEVEL = 1.2
+/** How far out, in lake radii, the ground is still shaped by the lake. */
+const LAKE_REACH = 2.7
 
 /**
  * The volcano is part of the height field rather than a cone stood on it, so
@@ -114,10 +119,18 @@ export function heightAt(x: number, z: number): number {
   // The lake is a bowl blended into whatever the ground was doing there. Inside
   // the shoreline it dips below the water; outside it rises steadily, so the
   // shore is where the terrain crosses the water plane and nowhere else.
+  //
+  // The blend reaches well past the shore. It used to end at half a radius
+  // beyond it, and on the west side, where the lake sits against the valley
+  // wall, that made a sixty-degree cliff fifteen metres high — a smooth sheet
+  // the rock shader could only stripe.
   const q = Math.hypot(x - LAKE.x, z - LAKE.z) / LAKE.r
-  if (q >= 1.45) return natural
-  const bowl = q < 1 ? WATER_LEVEL - 4.6 * (1 - q * q) : WATER_LEVEL + 6 * (q - 1)
-  const k = 1 - smoothstep(0.85, 1.45, q)
+  if (q >= LAKE_REACH) return natural
+  // Outside the shore it climbs, but never above the ground it is blended
+  // into: on the near side, where the floor is low, a bank rising to the
+  // blend's edge was a dam between the camera and the water.
+  const bowl = q < 1 ? WATER_LEVEL - 4.6 * (1 - q * q) : Math.min(WATER_LEVEL + 6 * (q - 1), Math.max(natural, WATER_LEVEL + 1.5))
+  const k = 1 - smoothstep(0.85, LAKE_REACH, q)
   return MathUtils.lerp(natural, bowl + rolling * 0.15, k)
 }
 
@@ -244,7 +257,7 @@ export interface ScatterRule {
 
 /**
  * Rejection sampling over the rule's bounds. Nothing is ever planted in the
- * lake, and the ground under each spot is read from the mesh once here so the
+ * lake or on its wet margin, and the ground under each spot is read from the mesh once here so the
  * instances can be placed without touching the height field again.
  */
 export function scatter(rule: ScatterRule): Spot[] {
@@ -255,9 +268,12 @@ export function scatter(rule: ScatterRule): Spot[] {
   for (let i = 0; i < tries && out.length < rule.count; i++) {
     const x = MathUtils.lerp(x0, x1, hash2(i, rule.seed))
     const z = MathUtils.lerp(z0, z1, hash2(i, rule.seed + 1))
-    if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r * 1.12) continue
+    const fromLake = Math.hypot(x - LAKE.x, z - LAKE.z) / LAKE.r
+    if (fromLake < 1.12) continue
     const y = groundAt(x, z)
-    if (y < WATER_LEVEL + 0.4) continue
+    // The wet margin. Only by the lake: most of the floor lies below the water
+    // line, and when this test was by height alone nothing grew on it at all.
+    if (fromLake < 1.45 && y < WATER_LEVEL + 0.4) continue
     const slope = slopeAt(x, z)
     const weight = rule.accept(x, z, y, slope)
     if (weight <= 0 || hash2(i, rule.seed + 2) > weight) continue

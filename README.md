@@ -434,10 +434,11 @@ three-free so none of this is in the main chunk; the fade in and out is a CSS
 keyframe rather than React state, because a `setState` in an effect to run a
 fade is a re-render per frame for something the compositor does for free.
 
-Everything is procedural like the rest of the site, and it is split four ways:
+Everything is procedural like the rest of the site, and it is split six ways:
 `valleyLand.ts` is the height field and the scatter, `valleyMaterials.ts` the
-shaders, `valleyFlora.tsx` the forest, and `ValleyScene.tsx` the cast, the rock
-and the timeline.
+shaders (and the wind), `valleyForest.ts` and `valleyFlora.tsx` the trees and
+ferns, `valleyGrass.ts` the meadow, `valleyMountains.ts` the ranges beyond the
+valley, and `ValleyScene.tsx` the cast, the rock and the timeline.
 
 **The land.** A displaced plane: value noise for the ground itself, ridges on
 both sides and a rise at the far end so the camera looks *along* a valley rather
@@ -454,21 +455,137 @@ on the open floor, banded rock wherever it steepens or climbs, all broken up by
 noise at four scales, with the Mikkelsen surface-gradient bump the hide uses
 adding relief that fades out with distance before derivatives of noise turn to
 shimmer. Mist pools on the floor — thicker low down and further off — as a
-chunk injected after three's own fog into every material that stands in it.
+chunk injected after three's own fog into every material that stands in it,
+and the haze is brighter and warmer looking towards the sun and cooler away
+from it, which is most of what tells the eye how far off a ridge is. The fog
+starts at 110 and is complete at 540: at 400 the far ridge and the volcano
+were cream silhouettes.
+
+The rock has **relief no mesh carries**: ridged noise, crags on the ridges and
+on the volcano gullies that run from the summit to the foot, evaluated once a
+pixel *with its gradient* (value noise has an analytic one) and turned into a
+normal. It holds at any distance, which the bump does not — the volcano is two
+hundred and seventy units off, and its gullies are what make it a mountain
+rather than a heap of sand. Differenced in world space it cost three
+evaluations a pixel, five milliseconds a frame on a retina screen; taken from
+screen derivatives, which come in two-by-two blocks, it was a staircase. The
+volcano itself is dark basalt in the gullies, pale ash on the ribs, old lava
+flows in darker tongues from the rim and rust towards the vent, with the forest
+climbing its foot.
+
+Two things about the ground were wrong for a long time without looking wrong.
+Most of the valley floor lies *below* the lake's water line, so everything that
+decided "shore" by height alone — the dark, glossy wet margin in the shader,
+the rule that keeps plants out of the water — treated the whole floor as
+shore: it was the shiny crumpled-foil look the foreground used to have, and
+the reason nothing grew on it. Both now go by distance from the lake. And the
+lake's bowl was blended into the ground over half a radius past the shore,
+which on the west side, where the lake sits against the valley wall, made a
+sixty-degree cliff fifteen metres high that the rock shader could only
+stripe. The blend now reaches 2.7 radii, and outside the shore the bank never
+climbs above the ground it is blended into, or the near side becomes a dam
+between the camera and the water. `tests/unit/valley-world.test.ts` holds
+both: the bank's steepest slope, and a clear line of sight to the water.
 
 **The forest.** Jurassic ground cover was ferns and cycads; the trees were
 conifers, and the ones that read as *that period* to anyone are the araucarias,
 a bare trunk with an umbrella of branches at the top. Two conifer shapes, a tree
 fern and a ground fern, each authored once as one merged geometry and planted
 hundreds of times as an `InstancedMesh`, so the whole forest is four draw
-calls. The leaf is a pinnate frond drawn on a canvas, alpha-tested, with a
-strip of bark down one edge so a trunk can share the material. Every plant
-sways on its own phase, more at the crown than at the root, and the ones within
-reach of the impact go over as the blast front passes, scorched on the side
-that faced it. Placement is rejection sampling with a rule per species —
-conifers keep to the slopes and the head of the valley, tree ferns to the lake
-shore, nothing grows through an animal or in the water — and it is seeded, so
-it is the same forest every showing.
+calls. Placement is rejection sampling with a rule per species — conifers keep
+to the slopes and the head of the valley, tree ferns to the lake shore, nothing
+grows through an animal or in the water — and it is seeded, so it is the same
+forest every showing.
+
+The conifers are built the way real-time trees are: a trunk, and branches that
+are **cards** — crossed pairs of quads, drooping and curling up at the tip,
+carrying a spray of needles drawn on a canvas and alpha-tested — so a crown has
+a ragged edge and sky through it. They used to be stacked cones, which read as
+plastic lampshades from any distance. Three things make a heap of cards read as
+one crown: every card takes the crown's own outward normal rather than its flat
+one, so the mass shades from its lit side to its shadowed side the way foliage
+does (and both faces take it, or the back of every card would be lit from
+inside); vertex colour darkens towards the trunk and the bottom of the crown,
+where little light gets in; and each branch is a little lighter or darker than
+the next. Alpha is held up as the texture goes down its mip chain, or
+alpha-tested foliage thins to nothing with distance. Bark shares the needle
+texture, on the *left* of it: on the right, beside the tips, the coarse mips
+ran the two together and every distant branch ended in a brown smudge. The
+fern's frond is drawn the same way, and its fronds take crown normals too — a
+bent plane's own normal faces down on half of every frond, and a field of ferns
+lit by them was black.
+
+Everything that grows moves in **one wind**. A gust is a soft patch of stronger
+air that travels downwind at about five metres a second, read by the grass, the
+ferns and the conifers from the same function, so a gust is seen to cross the
+meadow and then reach the trees. The plants lean with it and rock about the
+lean, more at the crown than at the root — in the wind's direction on the map,
+turned into each plant's own frame, because instances are yawed at random and a
+sway along local x sent every tree a different way — and the leaves flutter on
+top, more the further they stand from the stem. Light comes through the leaves
+and the blades from the low sun behind them. The ones within reach of the
+impact go over as the blast front passes, scorched on the side that faced it.
+
+**The meadow** (`valleyGrass.ts`) is up to a hundred and sixty thousand blades
+that are never placed on the CPU. A blade is seven vertices near and one
+triangle far, drawn instanced; the vertex shader works out from the instance's
+number alone where it stands — in a fan that opens down the valley from just
+behind the camera, rows further apart with distance and columns spreading with
+the angle, as wide as the lens takes in, so a wider screen gets more blades and
+not sparser ones. Each stands on the mesh exactly (the terrain grid itself, in a
+float texture, over the same two triangles per quad `groundAt` uses), grows by
+the rules the ground's colour follows — none on rock, the shore or in the lake,
+short where it is wet, sparse on bare earth — in clumps, one stem in eight in
+seed, and is never drawn narrower than about a pixel where it stands, so the far
+field is tufts and not shimmer. It bends along an arc: a lean of its own, the
+breeze and its gusts, a flutter, and then the blast front, which lays the whole
+meadow down away from the crater; round the crater it burns to stubble, in it
+it is gone. Its normal is eased towards the ground's, not towards the sky: grass
+on a slope facing away from the sun is in that slope's shade, and lit as if it
+stood on the level it drew bright streaks over dark ground. The ground under
+the blades is the shade at their roots, darker and not glossy, and past the
+blades the meadow still shows the wind, a gust paling the grass in patches that
+run downwind.
+
+What a blade *is* — the ground under it, how tall it grows, its colour — does not
+change while it is on screen, and working it out was most of the cost: a dozen
+noise lookups for each of seven vertices of a hundred thousand blades, every
+frame. So it is **baked**: drawn once into two half-float textures with a texel
+for each blade, when the meadow is laid out, again if the screen changes shape
+and again when the crater is cut; the blades read it back with two fetches. That
+took the meadow at full density from forty-six frames a second to sixty. A card
+that cannot render to float textures works it out per vertex instead. The noise
+hash everywhere in the valley is integer arithmetic rather than the usual
+`fract(sin(…))`, which on its own was a quarter of the frame once the meadow was
+evaluating it three quarters of a million times; the integer one is also exact
+at any distance from the origin. The animals stand in the grass — only the low
+ones, the turtles and stegosaurs, have it trodden flat under them.
+
+**The ranges** (`valleyMountains.ts`) are a ring of mountains well past the end
+of the ground, seen only where they rise above its skyline: a polar grid round
+the camera's spot, lifted by ridged multifractal noise — sharp crests, soft
+valleys, rough high ground and smooth low ground, roughly how erosion leaves a
+range — lower in front and higher behind, and highest in the gap down the middle
+of the valley between the near ridge and the volcano, where the eye goes. What
+makes them far away is the air: each pixel blends from the rock's own lit colour
+towards the light of the air, the sky's own colours from the same uniforms the
+dome uses with the glow round the hidden sun on top, so the ranges on that side
+go pale and warm and the rest stay a hazy blue-grey; the air is thicker low
+down, so their feet are hazier than their peaks. The sun is low behind them,
+so what faces it is rimmed and the rest is lit by the sky; there is forest low
+down, rock above, and snow where it is high and not too steep. They write the
+sky's colours the way the dome does, untouched by tone mapping, so where a
+range fades into the horizon the two meet without a seam — and the glow is
+capped, or the fireball whitened them into cut-outs. The tests hold them above
+the valley's skyline in the gap, below the volcano everywhere, and with their
+feet hidden. The grid was first wound the wrong way: the slopes facing the
+camera were culled and the ranges floated over a band of sky.
+
+**The sky** on the two upper levels has a deck of cumulus rather than a smudge:
+five octaves warped by a coarser noise so the shapes billow, and lit — the
+density is read again a step towards the sun, and where there is more cloud
+between a point and the light it is the shaded blue-grey underside, where there
+is less it is the warm lit edge, and thin cloud round the sun glows through.
 
 **The lake** reflects the same sky the dome draws: literally the same function
 on the same uniforms, evaluated for the reflected ray, so whatever an act does
@@ -552,8 +669,8 @@ species, sample sixteen thousand heights, scatter a thousand plants, merge the
 tree geometries, and then compile forty shader programs on the first frame —
 and the page stood still for most of a second before the valley appeared, the
 hero frozen mid-stride. Now the whole scene is built ahead of it. Nine seconds
-after load the warm-up fetches the chunk, meshes the cast, and builds the land
-and the forest in slices between idle frames; when that resolves, `Valley.tsx`
+after load the warm-up fetches the chunk, meshes the cast, and builds the land,
+the forest and the ranges in slices between idle frames; when that resolves, `Valley.tsx`
 mounts the scene invisibly with its frameloop parked, and the scene compiles
 every program off the main thread (`gl.compileAsync`, which uses
 KHR_parallel_shader_compile where it exists and polls) and then draws one frame
@@ -576,11 +693,19 @@ at eight frames a second. Three things fixed that. The hero's canvas is parked
 once the valley covers it — it is hidden under the cinematic and the two scenes
 together were the bulk of the load — and wakes for the return, so at neither
 end is there a frozen frame under the cross-fade. Shadows are plain PCF on every tier that has them. And the
-scene measures its own frame times over the opening act and steps down before
-the herd is in shot: resolution first, since pixels are most of the cost, and
-only if the opening runs worse than thirty a second the shadows, the bump and
-the glow as well. On that same card the valley now holds sixty frames a second
-through every act. What the scene settled on is on its canvas as `data-quality`.
+scene times its own frames twice inside the opening, while the mist still hides
+what changes, and steps down before the herd is in shot. After the first
+window it gives up resolution if it has to, since pixels are most of the cost;
+after the second, half the meadow if it is a little short, and the shadows, the
+bump and the glow as well if it is well short. Each window is judged by its
+median frame, not its mean: a canvas changing resolution stalls for a frame or
+two while its buffers are made again, and one such frame in the mean took
+everything away from a machine that could run it. The resolution is held in the
+canvas's own `dpr` prop, not set with `setDpr` from inside the scene: R3F puts
+the prop back on every render of the canvas, the canvas renders on every act,
+and for as long as it was done the other way the step-down lasted until the
+next act. What the scene settled on is on its canvas as `data-quality`
+(`ultra`, `ultra:dpr1`, `high:thin`, `low` and so on).
 
 **Quality.** The CPU tier alone would never have known what the card can do in
 the other direction either, so `gpuClass()` reads the renderer string Chrome
@@ -592,11 +717,18 @@ under one frame a second on `high`:
 
 | | low | medium | high | ultra |
 | --- | --- | --- | --- | --- |
-| Resolution | 1× | 1× | up to 1.6× | up to 2× |
+| Resolution | 1× | 1× | up to 1.4× | up to 1.6× |
 | Shadows | — | 1024 | 2048 | 4096 |
 | Glow | — | — | ✓ | ✓ |
+| Blades of grass (16:9) | — | 30 000 | 93 000 | 165 000 |
+| Rock relief / cloud deck | — / — | ✓ / — | ✓ / ✓ | ✓ / ✓ |
 | Fireball / column / dust sprites | 90 / 460 / 150 | 90 / 460 / 150 | 150 / 640 / 220 | 240 / 960 / 320 |
 | Molten sparks / ground fires | — | 110 / 140 | 220 / 300 | 360 / 520 |
+
+`ultra` holds sixty frames a second on an M2 at 1×, through every act. Its
+ceiling used to be 2×, and at 2× the meadow alone is four times the pixels;
+the opening then ran so slowly that the step-down took everything away. 1.6×
+is indistinguishable behind 4× MSAA and leaves the step-down something to do.
 
 More sprites change the density, not the look: their alphas are divided by how
 many there are, so a column of 960 puffs is as dark as one of 460 and only

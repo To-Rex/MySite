@@ -40,6 +40,7 @@ import { HERD, VALLEY_DETAIL, type Placed } from './valleyCast'
 import { LAKE, VOLCANO, WATER_LEVEL, buildTerrain, carveCrater, groundAt, groundNormalAt, hash2 } from './valleyLand'
 import {
   ATMOS,
+  WIND_BREEZE,
   HALO,
   ROCK,
   SKY,
@@ -53,7 +54,9 @@ import {
   rockProgram,
   terrainProgram,
 } from './valleyMaterials'
-import { Flora } from './valleyFlora'
+import { Flora, Grass } from './valleyFlora'
+import { buildRange, makeRangeMaterial } from './valleyMountains'
+import { GRASS, bakeGrass, regroundGrass, thinGrass } from './valleyGrass'
 
 /**
  * The extinction cinematic: a valley, a herd, and the thing that ended them.
@@ -139,9 +142,29 @@ interface Quality {
 const QUALITY: Record<ValleyQuality, Quality> = {
   low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, env: 64, fire: 90, plume: 460, dust: 150, sparks: 0, embers: 0, water: 0.18 },
   medium: { dpr: 1, shadowMap: 1024, bump: 0.022, glow: false, env: 64, fire: 90, plume: 460, dust: 150, sparks: 110, embers: 140, water: 0.32 },
-  high: { dpr: [1, 1.6], shadowMap: 2048, bump: 0.03, glow: true, env: 64, fire: 150, plume: 640, dust: 220, sparks: 220, embers: 300, water: 0.32 },
-  ultra: { dpr: [1, 2], shadowMap: 4096, bump: 0.03, glow: true, env: 128, fire: 240, plume: 960, dust: 320, sparks: 360, embers: 520, water: 0.32 },
+  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.03, glow: true, env: 64, fire: 150, plume: 640, dust: 220, sparks: 220, embers: 300, water: 0.32 },
+  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.03, glow: true, env: 128, fire: 240, plume: 960, dust: 320, sparks: 360, embers: 520, water: 0.32 },
 }
+
+/**
+ * Where the fog starts and where it is complete. Far enough out that the far
+ * ridge and the volcano keep their shape and their colour through it — at
+ * four hundred they were cream silhouettes — and the ranges beyond have a
+ * haze of their own (see `valleyMountains.ts`).
+ */
+const FOG_NEAR = 110
+const FOG_FAR = 540
+
+/**
+ * When the scene times its own frames, in seconds into the showing: twice,
+ * both inside the opening, while the mist still hides what changes. After
+ * the first it gives up resolution if it has to; after the second, what it
+ * still has to.
+ */
+const PERF_WINDOWS: readonly (readonly [number, number])[] = [
+  [0.55, 1.35],
+  [1.5, 2.3],
+]
 
 /** Mutable, because the scene can turn the glow down, and off, on its own. */
 const GLOW = { on: false, strength: 0.9 }
@@ -175,6 +198,8 @@ function resetSky(): void {
   ATMOS.uMistAmount.value = MOOD.day.mist
   ATMOS.uLevel.value = 1
   ATMOS.uTime.value = 0
+  ATMOS.uWind.value = WIND_BREEZE
+  ATMOS.uBack.value.copy(BACKLIGHT).multiplyScalar(MOOD.day.light * 0.62)
   ROCK.uHeat.value = 0
   TRAIL.uStrength.value = 0
   HALO.uStrength.value = 0
@@ -182,6 +207,8 @@ function resetSky(): void {
 
 /** One scratch colour for the blends, so a frame allocates nothing. */
 const MIXER = new Color()
+/** The colour of the low sun, behind the far ridge: what comes through a leaf. */
+const BACKLIGHT = new Color('#ffb877')
 const blend = (a: string, b: string, m: number, out: Color) => out.set(a).lerp(MIXER.set(b), m)
 
 /* -------------------------------------------------------------------------- */
@@ -785,7 +812,15 @@ function spriteField(count: number, centre: Vector3, radius: number, heat = fals
   return g
 }
 
-function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQuality; onReady: () => void }) {
+interface ShowProps {
+  theme: Theme
+  quality: ValleyQuality
+  onReady: () => void
+  /** Lowers the canvas's resolution; see ValleyScene for why it is not `setDpr`. */
+  onDpr: (dpr: number) => void
+}
+
+function Show({ theme, quality, onReady, onDpr }: ShowProps) {
   const q = QUALITY[quality]
   // The forest only knows three levels.
   const tier: DeviceTier = quality === 'ultra' ? 'high' : quality
@@ -820,6 +855,10 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
     }
   }, [gl, scene, camera, advance, onReady])
   const terrain = useMemo(() => buildTerrain(), [])
+  // Cached and shared, like the creatures' geometry: never disposed.
+  const range = useMemo(() => buildRange(), [])
+  const rangeMaterial = useMemo(() => makeRangeMaterial(), [])
+  useEffect(() => () => rangeMaterial.dispose(), [rangeMaterial])
   const fleck = useMemo(() => ashFleck(), [])
   const rockShape = useMemo(() => rockGeometry(), [])
   const water = useMemo(() => makeWaterMaterial(q.water), [q.water])
@@ -867,9 +906,12 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
     pos.needsUpdate = true
     return { geometry: g, look }
   }, [q.embers])
+  const skyDefines = useMemo(() => (quality === 'high' || quality === 'ultra' ? { SKY_DETAIL: '' } : {}), [quality])
+  const relief = quality !== 'low'
+  const terrainShader = useMemo(() => terrainProgram(relief), [relief])
   const keys = useMemo(
-    () => ({ terrain: () => 'valley-terrain', rock: () => 'valley-rock' }),
-    [],
+    () => ({ terrain: () => (relief ? 'valley-terrain-relief' : 'valley-terrain'), rock: () => 'valley-rock' }),
+    [relief],
   )
   /** The rock's heading, and the rotation that lays the trail along it. */
   const [travel, trailTurn] = useMemo(() => {
@@ -912,7 +954,7 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
    * slow the shadows, the bump and the extra resolution go, before the herd is
    * even in shot.
    */
-  const perf = useRef({ frames: 0, total: 0, last: 0, decided: false })
+  const perf = useRef({ times: [] as number[], last: 0, stage: 0, settled: '' })
 
   const rock = useRef<Group>(null)
   const fragments = useRef<Group>(null)
@@ -1017,38 +1059,50 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
     const t = (performance.now() - started.current) / 1000
 
     const pf = perf.current
-    if (!pf.decided) {
+    if (pf.stage < 2) {
       const now = performance.now()
-      if (pf.last > 0 && t > 0.7 && t < 2.3) {
-        pf.frames++
-        pf.total += now - pf.last
-      }
+      const [from, to] = PERF_WINDOWS[pf.stage]!
+      if (pf.last > 0 && t > from && t < to) pf.times.push(now - pf.last)
       pf.last = now
-      if (t >= 2.3) {
-        pf.decided = true
-        const average = pf.frames > 3 ? pf.total / pf.frames : 0
-        // The opening is the quiet part: a card already missing frames here will
-        // not hold the impact. Pixels go first, since they are most of the cost;
-        // the glow, which is drawn at a fixed small size, goes only after them.
-        let settled = quality as string
-        if (average > 34) {
+      if (t >= to) {
+        // The median, not the mean: a canvas changing resolution stalls for a
+        // frame or two while its buffers are made again, and one 150 ms frame
+        // in the mean was enough to take everything away from a machine that
+        // could run it.
+        const sorted = pf.times.sort((a, b) => a - b)
+        const typical = sorted.length > 3 ? (sorted[sorted.length >> 1] ?? 0) : 0
+        pf.times = []
+        if (!pf.settled) pf.settled = quality
+        if (pf.stage === 0) {
+          // Pixels first: they are most of the cost, and a sharp screen has the
+          // most of them to give. The second window sees what that bought.
+          const dpr = state.viewport.dpr
+          if (typical > 24 && dpr > 1.05) {
+            onDpr(1)
+            pf.settled += ':dpr1'
+          } else if (typical > 18.5 && dpr > 1.3) {
+            onDpr(1.25)
+            pf.settled += ':dpr1.25'
+          }
+        } else if (typical > 30) {
+          // Still well short: the shadows, the bump, the glow and half the meadow.
           const sun = state.scene.getObjectByName('valley-sun') as { castShadow: boolean } | undefined
           if (sun) sun.castShadow = false
           ATMOS.uBump.value = 0
           GLOW.on = false
-          state.setDpr(1)
-          settled = 'low'
-        } else if (average > 26 && state.viewport.dpr > 1) {
-          // The glow stays: it is drawn at a fixed few hundred pixels whatever
-          // the screen, so dropping it saves little and loses the fire.
-          state.setDpr(1)
-          settled = `${quality}:dpr1`
-        } else if (average > 19 && state.viewport.dpr > 1.4) {
-          state.setDpr(1.4)
-          settled = `${quality}:dpr1.4`
+          thinGrass()
+          onDpr(1)
+          pf.settled = 'low'
+        } else if (typical > 20) {
+          // A little short: half the blades, each a little wider. The glow
+          // stays — it is drawn at a fixed few hundred pixels whatever the
+          // screen, so dropping it saves little and loses the fire.
+          thinGrass()
+          pf.settled += ':thin'
         }
+        pf.stage++
         // For anyone wondering what their machine got, and for the tests.
-        state.gl.domElement.setAttribute('data-quality', settled)
+        state.gl.domElement.setAttribute('data-quality', pf.settled)
       }
     }
 
@@ -1171,7 +1225,7 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
     // settles, rather than switched on.
     if (state.scene.fog) {
       const reveal = act === 'open' ? easeInOut(u) : 1
-      ;(state.scene.fog as Fog).near = MathUtils.lerp(16, 95, reveal)
+      ;(state.scene.fog as Fog).near = MathUtils.lerp(16, FOG_NEAR, reveal)
       if (act === 'open') ATMOS.uMistAmount.value = MathUtils.lerp(1.5, MOOD.day.mist, reveal)
     }
 
@@ -1181,6 +1235,9 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
       const tm = terrainMesh.current
       if (!carved.current && tm) {
         carveCrater(tm.geometry, GROUND_ZERO[0], GROUND_ZERO[1], 26, 6.5)
+        regroundGrass(tm.geometry)
+        bakeGrass(state.gl)
+        GRASS.uCrater.value.set(GROUND_ZERO[0], GROUND_ZERO[1], 26, 1)
         carved.current = true
       }
       ATMOS.uScorchAmount.value = act === 'impact' ? MathUtils.clamp(u * 2, 0, 1) : 1
@@ -1201,14 +1258,28 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
           : act === 'dark' || act === 'return'
             ? 1
             : 0
-    // The wind: a breeze until the blast front, which flattens everything.
+    // The wind: a breeze until the blast front, which flattens everything, and
+    // a hard wind over the dead valley after it.
     ATMOS.uSway.value =
       0.028 + (act === 'impact' ? MathUtils.clamp((u - 0.2) * 4, 0, 1) * 0.12 : act === 'die' ? 0.12 * (1 - u * 0.7) : 0)
+    ATMOS.uWind.value =
+      act === 'streak'
+        ? WIND_BREEZE + u * 0.12
+        : act === 'impact' || act === 'die'
+          ? 0.85
+          : act === 'dark'
+            ? 0.85 - u * 0.25
+            : act === 'return'
+              ? MathUtils.lerp(0.6, WIND_BREEZE, easeInOut(u))
+              : WIND_BREEZE
+    // What the low sun puts through a leaf or a blade: the rim light's colour and strength.
+    ATMOS.uBack.value.copy(BACKLIGHT).multiplyScalar(light * 0.62)
 
     // --- the camera -----------------------------------------------------------
     // The blast front, reaching the camera: a second hit, from the air this
     // time, a couple of seconds after the first, when the dust wall arrives.
     const front = 4 + beat.current.blast * 125
+    GRASS.uBlast.value.set(GROUND_ZERO[0], GROUND_ZERO[1], front, beat.current.blast > 0 ? 1 : 0)
     if (arrival.current < 0 && front >= CAMERA_REACH) {
       arrival.current = t
       cue({ kind: 'airBlast' })
@@ -1635,7 +1706,7 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
     <>
       {/* Far enough back that the ridge at the end of the valley still reads;
           the mist in the materials handles the floor. */}
-      <fog attach="fog" args={[MOOD.day.fog, 95, 400]} />
+      <fog attach="fog" args={[MOOD.day.fog, FOG_NEAR, FOG_FAR]} />
       {/* The hide is a physical material: with no environment to reflect it goes
           to near-black, and the whole herd came out as silhouettes. */}
       <ThemedEnvironment theme={theme} resolution={q.env} />
@@ -1663,8 +1734,18 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
 
       <mesh scale={520} renderOrder={-10}>
         <sphereGeometry args={[1, 32, 24]} />
-        <shaderMaterial vertexShader={SKY_VERT} fragmentShader={SKY_FRAG} side={BackSide} depthWrite={false} uniforms={SKY} />
+        <shaderMaterial
+          vertexShader={SKY_VERT}
+          fragmentShader={SKY_FRAG}
+          defines={skyDefines}
+          side={BackSide}
+          depthWrite={false}
+          uniforms={SKY}
+        />
       </mesh>
+
+      {/* The ranges beyond the valley, past the end of the ground. */}
+      <mesh geometry={range} material={rangeMaterial} />
 
       {/* The ground again, black and only in the glow, so what burns behind a
           ridge or down in the crater is hidden there too. Unfogged: fog would
@@ -1679,10 +1760,12 @@ function Show({ theme, quality, onReady }: { theme: Theme; quality: ValleyQualit
           roughness={0.95}
           metalness={0}
           envMapIntensity={0.3}
-          onBeforeCompile={terrainProgram}
+          onBeforeCompile={terrainShader}
           customProgramCacheKey={keys.terrain}
         />
       </mesh>
+
+      <Grass quality={quality} shadows={shadows} />
 
       {/* The lake. Drawn after the ground and before the animals, so its
           transparency sorts against the shore correctly. */}
@@ -1850,6 +1933,12 @@ export default function ValleyScene({ theme, quality }: ValleySceneProps) {
   const { act } = useValley()
   const [ready, setReady] = useState(false)
   const onReady = useCallback(() => setReady(true), [])
+  // The resolution the scene settled on, as the canvas's own prop. R3F puts
+  // the prop back on every render of the canvas, and this one renders on
+  // every act: lowered with `setDpr` from inside the scene, the resolution
+  // went straight back up at the next act and the step-down never held.
+  const [dpr, setDpr] = useState<Quality['dpr']>(q.dpr)
+  const onDpr = useCallback((value: number) => setDpr(value), [])
   // The frameloop is a prop and nothing else, the way the hero's is. Setting
   // it from inside the scene did not survive the next render of the canvas,
   // which re-applied the prop and put the loop back to sleep after one frame.
@@ -1859,7 +1948,7 @@ export default function ValleyScene({ theme, quality }: ValleySceneProps) {
   const running = ready && act !== 'idle'
   return (
     <Canvas
-      dpr={q.dpr}
+      dpr={dpr}
       shadows={q.shadowMap ? 'percentage' : false}
       frameloop={running ? 'always' : 'never'}
       camera={{ position: [0, 12, 42], fov: 46, near: 0.5, far: 600 }}
@@ -1868,7 +1957,7 @@ export default function ValleyScene({ theme, quality }: ValleySceneProps) {
       // otherwise take the pointer (see CompanionTurtle).
       style={{ pointerEvents: 'none' }}
     >
-      <Show theme={theme} quality={quality} onReady={onReady} />
+      <Show theme={theme} quality={quality} onReady={onReady} onDpr={onDpr} />
     </Canvas>
   )
 }

@@ -1,13 +1,4 @@
-import {
-  BufferAttribute,
-  CanvasTexture,
-  Color,
-  ConeGeometry,
-  CylinderGeometry,
-  PlaneGeometry,
-  SRGBColorSpace,
-  type BufferGeometry,
-} from 'three'
+import { BufferAttribute, CanvasTexture, CylinderGeometry, MathUtils, PlaneGeometry, SRGBColorSpace, type BufferGeometry } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { DeviceTier } from '@/hooks/useDeviceTier'
 import { HERD } from './valleyCast'
@@ -21,88 +12,213 @@ import { LAKE, fbm, hash2, scatter, smoothstep, type ScatterRule, type Spot } fr
  * with an umbrella of branches at the top. There are two conifer shapes, a
  * tree fern and a ground fern, each authored once as a single merged geometry
  * and planted hundreds of times by `valleyFlora.tsx`. Nothing is loaded: the
- * leaf is drawn on a canvas.
+ * fern's frond and the conifers' needles are drawn on canvases. (The grass
+ * between them is not planted at all; see `valleyGrass.ts`.)
  *
  * Everything here is built once and kept. The warm-up fills the caches while
  * the page is idle; the scene reads them on the click and mounts in a frame.
  */
 
 /* -------------------------------------------------------------------------- */
-/* Geometry                                                                    */
+/* Conifers                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function withColour(geometry: BufferGeometry, colour: Color, vary = 0): BufferGeometry {
-  const count = geometry.attributes.position?.count ?? 0
-  const out = new Float32Array(count * 3)
-  for (let i = 0; i < count; i++) {
-    const v = 1 + (hash2(i, 77) - 0.5) * vary
-    out[i * 3] = colour.r * v
-    out[i * 3 + 1] = colour.g * v
-    out[i * 3 + 2] = colour.b * v
-  }
+/**
+ * The conifers are built the way real-time trees are: a trunk, and branches
+ * that are cards — crossed pairs of quads carrying a spray of needles drawn on
+ * a canvas, alpha-tested, so the crown has a ragged edge and sky through it
+ * rather than the stacked cones it used to be, which read as plastic
+ * lampshades from any distance. Three things make a heap of cards read as one
+ * crown: every card takes the crown's own outward normal instead of its flat
+ * one, so the mass shades from lit to shadowed side the way foliage does;
+ * vertex colour darkens towards the trunk and the bottom of the crown, where
+ * little light gets in; and each branch is a little lighter or darker than
+ * the next.
+ */
+
+/**
+ * Where things are on the needle texture, along u. Bark on the left, the spray
+ * from a little past it to the right-hand edge: as a card shrinks with
+ * distance its texture is read from coarser and coarser mips, where
+ * neighbouring regions run together, and with the bark beside the tip every
+ * distant branch ended in a brown smudge. Beside the base, where the branch
+ * meets the trunk deep in the crown's shade, nobody can see it.
+ */
+const SPRAY_U = [0.22, 1] as const
+const BARK_U = [0.01, 0.14] as const
+
+/** A grey per vertex: the vertex colour multiplies the texture, so this is light and shade. */
+function grey(geometry: BufferGeometry, value: (x: number, y: number, z: number, i: number) => number): BufferGeometry {
+  const pos = geometry.attributes.position as BufferAttribute
+  const out = new Float32Array(pos.count * 3)
+  for (let i = 0; i < pos.count; i++) out.fill(value(pos.getX(i), pos.getY(i), pos.getZ(i), i), i * 3, i * 3 + 3)
   geometry.setAttribute('color', new BufferAttribute(out, 3))
   return geometry
 }
 
-/** Breaks the perfect circle of a cone's rim, so the tiers do not read as lampshades. */
-function roughen(geometry: BufferGeometry, amount: number, seed: number): BufferGeometry {
-  const pos = geometry.attributes.position as BufferAttribute
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i)
-    const z = pos.getZ(i)
-    const r = Math.hypot(x, z)
-    if (r < 1e-4) continue
-    const k = 1 + (hash2(i, seed) - 0.5) * amount
-    pos.setX(i, x * k)
-    pos.setZ(i, z * k)
-    pos.setY(i, pos.getY(i) + (hash2(i, seed + 1) - 0.5) * amount * 0.6)
-  }
-  geometry.computeVertexNormals()
+/** Maps a geometry's u onto the bark strip of the needle texture. */
+function onBark(geometry: BufferGeometry): BufferGeometry {
+  const uv = geometry.attributes.uv as BufferAttribute
+  for (let i = 0; i < uv.count; i++) uv.setX(i, BARK_U[0] + uv.getX(i) * (BARK_U[1] - BARK_U[0]))
   return geometry
 }
 
-const BARK = new Color('#4a3626')
-
-function trunk(top: number, base: number, height: number, colour = BARK): BufferGeometry {
-  const g = new CylinderGeometry(top, base, height, 7, 1, false)
-  g.translate(0, height / 2, 0)
-  return withColour(g, colour, 0.25)
+/**
+ * One spray of needles on a card that runs out along +x from the trunk.
+ * `upright` stands it on edge, so a crossed pair reads from the side as well
+ * as from below. It droops along its length and curls up at the tip, and it
+ * is darker where it meets the trunk.
+ */
+function card(length: number, width: number, droop: number, curl: number, upright: boolean, tone: number): BufferGeometry {
+  const g = new PlaneGeometry(length, width, 3, 1)
+  g.translate(length / 2, 0, 0)
+  if (!upright) g.rotateX(-Math.PI / 2)
+  const pos = g.attributes.position as BufferAttribute
+  const uv = g.attributes.uv as BufferAttribute
+  for (let i = 0; i < pos.count; i++) {
+    const s = pos.getX(i) / length
+    pos.setY(i, pos.getY(i) + length * (curl * s * s * s - droop * s * s))
+    uv.setX(i, SPRAY_U[0] + s * (SPRAY_U[1] - SPRAY_U[0]))
+  }
+  return grey(g, (x) => tone * (0.42 + 0.58 * Math.pow(Math.max(0, x / length), 0.7)))
 }
 
-/** A tall bare trunk with the crown held high — the araucaria silhouette. */
-function coniferUmbrella(): BufferGeometry {
-  const parts: BufferGeometry[] = [trunk(0.26, 0.62, 17)]
-  const crown = new Color('#213d22')
-  // A wide crown, or from the valley floor the tree is a matchstick.
-  const tiers: [number, number, number][] = [
-    [10.6, 6.8, 2.8],
-    [12.4, 6.0, 2.7],
-    [14.1, 4.9, 2.5],
-    [15.7, 3.5, 2.3],
-    [17.1, 1.9, 2.0],
+/** The wood of a branch, out along +x and thinning, in the shade of its own needles. */
+function limb(length: number, radius: number, tone: number): BufferGeometry {
+  const g = new CylinderGeometry(radius * 0.4, radius, length, 5, 1, true)
+  g.rotateZ(-Math.PI / 2)
+  g.translate(length / 2, 0, 0)
+  return grey(onBark(g), () => tone * 0.6)
+}
+
+/** Every vertex's normal pointing out of the crown — an ellipsoid round the trunk — and a little up. */
+function crownNormals(geometry: BufferGeometry, centre: number, squash: number): void {
+  const pos = geometry.attributes.position as BufferAttribute
+  const nor = geometry.attributes.normal as BufferAttribute
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i)
+    const y = (pos.getY(i) - centre) * squash
+    const z = pos.getZ(i)
+    const len = Math.hypot(x, y, z) || 1
+    const nx = x / len
+    const ny = y / len + 0.35
+    const nz = z / len
+    const l = Math.hypot(nx, ny, nz) || 1
+    nor.setXYZ(i, nx / l, ny / l, nz / l)
+  }
+}
+
+interface BranchSpec {
+  length: number
+  width: number
+  droop: number
+  curl: number
+  /** Up from level, in radians. */
+  pitch: number
+  /** Round the trunk, in radians. */
+  yaw: number
+  y: number
+  tone: number
+  /** Radius of the wood at the trunk; 0 for none. */
+  limb: number
+}
+
+function branch(spec: BranchSpec, crown: { centre: number; squash: number }): BufferGeometry[] {
+  const leaves = [
+    card(spec.length, spec.width, spec.droop, spec.curl, false, spec.tone),
+    card(spec.length, spec.width * 0.62, spec.droop, spec.curl, true, spec.tone),
   ]
-  tiers.forEach(([y, r, h], i) => {
-    const c = new ConeGeometry(r, h, 9, 1, false)
-    c.translate(0, y + h / 2, 0)
-    parts.push(withColour(roughen(c, 0.28, 300 + i * 7), crown.clone().offsetHSL(0, 0, i * 0.02), 0.2))
-  })
+  const parts = spec.limb > 0 ? [...leaves, limb(spec.length * 0.7, spec.limb, spec.tone)] : leaves
+  for (const part of parts) {
+    part.rotateZ(spec.pitch)
+    part.rotateY(spec.yaw)
+    part.translate(0, spec.y, 0)
+  }
+  for (const leaf of leaves) crownNormals(leaf, crown.centre, crown.squash)
+  return parts
+}
+
+function bole(top: number, base: number, height: number, crownFrom: number): BufferGeometry {
+  const g = new CylinderGeometry(top, base, height, 8, 4, true)
+  g.translate(0, height / 2, 0)
+  // In the crown's shade above where the branches start.
+  return grey(onBark(g), (_x, y) => 0.6 + 0.4 * (1 - smoothstep(crownFrom - 2, crownFrom + 3, y)))
+}
+
+/**
+ * The araucaria: a tall bare trunk and a flat-topped crown of horizontal
+ * whorls, the branches turned up at the ends — the silhouette that reads as
+ * that period to anyone.
+ */
+function araucaria(): BufferGeometry {
+  const crown = { centre: 14, squash: 1.8 }
+  const parts: BufferGeometry[] = [bole(0.2, 0.62, 17.8, 10.4)]
+  const whorls = 7
+  for (let w = 0; w < whorls; w++) {
+    const t = w / (whorls - 1)
+    const n = w < 2 ? 7 : w > 4 ? 5 : 6
+    for (let b = 0; b < n; b++) {
+      const seed = w * 17 + b
+      const length = MathUtils.lerp(6.8, 2.2, Math.pow(t, 1.1)) * (0.86 + 0.28 * hash2(seed, 901))
+      parts.push(
+        ...branch(
+          {
+            length,
+            width: length * 0.42 + 0.7,
+            droop: 0.1,
+            curl: 0.16,
+            pitch: MathUtils.lerp(0.02, 0.34, t) + (hash2(seed, 902) - 0.5) * 0.14,
+            yaw: (b / n) * Math.PI * 2 + w * 0.55 + (hash2(seed, 903) - 0.5) * 0.35,
+            y: 10.4 + t * 6.8,
+            tone: (0.78 + 0.22 * t) * (0.88 + 0.24 * hash2(seed, 904)),
+            limb: 0.12,
+          },
+          crown,
+        ),
+      )
+    }
+  }
+  // The leader: a few short sprays turned up at the very top.
+  for (let b = 0; b < 4; b++) {
+    parts.push(...branch({ length: 1.8, width: 1.3, droop: 0, curl: 0.1, pitch: 0.95, yaw: b * 1.57 + 0.4, y: 17.3, tone: 1, limb: 0 }, crown))
+  }
   return mergeGeometries(parts, false) as BufferGeometry
 }
 
-/** The classic stacked cone, darker and denser at the bottom. */
-function coniferTiered(): BufferGeometry {
-  const parts: BufferGeometry[] = [trunk(0.2, 0.55, 12.5)]
-  const low = new Color('#1c3319')
-  const high = new Color('#33532b')
-  const n = 7
-  for (let i = 0; i < n; i++) {
-    const t = i / (n - 1)
-    const y = 3 + i * 1.55
-    const r = 3.4 * Math.pow(1 - t, 0.85) + 0.5
-    const h = 2.6
-    const c = new ConeGeometry(r, h, 9, 1, false)
-    c.translate(0, y + h / 2, 0)
-    parts.push(withColour(roughen(c, 0.3, 500 + i * 7), low.clone().lerp(high, t), 0.2))
+/**
+ * A conical conifer: whorls all the way down a shorter trunk, the lower
+ * branches long and sweeping down, the upper ones short and reaching up.
+ */
+function spire(): BufferGeometry {
+  const crown = { centre: 6.5, squash: 0.7 }
+  const parts: BufferGeometry[] = [bole(0.16, 0.5, 13.9, 2.3)]
+  const whorls = 11
+  for (let w = 0; w < whorls; w++) {
+    const t = w / (whorls - 1)
+    const n = t > 0.75 ? 5 : 6
+    for (let b = 0; b < n; b++) {
+      const seed = 500 + w * 13 + b
+      const length = MathUtils.lerp(4.5, 0.8, Math.pow(t, 0.85)) * (0.85 + 0.3 * hash2(seed, 911))
+      parts.push(
+        ...branch(
+          {
+            length,
+            width: length * 0.5 + 0.45,
+            droop: MathUtils.lerp(0.2, 0.03, t),
+            curl: 0.07,
+            pitch: MathUtils.lerp(-0.24, 0.42, t) + (hash2(seed, 912) - 0.5) * 0.1,
+            yaw: (b / n) * Math.PI * 2 + w * 0.9 + (hash2(seed, 913) - 0.5) * 0.4,
+            y: 2.3 + t * 10.8,
+            tone: (0.72 + 0.28 * t) * (0.88 + 0.24 * hash2(seed, 914)),
+            limb: 0,
+          },
+          crown,
+        ),
+      )
+    }
+  }
+  for (let b = 0; b < 3; b++) {
+    parts.push(...branch({ length: 1.5, width: 1.1, droop: 0, curl: 0.05, pitch: 1.25, yaw: b * 2.1, y: 13.3, tone: 1, limb: 0 }, crown))
   }
   return mergeGeometries(parts, false) as BufferGeometry
 }
@@ -154,15 +270,25 @@ function barkUv(geometry: BufferGeometry): BufferGeometry {
   return geometry
 }
 
+/**
+ * Fronds take the crown's normal, out and up from where they spring, like the
+ * conifers' cards: a bent plane's own normal faces down on half of every
+ * frond, and lit by it a field of ferns was black.
+ */
+function fronds(parts: BufferGeometry[], centre: number, squash: number): BufferGeometry[] {
+  for (const part of parts) crownNormals(part, centre, squash)
+  return parts
+}
+
 function treeFern(): BufferGeometry {
   const stem = new CylinderGeometry(0.22, 0.36, 3.6, 7, 1, false)
   stem.translate(0, 1.8, 0)
-  const parts = [barkUv(stem), ...crown(9, 3.3, 0.95, 1.6, 0.95, 3.5, 900), ...crown(4, 2.2, 0.8, 1.2, 0.4, 3.6, 950)]
+  const parts = [barkUv(stem), ...fronds([...crown(9, 3.3, 0.95, 1.6, 0.95, 3.5, 900), ...crown(4, 2.2, 0.8, 1.2, 0.4, 3.6, 950)], 3.1, 1.2)]
   return mergeGeometries(parts, false) as BufferGeometry
 }
 
 function groundFern(): BufferGeometry {
-  const parts = [...crown(7, 1.8, 0.6, 1.5, 0.85, 0.05, 1200), ...crown(3, 1.2, 0.5, 1.2, 0.45, 0.08, 1250)]
+  const parts = fronds([...crown(7, 1.8, 0.6, 1.5, 0.85, 0.05, 1200), ...crown(3, 1.2, 0.5, 1.2, 0.45, 0.08, 1250)], -0.8, 1)
   return mergeGeometries(parts, false) as BufferGeometry
 }
 
@@ -200,7 +326,7 @@ export function leaf(): CanvasTexture | null {
   for (let k = 0; k < 24; k++) {
     const y = 246 - k * 10.2
     const len = 5 + 36 * Math.pow(1 - k / 26, 0.8)
-    const lit = 22 + hash2(k, 5) * 10
+    const lit = 26 + hash2(k, 5) * 11
     ctx.fillStyle = `hsl(${96 + hash2(k, 9) * 10}, 42%, ${lit}%)`
     for (const side of [-1, 1]) {
       ctx.beginPath()
@@ -226,6 +352,112 @@ export function leaf(): CanvasTexture | null {
   leafTexture.colorSpace = SRGBColorSpace
   leafTexture.anisotropy = 4
   return leafTexture
+}
+
+let needleTexture: CanvasTexture | null = null
+
+/**
+ * A spray of conifer needles, drawn along the texture's width the way a card
+ * runs along a branch: a twig, branchlets either side angled forward and
+ * shortening towards the tip, and needles both sides of every branchlet — old
+ * and dark in towards the twig, fresh and lighter at the ends. Bark at the far
+ * end of the texture, with the rings of scars an araucaria trunk has, so the
+ * trunks share the material.
+ */
+export function needles(): CanvasTexture | null {
+  if (needleTexture) return needleTexture
+  if (typeof document === 'undefined') return null
+  const canvas = document.createElement('canvas')
+  canvas.width = 512
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.clearRect(0, 0, 512, 256)
+  const left = 512 * SPRAY_U[0]
+  const right = 512 * SPRAY_U[1]
+  const cy = 128
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(left, 0, right - left, 256)
+  ctx.clip()
+  ctx.lineCap = 'round'
+
+  // The twig.
+  ctx.strokeStyle = 'rgb(62, 50, 34)'
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12
+    const b = (i + 1) / 12
+    ctx.lineWidth = 5 - 3 * a
+    ctx.beginPath()
+    ctx.moveTo(left + a * (right - left - 40), cy + Math.sin(a * 3) * 4)
+    ctx.lineTo(left + b * (right - left - 40), cy + Math.sin(b * 3) * 4)
+    ctx.stroke()
+  }
+
+  const count = 30
+  for (let i = 0; i < count; i++) {
+    const s = (i + 0.5) / count
+    const x0 = left + 2 + s * (right - left - 44)
+    const y0 = cy + Math.sin(s * 3) * 4
+    for (const side of [-1, 1]) {
+      const k = i * 2 + (side > 0 ? 1 : 0)
+      const width = (0.45 + 0.55 * Math.min(1, s / 0.3)) * (1 - 0.6 * Math.pow(s, 1.5))
+      const reach = 116 * width * (0.8 + 0.35 * hash2(k, 11))
+      const angle = (0.85 + 0.3 * hash2(k, 12)) * side
+      // The branchlet, bending forward towards its end.
+      const steps = Math.max(3, Math.round(reach / 4.5))
+      let px = x0
+      let py = y0
+      for (let j = 0; j < steps; j++) {
+        const f = j / steps
+        const bend = f * 0.5 * side
+        const ux = Math.cos(angle - bend)
+        const uy = Math.sin(angle - bend)
+        const nx = px + ux * (reach / steps)
+        const ny = py + uy * (reach / steps)
+        ctx.strokeStyle = `rgb(${54 + f * 20}, ${58 + f * 26}, 30)`
+        ctx.lineWidth = 2.4 - f
+        ctx.beginPath()
+        ctx.moveTo(px, py)
+        ctx.lineTo(nx, ny)
+        ctx.stroke()
+        // Needles both sides, swept forward along the branchlet.
+        const len = (13 - 5 * f) * (0.85 + 0.3 * hash2(k * 40 + j, 13))
+        const light = 15 + f * 17 + hash2(k * 40 + j, 14) * 6
+        ctx.strokeStyle = `hsl(${96 + f * 10 + hash2(k * 40 + j, 15) * 10}, ${38 + f * 10}%, ${light}%)`
+        ctx.lineWidth = 2
+        for (const s2 of [-1, 1]) {
+          ctx.beginPath()
+          ctx.moveTo(nx, ny)
+          ctx.lineTo(nx + (ux * 0.55 - uy * 0.83 * s2) * len, ny + (uy * 0.55 + ux * 0.83 * s2) * len)
+          ctx.stroke()
+        }
+        px = nx
+        py = ny
+      }
+    }
+  }
+  ctx.restore()
+
+  // Bark: grey-brown, fissured, ringed with old branch scars.
+  const bark = 512 * BARK_U[1] + 4
+  ctx.fillStyle = 'rgb(82, 72, 62)'
+  ctx.fillRect(0, 0, bark, 256)
+  for (let i = 0; i < 46; i++) {
+    ctx.fillStyle = `rgba(${26 + hash2(i, 31) * 30}, ${20 + hash2(i, 32) * 22}, 14, ${0.35 + hash2(i, 33) * 0.4})`
+    ctx.fillRect(hash2(i, 34) * bark, hash2(i, 35) * 256, 1 + hash2(i, 36) * 2, 12 + hash2(i, 37) * 46)
+  }
+  for (let y = 6; y < 256; y += 14 + hash2(y, 38) * 8) {
+    ctx.fillStyle = `rgba(36, 28, 20, ${0.35 + hash2(y, 39) * 0.25})`
+    ctx.fillRect(0, y, bark, 2)
+    ctx.fillStyle = 'rgba(150, 130, 110, 0.18)'
+    ctx.fillRect(0, y + 2, bark, 1)
+  }
+
+  needleTexture = new CanvasTexture(canvas)
+  needleTexture.colorSpace = SRGBColorSpace
+  needleTexture.anisotropy = 4
+  return needleTexture
 }
 
 /* -------------------------------------------------------------------------- */
@@ -298,7 +530,7 @@ export function geometryFor(kind: Kind): BufferGeometry {
   const have = GEOMETRY[kind]
   if (have) return have
   const built =
-    kind === 'umbrella' ? coniferUmbrella() : kind === 'tiered' ? coniferTiered() : kind === 'treeFern' ? treeFern() : groundFern()
+    kind === 'umbrella' ? araucaria() : kind === 'tiered' ? spire() : kind === 'treeFern' ? treeFern() : groundFern()
   GEOMETRY[kind] = built
   return built
 }
@@ -323,6 +555,7 @@ export function prepareFlora(tier: DeviceTier, schedule: (fn: () => void) => voi
     })
   let chain = slice(() => {
     leaf()
+    needles()
   })
   for (const kind of KINDS) {
     chain = chain.then(() =>

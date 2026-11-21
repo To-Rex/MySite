@@ -3,6 +3,7 @@ import { prewarmCreatures } from './useCreature'
 import { VALLEY_DETAIL, VALLEY_SPECIES } from './valleyCast'
 import { prepareLand } from './valleyLand'
 import { prepareFlora } from './valleyForest'
+import { buildRange } from './valleyMountains'
 
 /**
  * Builds everything the valley needs before anyone asks for it.
@@ -14,7 +15,8 @@ import { prepareFlora } from './valleyForest'
  * species, sample sixteen thousand heights, scatter a thousand plants, merge
  * the tree geometries — and the page stood still for most of a second before
  * the valley appeared. Now the chunk is fetched here, the cast is meshed here,
- * and the land and the forest are built here in slices between idle frames.
+ * and the land, the forest and the ranges beyond are built here in slices
+ * between idle frames.
  * Resolves once all of it is in place, which is when the scene itself can be
  * mounted and parked; its shaders are the one thing left, and it compiles
  * those off the main thread on its own.
@@ -30,7 +32,17 @@ export function warmValley(tier: DeviceTier): Promise<void> {
       prepareLand()
       done()
     })
-  }).then(() => prepareFlora(tier, idle))
+  })
+    .then(() => prepareFlora(tier, idle))
+    .then(
+      () =>
+        new Promise<void>((done) => {
+          idle(() => {
+            buildRange()
+            done()
+          })
+        }),
+    )
   return Promise.all([chunk, cast, ground]).then(() => undefined)
 }
 
