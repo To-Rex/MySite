@@ -362,12 +362,25 @@ html.lenis body {
   .live-dot::after { animation: none; }
 }
 
-/* Language switch crossfade — scroll position and layout stay intact. */
+/*
+ * A change of language. Where the page can, every visible string turns into
+ * its translation letter by letter (i18n/letterMorph.ts), and the letters on
+ * their way are lit — by a `::highlight()` rule that file adds itself, because
+ * the CSS optimiser here does not know the selector and warns about it. Where
+ * the page cannot, it dims over the swap instead. Scroll position and layout
+ * stay intact either way.
+ */
 .lang-fade {
   transition: opacity 260ms var(--ease-out);
 }
 .lang-fade[data-switching='true'] {
   opacity: 0.35;
+}
+/* With reduced motion there is neither: a dim cut to nothing is a flash, so the text is simply the new text. */
+@media (prefers-reduced-motion: reduce) {
+  .lang-fade[data-switching='true'] {
+    opacity: 1;
+  }
 }
 
 /* Horizontal rows without visible scrollbars */

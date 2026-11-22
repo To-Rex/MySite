@@ -87,8 +87,8 @@ export function Philosophy() {
             {t.philosophy.label}
           </p>
           <ul className="mt-10 flex flex-col gap-2">
-            {words.map((w) => (
-              <li key={w} className="display-tight text-[clamp(3rem,10vw,9rem)]">
+            {words.map((w, i) => (
+              <li key={i} className="display-tight text-[clamp(3rem,10vw,9rem)]">
                 {w}
               </li>
             ))}
@@ -136,7 +136,7 @@ export function Philosophy() {
             <span className="sr-only">{srText}</span>
             <div className="relative h-[1.2em] w-full text-[clamp(3.2rem,12.5vw,11.5rem)]">
               {words.map((w, i) => (
-                <Word key={`${w}-${i}`} text={w} index={i} total={total} progress={scrollYProgress} />
+                <Word key={i} text={w} index={i} total={total} progress={scrollYProgress} />
               ))}
               <Word text={t.philosophy.closing} index={words.length} total={total} progress={scrollYProgress} accent />
             </div>

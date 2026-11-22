@@ -19,7 +19,8 @@ export function About() {
               <SectionHeading label={t.about.label} title={t.about.title} titleId="about-title" />
               <dl className="mt-12 grid grid-cols-2 gap-x-6 gap-y-8">
                 {facts.map((fact, i) => (
-                  <Reveal key={fact.label} delay={0.08 * i} className="border-t border-border pt-4">
+                  // Keyed by place, not by its words: a change of language rewrites the same row instead of replacing it.
+                  <Reveal key={i} delay={0.08 * i} className="border-t border-border pt-4">
                     <dt className="eyebrow">{fact.label}</dt>
                     <dd className="mt-2 text-[0.98rem] leading-snug font-medium text-fg">{fact.value}</dd>
                   </Reveal>
@@ -53,7 +54,7 @@ export function About() {
               {t.about.principles.map((p, i) => (
                 <Reveal
                   as="li"
-                  key={p.title}
+                  key={i}
                   delay={0.06 * i}
                   amount={0.3}
                   className="group h-full bg-bg p-6 transition-colors duration-500 hover:bg-surface md:p-7"

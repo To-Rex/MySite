@@ -111,7 +111,9 @@ export function Marquee({ items, className }: MarqueeProps) {
   }, [reduced])
 
   return (
-    <div ref={root} className={cn('marquee mask-fade-x overflow-hidden', className)} aria-hidden data-direction="left">
+    // Left out of the letter-by-letter change of language: nobody reads a running row a letter
+    // at a time, and every width it passed through on the way would be measured as a new row.
+    <div ref={root} className={cn('marquee mask-fade-x overflow-hidden', className)} aria-hidden data-direction="left" data-no-morph>
       <div ref={track} className="marquee-track">
         {Array.from({ length: copies }, (_, copy) => (
           <div key={copy} className="marquee-row flex flex-none items-center gap-10 pr-10">

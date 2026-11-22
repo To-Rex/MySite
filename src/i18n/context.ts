@@ -40,7 +40,7 @@ export interface I18nContextValue {
   /** BCP-47 tag for Intl APIs. */
   locale: string
   setLang: (next: Language) => void
-  /** True during the brief crossfade while the language changes. */
+  /** True during the brief dim over a change of language, in a browser that cannot show it letter by letter. */
   switching: boolean
 }
 

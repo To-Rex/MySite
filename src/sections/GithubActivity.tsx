@@ -96,7 +96,7 @@ export function GithubActivity() {
                 </div>
               </div>
               {stats.map((s, i) => (
-                <div key={s.label} className="bg-bg p-6">
+                <div key={i} className="bg-bg p-6">
                   {s.value === null ? (
                     <Skeleton className="h-9 w-20" />
                   ) : (
