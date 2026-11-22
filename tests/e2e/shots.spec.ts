@@ -81,6 +81,30 @@ for (const viewport of VIEWPORTS) {
       mkdirSync(OUT, { recursive: true })
       const shot = (name: string) => page.screenshot({ path: join(OUT, `${viewport.name}-${theme}-${name}.png`) })
 
+      // The long walk, once in each era: it has no place in the list below,
+      // being a scene the page scrolls through and not a section it scrolls to.
+      // First, so that the sections still end at the bottom of the page: the
+      // phone's menu button is only there to press after scrolling up.
+      const walk = page.locator('#evolution')
+      if (await walk.count()) {
+        for (const [at, name] of [
+          [0.08, 'fire'],
+          [0.2, 'mouth'],
+          [0.4, 'hunt'],
+          [0.56, 'field'],
+          [0.76, 'city'],
+          [0.93, 'now'],
+        ] as const) {
+          await page.evaluate((p) => {
+            const el = document.getElementById('evolution')!
+            const top = el.getBoundingClientRect().top + window.scrollY
+            window.scrollTo(0, Math.round(top + p * (el.offsetHeight - (el.firstElementChild as HTMLElement).clientHeight)))
+          }, at)
+          await page.waitForTimeout(at === 0.08 ? 6000 : 1600)
+          await shot(`14-walk-${name}`)
+        }
+      }
+
       for (const [index, id] of SECTIONS.entries()) {
         // Each section framed from its own top edge, so two runs can be compared.
         await scrollTo(page, id)

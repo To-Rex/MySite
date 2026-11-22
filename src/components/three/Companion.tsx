@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import { useTheme } from '@/theme/context'
 import { useDeviceTier, supportsWebGL } from '@/hooks/useDeviceTier'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { useEvolution } from '@/lib/evolution'
 
 /**
  * Decides *whether* the scroll companion exists; the turtle itself lives in a
@@ -45,6 +46,9 @@ export function Companion() {
   // costs far more than leaving one idle canvas in place.
   const [awake, setAwake] = useState(false)
   const [visible, setVisible] = useState(false)
+  // The long walk is a scene of its own, as wide as the window: a turtle
+  // swimming across the front of it belongs to another picture.
+  const { onScreen: walking } = useEvolution()
 
   useEffect(() => {
     if (reduced) return
@@ -77,7 +81,7 @@ export function Companion() {
 
   return (
     <Suspense fallback={null}>
-      <CompanionTurtle theme={theme} tier={tier} visible={visible} />
+      <CompanionTurtle theme={theme} tier={tier} visible={visible && !walking} />
     </Suspense>
   )
 }

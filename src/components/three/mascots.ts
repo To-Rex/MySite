@@ -13,6 +13,7 @@ import {
   type Part,
   type ToothRow,
 } from './creatures'
+import { createFigure, isFigureKind, type FigureKind } from './evoFigures'
 
 /**
  * The six animals behind the languages Dilshodjon works around — the snake, the
@@ -417,4 +418,16 @@ export function createAnyCreature(kind: AnyCreatureKind, detail: CreatureDetail)
   if (!isBeastKind(kind)) return createCreature(kind, detail)
   const m = BEASTS[kind]
   return buildCreature(m.parts, m.bones, m.eye, m.teeth, detail)
+}
+
+/**
+ * Everything the worker can mesh: the creatures above, and the people and
+ * animals of the long walk. Those are kept out of `AnyCreatureKind` on
+ * purpose — they are not hides, and nothing that picks a hide by species
+ * should ever be handed one.
+ */
+export type AnyKind = AnyCreatureKind | FigureKind
+
+export function createAnything(kind: AnyKind, detail: CreatureDetail): CreaturePayload {
+  return isFigureKind(kind) ? createFigure(kind, detail) : createAnyCreature(kind, detail)
 }

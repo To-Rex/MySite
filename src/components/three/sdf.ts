@@ -25,6 +25,8 @@ export interface SdfEllipsoid {
   pitch?: number
   /** Carve this shape out of the union instead of adding to it. */
   negative?: boolean
+  /** See `SdfCone.group`. */
+  group?: number
 }
 
 /** A capsule whose radius varies linearly from `a` to `b`. */
@@ -36,6 +38,15 @@ export interface SdfCone {
   rb: number
   /** Carve this shape out of the union instead of adding to it. */
   negative?: boolean
+  /**
+   * Shapes that share a group (and follow one another in the list) are one
+   * shape: they are joined with a plain minimum, and only the result is
+   * blended into the rest. Without it, the capsules a tube is cut into are
+   * each filleted to the next, and a smooth union of two overlapping capsules
+   * bulges — a limb comes out as a string of beads. Left out, every shape is
+   * its own group, which is what the creatures have always been.
+   */
+  group?: number
 }
 
 export type SdfPrimitive = SdfEllipsoid | SdfCone
@@ -57,6 +68,7 @@ interface PreparedEllipsoid {
   /** Bounding radius used for spatial binning. */
   bound: number
   negative: boolean
+  group: number
 }
 
 interface PreparedCone {
@@ -75,6 +87,7 @@ interface PreparedCone {
   cz: number
   bound: number
   negative: boolean
+  group: number
 }
 
 type Prepared = PreparedEllipsoid | PreparedCone
@@ -100,6 +113,7 @@ function prepare(prim: SdfPrimitive): Prepared {
       rotated: yaw !== 0 || pitch !== 0,
       bound: Math.max(rx, ry, rz),
       negative: prim.negative === true,
+      group: prim.group ?? -1,
     }
   }
   const [ax, ay, az] = prim.a
@@ -124,6 +138,7 @@ function prepare(prim: SdfPrimitive): Prepared {
     cz: (az + bz) / 2,
     bound: Math.sqrt(lenSq) / 2 + Math.max(prim.ra, prim.rb),
     negative: prim.negative === true,
+    group: prim.group ?? -1,
   }
 }
 
@@ -169,6 +184,52 @@ function smin(a: number, b: number, k: number): number {
 /** Smooth maximum, used to carve a shape out with a rounded lip. */
 function smax(a: number, b: number, k: number): number {
   return -smin(-a, -b, k)
+}
+
+/**
+ * Distance to one shape, for comparing shapes with each other rather than for
+ * meshing. The mesher's ellipsoid distance is scaled by the *smallest* radius,
+ * which is right at the surface and far too small away from it for a flat
+ * shape — a thin slab of muscle would report itself nearer to every vertex
+ * within reach than the round thing actually under that vertex. This is the
+ * first-order estimate instead (the field over the length of its gradient),
+ * which is good everywhere outside.
+ */
+function fairDistance(p: Prepared, x: number, y: number, z: number): number {
+  if (p.kind !== 0) return distance(p, x, y, z)
+  let dx = x - p.cx
+  let dy = y - p.cy
+  let dz = z - p.cz
+  if (p.rotated) {
+    const nx = dx * p.cosY + dz * p.sinY
+    const nz = -dx * p.sinY + dz * p.cosY
+    dx = nx
+    dz = nz
+    const px = dx * p.cosP - dy * p.sinP
+    const py = dx * p.sinP + dy * p.cosP
+    dx = px
+    dy = py
+  }
+  const k0 = Math.hypot(dx / p.rx, dy / p.ry, dz / p.rz)
+  const k1 = Math.hypot(dx / (p.rx * p.rx), dy / (p.ry * p.ry), dz / (p.rz * p.rz))
+  return k1 > 1e-9 ? (k0 * (k0 - 1)) / k1 : -Math.min(p.rx, p.ry, p.rz)
+}
+
+/**
+ * The plain distance to the nearest of a set of shapes, with no blending and no
+ * carving. Not for meshing: for asking, of a vertex already on a surface, which
+ * of several groups of shapes it belongs to — hide or hair, skin or cloth.
+ */
+export function nearestField(primitives: SdfPrimitive[]): (x: number, y: number, z: number) => number {
+  const prepared = primitives.filter((prim) => !prim.negative).map(prepare)
+  return (x, y, z) => {
+    let d = Infinity
+    for (let n = 0; n < prepared.length; n++) {
+      const dn = fairDistance(prepared[n]!, x, y, z)
+      if (dn < d) d = dn
+    }
+    return d
+  }
 }
 
 export interface MeshOptions {
@@ -253,12 +314,22 @@ export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = bl
     const list = bins[i + bx * (j + by * k)]!
     if (list.length === 0) return FAR
     let d = Infinity
+    // The shape being gathered: one primitive, or a run that shares a group.
+    let run = Infinity
+    let group = -1
     for (let n = 0; n < list.length; n++) {
       const prim = prepared[list[n]!]!
       if (prim.negative) continue
       const dn = distance(prim, x, y, z)
-      d = d === Infinity ? dn : smin(d, dn, blend)
+      if (prim.group >= 0 && prim.group === group) {
+        if (dn < run) run = dn
+        continue
+      }
+      if (run !== Infinity) d = d === Infinity ? run : smin(d, run, blend)
+      run = dn
+      group = prim.group
     }
+    if (run !== Infinity) d = d === Infinity ? run : smin(d, run, blend)
     if (d === Infinity) return FAR
     // Carving happens after the union so a socket cuts the finished surface.
     for (let n = 0; n < list.length; n++) {

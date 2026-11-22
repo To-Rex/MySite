@@ -264,4 +264,15 @@ export const de: Dictionary = {
     drag: 'Ziehen',
     explore: 'Erkunden',
   },
+  evolution: {
+    title: 'Der lange Weg',
+    label: 'Der lange Weg: eine Szene, die dem Scrollen folgt, vom ersten Feuer bis zu diesem Bildschirm',
+    eras: {
+      fire: { label: 'Feuer', line: 'Es begann mit einem Feuer und Menschen, die dicht darum saßen.' },
+      hunt: { label: 'Die Jagd', line: 'Dann gingen sie hinaus und lernten, es gemeinsam zu tun.' },
+      field: { label: 'Das Feld', line: 'Sie blieben. Das Land veränderte sich, und sie mit ihm.' },
+      city: { label: 'Die Stadt', line: 'Die Feuer wurden mehr, bis die Nacht selbst erleuchtet war.' },
+      now: { label: 'Jetzt', line: 'Eines dieser Lichter ist ein Bildschirm. Jemand baut das Nächste.' },
+    },
+  },
 }

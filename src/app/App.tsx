@@ -16,6 +16,7 @@ import { Preloader } from '@/components/loader/Preloader'
 import { Companion } from '@/components/three/Companion'
 import { Valley } from '@/components/three/Valley'
 import { Hero } from '@/sections/Hero'
+import { Evolution } from '@/sections/Evolution'
 import { About } from '@/sections/About'
 import { Philosophy } from '@/sections/Philosophy'
 import { TechUniverse } from '@/sections/TechUniverse'
@@ -44,6 +45,7 @@ function Shell() {
         <Navigation />
         <main id="main" className="lang-fade" data-switching={switching}>
           <Hero />
+          <Evolution />
           <About />
           <Philosophy />
           <TechUniverse />

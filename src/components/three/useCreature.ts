@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BufferAttribute, BufferGeometry } from 'three'
 import type { CreatureDetail, CreaturePayload } from './creatures'
-import { createAnyCreature, type AnyCreatureKind } from './mascots'
+import { createAnything, type AnyCreatureKind, type AnyKind } from './mascots'
 import type { CreatureRequest, CreatureResponse } from './creatures.worker'
 
 /**
@@ -19,6 +19,8 @@ export interface CreatureGeometry {
   eyeBone: string
   eyes: CreaturePayload['eyes']
   teeth: CreaturePayload['teeth']
+  /** The longest axis in metres, for the figures that are built to a real size. */
+  size?: number
 }
 
 const cache = new Map<string, CreatureGeometry>()
@@ -31,9 +33,10 @@ function toGeometry(payload: CreaturePayload): CreatureGeometry {
   geometry.setAttribute('aoValue', new BufferAttribute(payload.ao, 1))
   geometry.setAttribute('skinIndex', new BufferAttribute(payload.skinIndices, 4))
   geometry.setAttribute('skinWeight', new BufferAttribute(payload.skinWeights, 4))
+  if (payload.regions) geometry.setAttribute('regions', new BufferAttribute(payload.regions, 4))
   geometry.setIndex(new BufferAttribute(payload.indices, 1))
   geometry.computeBoundingSphere()
-  return { geometry, bones: payload.bones, eyeBone: payload.eyeBone, eyes: payload.eyes, teeth: payload.teeth }
+  return { geometry, bones: payload.bones, eyeBone: payload.eyeBone, eyes: payload.eyes, teeth: payload.teeth, size: payload.size }
 }
 
 let worker: Worker | null = null
@@ -77,7 +80,7 @@ function getWorker(): Worker | null {
   return worker
 }
 
-function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<CreatureGeometry> {
+function request(kind: AnyKind, detail: CreatureDetail): Promise<CreatureGeometry> {
   const key = `${kind}:${detail}`
   const cached = cache.get(key)
   if (cached) return Promise.resolve(cached)
@@ -87,7 +90,7 @@ function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<Creatur
   const promise = new Promise<CreatureGeometry>((resolve) => {
     const active = getWorker()
     if (!active) {
-      resolve(toGeometry(createAnyCreature(kind, detail)))
+      resolve(toGeometry(createAnything(kind, detail)))
       return
     }
     const id = nextId++
@@ -95,14 +98,14 @@ function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<Creatur
     // message lost — is caught here rather than left to hang forever.
     const patience = setTimeout(() => {
       if (!inflight.delete(id)) return
-      resolve(toGeometry(createAnyCreature(kind, detail)))
+      resolve(toGeometry(createAnything(kind, detail)))
     }, PATIENCE)
     inflight.set(id, (response) => {
       clearTimeout(patience)
       if (response.ok) resolve(toGeometry(response))
       // A failed worker run falls back to generating on the main thread: a brief
       // stall is still better than a hero with no creature in it.
-      else resolve(toGeometry(createAnyCreature(kind, detail)))
+      else resolve(toGeometry(createAnything(kind, detail)))
     })
     const message: CreatureRequest = { id, kind, detail }
     active.postMessage(message)
@@ -117,6 +120,12 @@ function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<Creatur
 }
 
 /**
+ * The shared geometry for anything the worker can build, as a promise: for a
+ * scene that is put together by hand rather than out of components.
+ */
+export const requestCreature = (kind: AnyKind, detail: CreatureDetail): Promise<CreatureGeometry> => request(kind, detail)
+
+/**
  * Meshes a list of creatures ahead of time, one after another.
  *
  * Sequential on purpose: there is one worker, and a caller that queues five
@@ -125,7 +134,7 @@ function request(kind: AnyCreatureKind, detail: CreatureDetail): Promise<Creatur
  * is a warm-up, and everything it warms is requested properly later anyway.
  */
 export async function prewarmCreatures(
-  kinds: readonly AnyCreatureKind[],
+  kinds: readonly AnyKind[],
   detail: CreatureDetail,
   gap = 400,
 ): Promise<void> {

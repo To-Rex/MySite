@@ -253,4 +253,11 @@ export interface Dictionary {
     drag: string
     explore: string
   }
+  /** The long walk: the pinned 3D scene after the hero, and the line under each era of it. */
+  evolution: {
+    title: string
+    /** What a screen reader is told the section is. */
+    label: string
+    eras: Record<'fire' | 'hunt' | 'field' | 'city' | 'now', { label: string; line: string }>
+  }
 }

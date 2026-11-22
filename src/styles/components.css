@@ -920,3 +920,124 @@
     transform: translateX(32%);
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* The long walk: a pinned 3D scene the scroll runs from end to end.   */
+/* ------------------------------------------------------------------ */
+
+.evolution {
+  position: relative;
+}
+
+.evolution-stage {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+  /* What shows before the scene has drawn anything: the dark of the cave it
+     opens in, so a frame that arrives late arrives into the right colour. */
+  background: #050506;
+  color: #f5f2ea;
+  --walk: 0;
+  --walk-edge: max(var(--gutter), calc((100vw - var(--container)) / 2 + var(--gutter)));
+  /* The stage is dark in both themes, so its words take the dark theme's gold. */
+  --accent: #dcc095;
+}
+
+.evolution-scene {
+  position: absolute;
+  inset: 0;
+}
+
+/* Both ends of the walk are handed over rather than cut: the page's colour
+   lies over the top of the stage as it comes up into view and clears as the
+   walk begins, and at the far end it closes over the screen the camera has
+   gone into, so what scrolls up next is already the page. */
+.evolution-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.evolution-veil::before,
+.evolution-veil::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.evolution-veil::before {
+  bottom: auto;
+  height: 44svh;
+  background: linear-gradient(to bottom, var(--bg) 0%, color-mix(in srgb, var(--bg) 62%, transparent) 38%, transparent 100%);
+  opacity: clamp(0, calc(1 - var(--walk) / 0.035), 1);
+}
+
+.evolution-veil::after {
+  background: var(--bg);
+  opacity: clamp(0, calc((var(--walk) - 0.968) / 0.028), 1);
+}
+
+.evolution-captions {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+/* A little dark under the words, whatever the picture is doing behind them. */
+.evolution-captions::before {
+  content: '';
+  position: absolute;
+  inset: -16rem 0 0 0;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.62) 0%, rgb(0 0 0 / 0.28) 46%, transparent 100%);
+  opacity: clamp(0, calc((0.985 - var(--walk)) / 0.02), 1);
+}
+
+.evolution-caption {
+  position: absolute;
+  left: var(--walk-edge);
+  right: var(--walk-edge);
+  bottom: max(2.6rem, calc(env(safe-area-inset-bottom) + 1.6rem));
+  max-width: 38rem;
+  opacity: 0;
+  visibility: hidden;
+  will-change: opacity, transform;
+}
+
+.evolution-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgb(245 242 234 / 0.74);
+}
+
+.evolution-kicker span {
+  color: var(--accent);
+}
+
+.evolution-kicker::after {
+  content: '';
+  flex: 0 0 2.4rem;
+  height: 1px;
+  background: rgb(245 242 234 / 0.34);
+}
+
+.evolution-line {
+  margin-top: 0.7rem;
+  font-size: clamp(1.4rem, 2.7vw, 2.3rem);
+  font-weight: 600;
+  line-height: 1.16;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  text-shadow: 0 1px 26px rgb(0 0 0 / 0.6);
+}

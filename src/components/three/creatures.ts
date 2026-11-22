@@ -50,6 +50,8 @@ interface Blob {
   pitch?: number
   /** Carve out of the body rather than adding to it. */
   negative?: boolean
+  /** Joins it to its neighbours in the list as one shape. See `SdfCone.group`. */
+  group?: number
 }
 
 /** A limb, tail or muzzle: a tapering tube swept along a curve. */
@@ -58,6 +60,10 @@ interface Tube {
   path: Vec3[]
   /** Radius at each path point; interpolated in between. */
   radii: number[]
+  /** Makes the tube one shape in the field rather than a chain of them. See `SdfCone.group`. */
+  group?: number
+  /** Carve the tube out rather than adding it: a passage through rock. */
+  negative?: boolean
 }
 
 export type Part = Blob | Tube
@@ -122,6 +128,13 @@ export interface CreaturePayload {
   eyeBone: string
   eyes: CreatureEye[]
   teeth: CreatureTooth[]
+  /**
+   * For the figures of the long walk (`evoFigures.ts`): how much of each
+   * vertex is skin, hair, clothing and trim, four weights that sum to one.
+   */
+  regions?: Float32Array
+  /** And how long the longest axis was before it was normalised to 1, in metres. */
+  size?: number
 }
 
 export const blob = (at: Vec3, size: Vec3, yaw?: number, pitch?: number): Blob => ({ kind: 'blob', at, size, yaw, pitch })
@@ -212,14 +225,14 @@ function tubeToCones(part: Tube): SdfPrimitive[] {
     const t = i / steps
     const point = splinePoint(part.path, t)
     const r = radiusAt(t)
-    cones.push({ kind: 'cone', a: prev, b: point, ra: prevR, rb: r })
+    cones.push({ kind: 'cone', a: prev, b: point, ra: prevR, rb: r, group: part.group, negative: part.negative })
     prev = point
     prevR = r
   }
   return cones
 }
 
-function toPrimitives(parts: Part[]): SdfPrimitive[] {
+export function toPrimitives(parts: Part[]): SdfPrimitive[] {
   const out: SdfPrimitive[] = []
   for (const part of parts) {
     if (part.kind === 'blob') {
@@ -230,6 +243,7 @@ function toPrimitives(parts: Part[]): SdfPrimitive[] {
         yaw: part.yaw,
         pitch: part.pitch,
         negative: part.negative,
+        group: part.group,
       })
     } else {
       out.push(...tubeToCones(part))

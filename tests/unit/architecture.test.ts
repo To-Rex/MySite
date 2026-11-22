@@ -116,19 +116,22 @@ describe('lazy 3D', () => {
 
   it('reaches every scene only through a dynamic import', () => {
     const { files } = closure(join(SRC, 'main.tsx'))
-    for (const scene of ['HeroScene.tsx', 'UniverseScene.tsx', 'CompanionTurtle.tsx', 'ValleyScene.tsx', 'Spectacle.tsx', 'Cameo.tsx', 'NotFoundScene.tsx']) {
+    for (const scene of ['HeroScene.tsx', 'UniverseScene.tsx', 'CompanionTurtle.tsx', 'ValleyScene.tsx', 'EvolutionScene.tsx', 'Spectacle.tsx', 'Cameo.tsx', 'NotFoundScene.tsx']) {
       expect(files.has(join(THREE_DIR, scene)), `${scene} is statically imported: ${trail(files, join(THREE_DIR, scene))}`).toBe(false)
     }
     // …while the gates that decide whether they load are in the entry, as intended.
     expect(files.has(join(THREE_DIR, 'Companion.tsx'))).toBe(true)
     expect(files.has(join(THREE_DIR, 'Valley.tsx'))).toBe(true)
+    expect(files.has(join(SRC, 'sections/Evolution.tsx'))).toBe(true)
+    // And nothing of the long walk's world comes with its gate.
+    expect([...files.keys()].filter((file) => /[\\/]evo[A-Z]\w*\.tsx?$/.test(file)).map(rel)).toEqual([])
   })
 
   it('keeps the meshing worker free of every package, three.js above all', () => {
     const { files, packages } = closure(join(THREE_DIR, 'creatures.worker.ts'))
     // A worker is its own bundle: anything it imports is shipped a second time.
     expect([...packages.keys()]).toEqual([])
-    expect([...files.keys()].map((file) => relative(THREE_DIR, file)).sort()).toEqual(['creatures.ts', 'creatures.worker.ts', 'mascots.ts', 'sdf.ts'])
+    expect([...files.keys()].map((file) => relative(THREE_DIR, file)).sort()).toEqual(['creatures.ts', 'creatures.worker.ts', 'evoFigures.ts', 'mascots.ts', 'sdf.ts'])
   })
 })
 
@@ -184,13 +187,14 @@ describe('3D scenes', () => {
       }
       visit(source)
     }
-    expect([...canvases.keys()].sort()).toEqual(['CompanionTurtle.tsx', 'HeroScene.tsx', 'NotFoundScene.tsx', 'UniverseScene.tsx', 'ValleyScene.tsx'])
+    expect([...canvases.keys()].sort()).toEqual(['CompanionTurtle.tsx', 'EvolutionScene.tsx', 'HeroScene.tsx', 'NotFoundScene.tsx', 'UniverseScene.tsx', 'ValleyScene.tsx'])
     const passesClicksThrough = (name: string) => /pointerEvents:\s*'none'/.test(canvases.get(name) ?? '')
     // Full-bleed and fixed: R3F sets pointer-events:auto on its own wrapper, so
     // a `pointer-events-none` on the layer around it is not enough, and the
     // canvas eats every click on the page beneath it.
     expect(passesClicksThrough('CompanionTurtle.tsx')).toBe(true)
     expect(passesClicksThrough('ValleyScene.tsx')).toBe(true)
+    expect(passesClicksThrough('EvolutionScene.tsx')).toBe(true)
     expect(passesClicksThrough('NotFoundScene.tsx')).toBe(true)
     // The one canvas whose meshes are meant to be clicked.
     expect(passesClicksThrough('UniverseScene.tsx')).toBe(false)

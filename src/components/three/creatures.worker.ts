@@ -1,5 +1,5 @@
 import type { CreatureDetail, CreaturePayload } from './creatures'
-import { createAnyCreature, type AnyCreatureKind } from './mascots'
+import { createAnything, type AnyKind } from './mascots'
 
 /**
  * Meshing a creature costs a few hundred milliseconds of pure arithmetic. Doing
@@ -12,7 +12,7 @@ import { createAnyCreature, type AnyCreatureKind } from './mascots'
 
 export interface CreatureRequest {
   id: number
-  kind: AnyCreatureKind
+  kind: AnyKind
   detail: CreatureDetail
 }
 
@@ -34,16 +34,18 @@ const ctx = self as unknown as WorkerScope
 ctx.onmessage = (event) => {
   const { id, kind, detail } = event.data
   try {
-    const payload = createAnyCreature(kind, detail)
+    const payload = createAnything(kind, detail)
     // Hand the buffers over rather than copying them.
-    ctx.postMessage({ id, ok: true, ...payload }, [
+    const buffers = [
       payload.positions.buffer,
       payload.normals.buffer,
       payload.indices.buffer,
       payload.ao.buffer,
       payload.skinIndices.buffer,
       payload.skinWeights.buffer,
-    ] as Transferable[])
+    ]
+    if (payload.regions) buffers.push(payload.regions.buffer)
+    ctx.postMessage({ id, ok: true, ...payload }, buffers as Transferable[])
   } catch (error) {
     ctx.postMessage({ id, ok: false, error: String(error) })
   }

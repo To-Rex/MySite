@@ -43,6 +43,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 | `Spectacle.tsx`, `stage.ts`, `mascots.ts`, `lib/spectacle.ts` | The hero's easter egg |
 | `Cameo.tsx`, `useCameoDirector.ts` | Cameos |
 | `ReadingTrail.tsx`, `ScrollSky.tsx`, `Marquee.tsx`, `ProjectGallery.tsx`, `lib/scroll.ts`, `universeFlight.ts` | Scroll |
+| `Evolution.tsx`, `EvolutionScene.tsx`, `evo*.ts`, `lib/evolution.ts` | The long walk |
 | `Valley.tsx`, `ValleyScene.tsx`, `valley*.ts(x)`, `lib/valley.ts`, `glowPass.ts` | The extinction cinematic (The cast, The crater, The fire, The meadow, The ranges, What it costs, Quality, Sound) |
 | `404.html`, `NotFound*.tsx`, `notFound*.ts`, `lib/notFound.ts` | The 404 page |
 | `src/features/sound/*` | The 404 page → Sound · The extinction cinematic → Sound |
@@ -71,12 +72,12 @@ scripts          post-build: CSP headers, robots/sitemap, site URL resolution
 
 Each of these was a debugging round the first time. The README section explains why.
 
-1. **Gates stay three-free.** `Companion.tsx`, `Valley.tsx`, `src/lib/*`, the sections and the
+1. **Gates stay three-free.** `Companion.tsx`, `Valley.tsx`, `Evolution.tsx`, `src/lib/*`, the sections and the
    app shell must not import `three` or `@react-three/*` at runtime (`import type` is fine).
    3D enters only through `lazy()` / dynamic `import()`. One static import moved the entry
    bundle from 136 kB to 372 kB.
-2. **`sdf.ts`, `creatures.ts`, `mascots.ts` stay three-free** so the meshing worker does not
-   bundle a second copy of three.
+2. **`sdf.ts`, `creatures.ts`, `mascots.ts`, `evoFigures.ts` stay three-free** so the meshing
+   worker does not bundle a second copy of three.
 3. **Never pose from `state.clock`.** Canvases are parked with `frameloop="never"` and R3F
    resets or corrupts that clock. Accumulate clamped frame deltas (cap 0.25 s). The valley
    timeline is the one deliberate exception: it runs on a wall clock.

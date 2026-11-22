@@ -50,6 +50,8 @@ src/
                   ReadingTrail (the prints along the top), ScrollSky (the time of day)
     three/        HeroScene, UniverseScene, ThemedEnvironment (all lazy)
                   universeFlight.ts — the camera's flight through the universe (three-free)
+                  EvolutionScene.tsx + evo*.ts — the long walk: its script, land, air, grass,
+                  figures, rig, cast, cave, city, studio and lens
                   Companion.tsx — gate for the scroll companion (three-free)
                   CompanionTurtle.tsx — the turtle that follows the reader
                   creatureRig.ts / creatureFittings.tsx — shared skeleton, eyes, teeth
@@ -61,7 +63,8 @@ src/
     seo/          localized meta / OG / hreflang / JSON-LD
   features/
     github/       live GitHub data (API + hook + contribution graph, which draws in as a wave)
-  sections/       Hero, About, Philosophy, TechUniverse, Building, Projects, GithubActivity, Presence, Contact
+  sections/       Hero, Evolution (the gate of the long walk), About, Philosophy, TechUniverse, Building,
+                  Projects, GithubActivity, Presence, Contact
   hooks/, lib/    shared utilities (media queries, device tier, pointer store, scroll curves…)
 ```
 
@@ -556,6 +559,160 @@ same. Both run once and are not replayed by scrolling away and back.
   with a 14 ms stagger and no shape to it.
 - **Reduced motion:** every number stands at its value from the first frame,
   the graph is simply there, and the bars are full.
+
+### The long walk
+
+Straight after the hero the page stops, and for about eight screens of scrolling
+it is one pinned 3D scene: people getting up from a fire and leaving a cave, a
+hunt, the land settled while three days go by in a few hundred pixels, a city
+putting itself up, and one lit window with somebody at a screen behind it. The
+camera goes in through that screen, and what scrolls up next is the page.
+
+`sections/Evolution.tsx` is the gate (three-free: it decides whether the scene
+exists, holds the tall element and writes the captions), `lib/evolution.ts` the
+part of it the rest of the page reads, `EvolutionScene.tsx` the canvas, and
+everything else is a family of `evo*` files under `components/three/`.
+
+| Era | From | What happens |
+| --- | --- | --- |
+| `fire` | 0 | Embers at the back of a cave; the fire catches; three of the four people round it get up and go |
+| `hunt` | 0.2 | Out of the mouth into the sunrise; a herd at the water; stalking, a run, one spear |
+| `field` | 0.47 | The camera climbs; three days and nights go by; roofs, ploughed strips, a track |
+| `city` | 0.645 | Blocks rise out of the ground one at a time; dusk in a street; lamps and windows come on |
+| `now` | 0.905 | Across the road, through the glass, over a shoulder, into the monitor |
+
+**The whole walk is a function of one number** (`evoScript.ts`): how far the page
+has been scrolled through it. Where the camera is and what lens it has, where
+the sun and the moon are, what the light is like, what exists, where every
+hunter and every mammoth stands — all of it, with no clock, so it runs forwards,
+backwards or not at all exactly as the reader's hand does, and a test can ask
+for frame 0.413 without having played the frames before it. Tracks between keys
+are monotone cubics rather than Catmull-Rom: a Catmull-Rom spline swings past
+its keys, which for a camera a metre and a half off the ground means dipping
+into it and for the sun means setting twice. The sun rises straight out of the
+mouth of the cave and sets ahead of the walk behind the city, which a real sun
+cannot do in one day; its circle is swung round while it is going round three
+times, where nobody can see it done.
+
+**Steps are the one thing that is not.** Where a figure is, is a function of the
+scroll; its stride is counted forward from how far it has moved since the last
+frame, at no more than the pace a body keeps (`evoCast.ts`). Flick the wheel and
+a hunter covers thirty metres in a breath — at a run, not with its legs a blur.
+Stop, and everyone on the page settles into standing, breathing and looking
+about, where a clip scrubbed to that frame would have left them frozen in
+mid-stride. The city does not wait for the scroll at all: traffic and the
+people on the pavement keep their own time.
+
+**The people and the mammoths** (`evoFigures.ts`) are sculpted the way the
+creatures are — masses and tubes in one signed distance field, meshed in the
+worker — with three differences that are the reason they have a file of their
+own. They are authored in metres, and the payload says how tall they came out.
+They are more than one material: every shape belongs to a region (skin, hair,
+clothing, trim) and each vertex is given its share of the four from which
+region's shapes it lies nearest, so one seamless mesh is coloured by weights.
+And they are skinned by *reach*: every bone has a girth and a side, and a
+vertex goes to the bone whose surface it is nearest on its own side of the
+body. Distance to the axis alone gives the ribs to the upper arm, which hangs
+closer to them than the spine does.
+
+Three things there each cost a round:
+
+- **A tube has to be one shape.** `tubeToCones` cuts a limb into capsules, the
+  mesher filleted each to the next, and a smooth union of two overlapping
+  capsules bulges — every limb came out as a string of beads. Shapes that share
+  a `group` are now joined with a plain minimum and only the whole is blended
+  (`SdfCone.group`). Left out, every shape is its own group, so the creatures
+  are meshed exactly as they always were.
+- **The mesher's ellipsoid distance is not a distance.** It is scaled by the
+  smallest radius, which is right at the surface and far too small away from
+  it for a flat shape: asked which region a vertex belonged to, a thin slab of
+  chest muscle claimed the front of every jacket. `nearestField` uses the
+  first-order estimate instead, and what is worn is given a centimetre's
+  preference over what wears it.
+- **A request the worker has had for four seconds is redone on the main
+  thread** (`PATIENCE` in `useCreature.ts`). The crag the cave is cut into is
+  forty metres long and was first meshed finely enough to take eight; the page
+  stopped dead while it was built a second time. It is coarse now on purpose —
+  what its walls look like close to is the shader's business — and the cast
+  asks for one mesh at a time (`inTurn`).
+
+**They move by having their feet put down** (`evoRig.ts`). A pose is a short
+list of numbers a person could be told — how far the hips have dropped, where
+each foot is, how far each arm has swung — gaits write those from a phase, two
+poses blend by blending the numbers, and one function turns the result into
+bone rotations, solving each leg from where its foot has to be. A stride clock
+that swings the hips and knees and hopes the sole ends up level is how a figure
+comes to skate. The mammoth is the same solver on four legs, with the legs'
+top joints inside the body where an elephant's are, and it is carried a little
+low: a leg that reaches forward and back has to be straight at both ends of its
+step, and a straight leg at an angle does not come as high as an upright one.
+
+**The country** (`evoLand.ts`) is one strip seven hundred metres long: high
+ground with the cave in it at the west end, steppe and a pond in the middle,
+level ground at the east end for the city. The floor of the cave is this mesh
+too — the crag over it (`evoCave.ts`) is a mesh of its own, hollowed out to just
+inside `caveFootprint`, so the height field only climbs again inside solid rock.
+A ring of ranges stands a kilometre off, and its skirt runs in under the edge
+of the land so no gap ever shows between the two from a height. The grass
+(`evoGrass.ts`) is not the valley's: that is a fan laid out once in front of a
+camera that stays put, and this camera travels half a kilometre. Here every
+instance has a cell of a grid that covers the whole country and draws the blade
+of whichever cell of its row and column is nearest the camera, so blades that
+fall off the back of the window turn up at the front as the blades that were
+always going to be there. Whatever walks through it parts it.
+
+**The city** (`evoCity.ts`) is one instanced box, and everything that makes it
+buildings is in the fragment shader. A wall is divided into bays and floors;
+each window is a room, and the room is *drawn* — the ray from the eye is carried
+on through the glass to whichever of the room's five inside faces it meets — so
+walking past a lit front, the back walls slide behind the frames the way they
+do. By day the glass shows the sky and at the right moment the sun. The street
+is a shader too: lamp pools and what a wet patch throws back of them are worked
+out from where the lamps are, with no lights in the scene.
+
+**The air** (`evoAir.ts`) has a sun that moves, so nothing about it is a
+constant and nothing is a module-level singleton either: `createAir()` makes
+the one set of uniforms a scene shares between its dome and every material
+standing in its haze. `inAir()` stands one of three's own materials in that
+haze — in linear light, before tone mapping — and scales the sky's light by how
+much sky a point can see (`evoOpen`): the sky lights from every side at once, so
+nothing shadows it, and without that the inside of the cave is lit like the
+hillside it is under. A material's own declarations go at `PARS_HERE`;
+replacing `#include <common>` a second time puts them *before* the air's, which
+they call.
+
+**The lens** (`evoPost.ts`) is not the valley's glow. That is a second drawing
+of the things that burn, laid over a frame tone-mapped material by material —
+right for a scene that shares a page with paper. Here the whole frame is the
+scene and nearly everything in it is lit by something brighter than white, so
+it is drawn once into a floating-point frame with nothing clipped, what is over
+white is blurred down and up a short pyramid and added back, and the result is
+tone-mapped once on its way out. Programs are compiled for what they are drawn
+into, so the warm-up binds that frame first; compiled for the screen they would
+only be compiled again on the frame they were first needed.
+
+| | low | medium | high | ultra |
+| --- | --- | --- | --- | --- |
+| Resolution | 1× | 1× | up to 1.4× | up to 1.6× |
+| Shadows (sun, and the fire's) | — | 1024 | 2048 | 4096 |
+| Glow | — | — | ✓ | ✓ |
+| Grass (fine blades / tufts) | — | 29 000 / 36 000 | 62 000 / 84 000 | 109 000 / 144 000 |
+| People and mammoths | low | low | medium | high |
+| Cars | 10 | 20 | 32 | 44 |
+
+The levels are the valley's (`valleyQuality`), and like the valley the scene
+judges itself: if most of eighty frames are slow it gives up a fifth of its
+resolution, twice at most, through the canvas's own `dpr` prop. On an M2 it
+holds sixty frames a second through all five eras at `ultra`.
+
+It is built ahead of being seen — the chunk is fetched and the scene mounted,
+parked, three seconds after the intro, or as soon as a reader has been near it
+for a quarter of a second; a jump straight past it builds nothing. Where WebGL
+is drawn by the CPU it waits six seconds for someone who has plainly stopped to
+look. It draws only while the stage is on screen and the extinction cinematic
+is not. The scroll companion and its
+cameos step aside for as long as it is. With reduced motion, or without WebGL,
+there is no walk at all: the page goes from the hero to About.
 
 ### The extinction cinematic
 
@@ -1320,7 +1477,7 @@ split by *what has to exist* for a check to be possible.
 
 | Layer | Command | Reads | Guards |
 | --- | --- | --- | --- |
-| Unit | `npm test` | the source | content and links, translations and every line of them turning into every other language letter by letter, the mesher and every creature, the SEO head, the focus trap, the scroll curves and the universe's flight, the counts and the graph's wave, the architecture rules |
+| Unit | `npm test` | the source | content and links, translations and every line of them turning into every other language letter by letter, the mesher and every creature, the SEO head, the focus trap, the scroll curves and the universe's flight, the counts and the graph's wave, the long walk's script, land, figures and gaits, the architecture rules |
 | Build | `npm run test:dist` | `dist/` | the CSP and its hashes, what loads up front and how big it is, what the minifier did to the CSS |
 | Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, a change of language shown letter by letter and ending as the page a visit in that language gets, the dialog and the menu from the keyboard, the trail, the sky with its sun and moon, the projects row and the marquee as the page scrolls, the GitHub numbers counting to their values and the graph drawing in, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
 
@@ -1341,6 +1498,13 @@ snout. The cut is smaller than the sampling grid and never breaks the surface,
 so it comes out as two sealed bubbles in the head rather than two dents on it.
 Invisible, and left alone — moving a carve is a change to how the animal looks,
 not a fix — but it is why the "one body" test allows a few stray triangles.
+
+**The long walk is walked.** `tests/unit/evolution.test.ts` takes the camera the
+whole way in two thousand steps and holds it above the ground and free of
+jumps, watches the sun up and down and counts the three nights, follows every
+hunter to the water without a step back, checks the land is level where the
+walk needs it to be, and — with a skeleton and no renderer — puts every foot of
+every gait where the gait says it is, to within a few centimetres.
 
 **The browser tests meet the real policy.** `tests/e2e/serve.mjs` serves
 `dist/` with the headers from `dist/_headers`; `vite preview` would serve the
@@ -1374,7 +1538,7 @@ is nothing to download; CI installs Playwright's Chromium. `PW_CHANNEL=chromium`
 forces the bundled one.
 
 **`npm run shots` is not a test.** It writes a screenshot of every section, the
-dialog and the menu — dark and light, desktop and phone — into
+long walk in each of its eras, the dialog and the menu — dark and light, desktop and phone — into
 `test-results/shots/`, with the device-tier shim described under *The hero
 creatures*. It is how a visual change gets looked at before it is called done.
 

@@ -264,4 +264,15 @@ export const en: Dictionary = {
     drag: 'Drag',
     explore: 'Explore',
   },
+  evolution: {
+    title: 'The long walk',
+    label: 'The long walk: a scene that follows the scroll, from the first fire to this screen',
+    eras: {
+      fire: { label: 'Fire', line: 'It began with a fire, and people sitting close to it.' },
+      hunt: { label: 'The hunt', line: 'Then they went out, and learned to do it together.' },
+      field: { label: 'The field', line: 'They stayed. The land changed, and so did they.' },
+      city: { label: 'The city', line: 'The fires multiplied until the night itself was lit.' },
+      now: { label: 'Now', line: 'One of those lights is a screen. Someone is building the next thing.' },
+    },
+  },
 }

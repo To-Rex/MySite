@@ -265,4 +265,15 @@ export const uz: Dictionary = {
     drag: 'Surish',
     explore: 'Kashf et',
   },
+  evolution: {
+    title: 'Uzoq yo‘l',
+    label: 'Uzoq yo‘l: scroll bilan birga yuradigan sahna — ilk olovdan shu ekrangacha',
+    eras: {
+      fire: { label: 'Olov', line: 'Hammasi olovdan va uning atrofida o‘tirgan odamlardan boshlandi.' },
+      hunt: { label: 'Ov', line: 'Keyin ular tashqariga chiqdi va birga harakat qilishni o‘rgandi.' },
+      field: { label: 'Dala', line: 'Ular shu yerda qoldi. Yer o‘zgardi, ular ham.' },
+      city: { label: 'Shahar', line: 'Olovlar ko‘payib bordi va oxiri tunning o‘zi yorishdi.' },
+      now: { label: 'Bugun', line: 'O‘sha chiroqlardan biri — ekran. Kimdir navbatdagi narsani quryapti.' },
+    },
+  },
 }

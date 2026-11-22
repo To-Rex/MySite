@@ -101,7 +101,9 @@ async function followTheDay(page: Page): Promise<void> {
   expect((await inTheSky(page, 'moon')).opacity).toBeLessThan(0.05)
 
   // The middle of the day: along the top of the screen, above anything being read.
-  await jump(page, (await bottom(page)) * 0.4)
+  // The page keeps its hours by section, not by how far down it a section is —
+  // the long walk alone is a third of its length — so noon is found by one too.
+  await jump(page, await page.evaluate(() => document.getElementById('skills')!.getBoundingClientRect().top + window.scrollY))
   await expect.poll(async () => (await inTheSky(page, 'sun')).y).toBeLessThan(0.2)
   const noon = await inTheSky(page, 'sun')
   expect(noon.y).toBeGreaterThan(0.05)
