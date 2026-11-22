@@ -473,7 +473,7 @@
   bottom: -14vh;
   height: 74vh;
   opacity: 1;
-  background: radial-gradient(72% 62% at 50% 100%, var(--sky-dawn-1), var(--sky-dawn-2) 46%, transparent 76%);
+  background: radial-gradient(72% 62% at 38% 100%, var(--sky-dawn-1), var(--sky-dawn-2) 46%, transparent 76%);
 }
 .scroll-sky__noon {
   top: -10vh;
@@ -484,8 +484,8 @@
   bottom: -18vh;
   height: 84vh;
   background:
-    radial-gradient(58% 46% at 50% 100%, var(--sky-dusk-1), transparent 72%),
-    radial-gradient(96% 80% at 50% 100%, var(--sky-dusk-2), transparent 78%);
+    radial-gradient(58% 46% at 60% 100%, var(--sky-dusk-1), transparent 72%),
+    radial-gradient(96% 80% at 54% 100%, var(--sky-dusk-2), transparent 78%);
 }
 .scroll-sky__night {
   top: -10vh;
@@ -545,6 +545,55 @@
     opacity: 0;
     transform: translate3d(-32vw, 17vh, 0) rotate(152deg) scaleX(1);
   }
+}
+/*
+ * The sun and the moon. Each is a point the page's scroll carries along an arc
+ * (SUN and MOON in lib/scroll.ts), with its disc centred on it; only the point
+ * is ever moved, so both stay on the compositor.
+ */
+.scroll-sky__orb {
+  --orb: clamp(3.25rem, 6.2vw, 5.5rem);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--orb);
+  height: var(--orb);
+  margin: calc(var(--orb) / -2) 0 0 calc(var(--orb) / -2);
+  opacity: 0;
+  will-change: opacity, transform;
+}
+.scroll-sky__moon {
+  --orb: clamp(2.5rem, 4.6vw, 4.25rem);
+}
+.scroll-sky__disc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  will-change: opacity;
+}
+/* The sun twice over: the pale one it is overhead, and the red one it is on the horizon, cross-faded. */
+.scroll-sky__disc--high {
+  background: radial-gradient(circle, var(--sun-core) 0, var(--sun-edge) 100%);
+  box-shadow:
+    inset 0 0 0 1px var(--sun-rim),
+    0 0 calc(var(--orb) * 0.42) calc(var(--orb) * 0.1) var(--sun-halo),
+    0 0 calc(var(--orb) * 2.4) calc(var(--orb) * 0.8) var(--sun-haze);
+}
+.scroll-sky__disc--low {
+  opacity: 0;
+  background: radial-gradient(circle, var(--sun-low-core) 38%, var(--sun-low-edge) 100%);
+  box-shadow:
+    inset 0 0 0 1px var(--sun-low-rim),
+    0 0 calc(var(--orb) * 0.5) calc(var(--orb) * 0.14) var(--sun-low-halo),
+    0 0 calc(var(--orb) * 2.8) calc(var(--orb) * 1) var(--sun-low-haze);
+}
+/* A young moon: only the edge turned to where the sun went down is lit, and the rest is earthshine. */
+.scroll-sky__disc--moon {
+  background: var(--moon-shade);
+  box-shadow:
+    inset calc(var(--orb) * 0.12) calc(var(--orb) * -0.17) 1px 0 var(--moon-lit),
+    inset 0 0 0 1px var(--moon-rim),
+    0 0 calc(var(--orb) * 1.1) calc(var(--orb) * 0.16) var(--moon-halo);
 }
 :root[data-theme='light'] .scroll-sky__stars,
 :root[data-theme='light'] .scroll-sky__twinkle,

@@ -1,7 +1,17 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  DAY,
   MARQUEE,
+  MOON,
   SKY,
+  STRAIGHT,
+  SUN,
+  arcAt,
+  arcStillStops,
+  arcStops,
+  arcTintStops,
+  clockAt,
   createMarquee,
   curveAt,
   curveKeyframes,
@@ -16,6 +26,8 @@ import {
   trailCount,
   trailPrints,
   wrap,
+  type Clock,
+  type Stop,
 } from '@/lib/scroll'
 import { technologies } from '@/content/technologies'
 import {
@@ -133,6 +145,275 @@ describe('the sky', () => {
     expect(twinkling).toBeLessThan(40)
     expect(stars.filter((star) => star.y < 47).length).toBeGreaterThan(stars.length / 2)
   })
+})
+
+describe('the sun and the moon', () => {
+  const sun = arcStops(SUN)
+  const moon = arcStops(MOON)
+  /** Something is in the reader's sky when it is drawn and its centre is on the screen. */
+  const inSky = (stops: readonly Stop[], p: number) => {
+    const point = curveAt(stops, p)
+    return point.opacity > 0.5 && point.y < 100
+  }
+
+  it('has the sun on the horizon at the top of the page, overhead through the day and gone by night', () => {
+    const dawn = curveAt(sun, 0)
+    expect(dawn.opacity).toBe(1)
+    // On the bottom edge of the screen, give or take: a sun that is coming up.
+    expect(dawn.y).toBeGreaterThan(96)
+    expect(dawn.y).toBeLessThan(104)
+    expect(dawn.scale).toBeGreaterThan(1.2)
+    const noon = curveAt(sun, (SUN.rise + SUN.set) / 2)
+    expect(noon.y).toBeCloseTo(SUN.top, 1)
+    expect(noon.scale).toBeCloseTo(1, 2)
+    for (const p of steps(100)) if (p >= SUN.set) expect(curveAt(sun, p).opacity, `at ${p}`).toBe(0)
+  })
+
+  it('goes up while the dawn glows and down while the dusk does', () => {
+    const lowAt = (p: number) => arcAt(SUN, p).height < 0.5
+    for (const p of steps(200)) {
+      if (!arcAt(SUN, p).up || !lowAt(p)) continue
+      const glow = Math.max(curveAt(SKY.dawn, p).opacity, curveAt(SKY.dusk, p).opacity)
+      expect(glow, `a low sun with no glow under it at ${p}`).toBeGreaterThan(0.5)
+    }
+    // …and it is high for the whole of the clear sky.
+    for (const p of steps(200)) if (curveAt(SKY.noon, p).opacity === 1) expect(arcAt(SUN, p).height, `at ${p}`).toBeGreaterThan(0.9)
+  })
+
+  it('spends its day along the top of the screen, where nobody is reading', () => {
+    const day = steps(400).filter((p) => arcAt(SUN, p).up)
+    const high = day.filter((p) => curveAt(sun, p).y < 28)
+    expect(high.length / day.length).toBeGreaterThan(0.6)
+    // It leaves the horizon at a walk, not a jump: never faster than the page itself moves.
+    for (let i = 1; i < day.length; i++) {
+      const climbed = Math.abs(curveAt(sun, day[i]!).y - curveAt(sun, day[i - 1]!).y)
+      expect(climbed, `between ${day[i - 1]} and ${day[i]}`).toBeLessThan(2.5)
+    }
+  })
+
+  it('brings the moon up as the sun goes, into the top right corner at the foot of the page', () => {
+    for (const p of steps(200)) {
+      expect(inSky(sun, p) && inSky(moon, p) && curveAt(sun, p).y < 80 && curveAt(moon, p).y < 80, `both up at ${p}`).toBe(false)
+      if (p < MOON.rise) expect(curveAt(moon, p).opacity).toBe(0)
+    }
+    const night = curveAt(moon, 1)
+    expect(night.opacity).toBe(1)
+    expect(night.x).toBeGreaterThan(82)
+    expect(night.x).toBeLessThan(92)
+    expect(night.y).toBeGreaterThan(8)
+    expect(night.y).toBeLessThan(14)
+    // The stars are out by the time it is: no moon in an evening sky with none.
+    for (const p of steps(200)) if (inSky(moon, p) && curveAt(moon, p).y < 60) expect(curveAt(SKY.night, p).opacity, `at ${p}`).toBeGreaterThan(0.25)
+  })
+
+  it('never leaves the screen sideways, and every number of it is one', () => {
+    for (const arc of [SUN, MOON]) {
+      for (const p of steps(400)) {
+        const point = arcAt(arc, p)
+        expect(allFinite(point), `at ${p}`).toBe(true)
+        expect(point.height).toBeGreaterThanOrEqual(0)
+        expect(point.height).toBeLessThanOrEqual(1)
+        if (point.up) {
+          expect(point.x).toBeGreaterThan(4)
+          expect(point.x).toBeLessThan(99)
+          expect(point.y).toBeGreaterThanOrEqual(arc.top)
+        }
+      }
+      expect(allFinite(arcAt(arc, Number.NaN))).toBe(true)
+      expect(allFinite(arcAt({ ...arc, set: arc.rise }, 0.5))).toBe(true)
+      expect(allFinite(arcAt({ ...arc, shoulder: Number.NaN }, 0.5))).toBe(true)
+    }
+  })
+
+  it('is stops in order on the page, drawn exactly while it is over the horizon', () => {
+    for (const [name, arc, stops] of [
+      ['sun', SUN, sun],
+      ['moon', MOON, moon],
+    ] as const) {
+      const at = stops.map((stop) => stop.at)
+      expect([...at].sort((a, b) => a - b), name).toEqual(at)
+      expect(new Set(at).size, name).toBe(at.length)
+      expect(at[0], name).toBe(Math.max(0, arc.rise))
+      expect(at[at.length - 1], name).toBe(Math.min(1, arc.set))
+      for (const stop of stops) {
+        expect(allFinite(stop), name).toBe(true)
+        expect(stop.opacity, `${name} at ${stop.at}`).toBe(arcAt(arc, stop.at).up ? 1 : 0)
+      }
+      // Close enough together that the straight lines between them are the arc.
+      for (const p of steps(600)) {
+        if (p < at[0]! || p > at[at.length - 1]!) continue
+        const drawn = curveAt(stops, p)
+        const exact = arcAt(arc, p)
+        expect(Math.abs(drawn.y - exact.y), `${name} at ${p}`).toBeLessThan(0.6)
+        expect(Math.abs(drawn.x - exact.x), `${name} at ${p}`).toBeLessThan(0.05)
+      }
+    }
+  })
+
+  it('becomes keyframes that all move it the same way, so the browser can interpolate them', () => {
+    for (const stops of [sun, moon, arcStillStops(SUN), arcStillStops(MOON)]) {
+      const frames = curveKeyframes(stops)
+      expect(frames[0]?.offset).toBe(0)
+      expect(frames[frames.length - 1]?.offset).toBe(1)
+      for (const frame of frames) {
+        expect(String(frame.transform)).toMatch(/^translate3d\(-?\d+(\.\d+)?vw, -?\d+(\.\d+)?vh, 0\) scale\(\d+(\.\d+)?\)$/)
+        expect(Number(frame.opacity)).toBeGreaterThanOrEqual(0)
+        expect(Number(frame.opacity)).toBeLessThanOrEqual(1)
+      }
+    }
+    // The four lights only fade and drift, and are still written the short way.
+    for (const stops of Object.values(SKY)) for (const frame of curveKeyframes(stops)) expect(String(frame.transform)).toMatch(/^translate3d\(0, /)
+  })
+
+  it('is red on the horizon and pale overhead, and always wholly one or the other or between', () => {
+    const low = arcTintStops(SUN, 'low')
+    const high = arcTintStops(SUN, 'high')
+    for (const p of steps(200)) expect(curveAt(low, p).opacity + curveAt(high, p).opacity, `at ${p}`).toBeCloseTo(1, 2)
+    expect(curveAt(low, 0).opacity).toBe(1)
+    expect(curveAt(high, 0.4).opacity).toBe(1)
+    expect(curveAt(low, SUN.set - 0.01).opacity).toBeGreaterThan(0.9)
+  })
+
+  it('does not travel for a reader who asked for less motion: it comes and goes where it hangs', () => {
+    for (const [arc, when] of [
+      [SUN, 0.4],
+      [MOON, 1],
+    ] as const) {
+      const stops = arcStillStops(arc)
+      expect(new Set(stops.map((stop) => `${stop.x},${stop.y},${stop.scale}`)).size).toBe(1)
+      expect(stops[0]?.y).toBeCloseTo(arc.top, 1)
+      expect(curveAt(stops, when).opacity).toBeGreaterThan(0.95)
+      expect(curveAt(stops, Math.max(0, arc.rise)).opacity).toBe(0)
+    }
+    expect(curveAt(arcStillStops(SUN), 0.95).opacity).toBe(0)
+  })
+})
+
+describe('the clock of the page', () => {
+  /** A page whose second third is a scene with a sky of its own: the day waits for it. */
+  const held: Clock = [
+    [0, 0],
+    [0.2, 0.3],
+    [0.5, 0.3],
+    [1, 1],
+  ]
+
+  it('reads the page straight through unless told otherwise', () => {
+    expect(DAY).toBe(STRAIGHT)
+    for (const p of steps(50)) expect(clockAt(STRAIGHT, p)).toBeCloseTo(p, 12)
+    for (const stops of [...Object.values(SKY), arcStops(SUN), arcStops(MOON)]) expect(curveKeyframes(stops, STRAIGHT)).toEqual(curveKeyframes(stops))
+  })
+
+  it('never runs backwards, never leaves the day, and stands still where it is held', () => {
+    let last = 0
+    for (const p of steps(400)) {
+      const time = clockAt(held, p)
+      expect(time).toBeGreaterThanOrEqual(last)
+      expect(time).toBeLessThanOrEqual(1)
+      last = time
+    }
+    expect(clockAt(held, 0)).toBe(0)
+    expect(clockAt(held, 1)).toBe(1)
+    expect(clockAt(held, 0.2)).toBeCloseTo(0.3, 12)
+    expect(clockAt(held, 0.35)).toBeCloseTo(0.3, 12)
+    expect(clockAt(held, 0.5)).toBeCloseTo(0.3, 12)
+    expect(clockAt(held, Number.NaN)).toBe(0)
+    expect(clockAt([], 0.4)).toBeCloseTo(0.4, 12)
+  })
+
+  it('makes keyframes the browser can join with straight lines and still land on the curve', () => {
+    const number = /-?\d+(?:\.\d+)?/g
+    for (const clock of [STRAIGHT, held]) {
+      for (const stops of [...Object.values(SKY), arcStops(SUN), arcStops(MOON)]) {
+        const frames = curveKeyframes(stops, clock)
+        const offsets = frames.map((frame) => frame.offset as number)
+        expect(offsets[0]).toBe(0)
+        expect(offsets[offsets.length - 1]).toBe(1)
+        expect([...offsets].sort((a, b) => a - b)).toEqual(offsets)
+        expect(new Set(offsets).size).toBe(offsets.length)
+        for (let i = 1; i < frames.length; i++) {
+          // Halfway between two keyframes the browser shows the mean of them.
+          const middle = (offsets[i - 1]! + offsets[i]!) / 2
+          const exact = curveAt(stops, clockAt(clock, middle))
+          expect((Number(frames[i - 1]!.opacity) + Number(frames[i]!.opacity)) / 2, `opacity at ${middle}`).toBeCloseTo(exact.opacity, 3)
+          const before = String(frames[i - 1]!.transform).match(number)!.map(Number)
+          const after = String(frames[i]!.transform).match(number)!.map(Number)
+          // "translate3d(x, y, 0)": after the 3 of its name, x and then the drift down the screen.
+          expect((before[2]! + after[2]!) / 2, `y at ${middle}`).toBeCloseTo(exact.y, 2)
+        }
+      }
+    }
+  })
+
+  it('holds the whole sky still across a held stretch of the page', () => {
+    for (const stops of [...Object.values(SKY), arcStops(SUN)]) {
+      const frames = curveKeyframes(stops, held)
+      const at = (offset: number) => frames.find((frame) => frame.offset === offset)
+      expect(at(0.2)).toBeDefined()
+      expect(at(0.5)).toBeDefined()
+      expect(at(0.5)?.opacity).toBe(at(0.2)?.opacity)
+      expect(at(0.5)?.transform).toBe(at(0.2)?.transform)
+      expect(frames.some((frame) => (frame.offset as number) > 0.2 && (frame.offset as number) < 0.5)).toBe(false)
+    }
+  })
+})
+
+describe('the sky against the text in front of it', () => {
+  type Rgba = [r: number, g: number, b: number, a: number]
+  const css = readFileSync('src/styles/globals.css', 'utf8')
+  const theme = (name: string) => {
+    const block = css.slice(css.indexOf(`:root[data-theme='${name}'] {`))
+    const body = block.slice(0, block.indexOf('\n}'))
+    const read = (token: string): Rgba => {
+      const value = new RegExp(`--${token}:\\s*([^;]+);`).exec(body)?.[1]?.trim() ?? ''
+      const hex = /^#([0-9a-f]{6})$/i.exec(value)?.[1]
+      if (hex) return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16), 1]
+      const parts = /^rgba?\(([^)]+)\)$/.exec(value)?.[1]?.split(',').map((part) => Number(part.trim()))
+      if (parts && parts.length >= 3 && parts.every(Number.isFinite)) return [parts[0]!, parts[1]!, parts[2]!, parts[3] ?? 1]
+      throw new Error(`no colour for --${token} in the ${name} theme: “${value}”`)
+    }
+    return read
+  }
+  const over = (under: Rgba, top: Rgba): Rgba => [0, 1, 2].map((i) => under[i]! + (top[i]! - under[i]!) * top[3]).concat(1) as Rgba
+  const luminance = (colour: Rgba) =>
+    [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
+      const c = colour[i]! / 255
+      return sum + weight * (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4))
+    }, 0)
+  const contrast = (a: Rgba, b: Rgba) => {
+    const [dark, light] = [luminance(a), luminance(b)].sort((x, y) => x - y) as [number, number]
+    return (light + 0.05) / (dark + 0.05)
+  }
+
+  for (const name of ['dark', 'light']) {
+    it(`keeps body copy readable over every part of the sun in the ${name} theme`, () => {
+      const read = theme(name)
+      const paint = (...layers: string[]) => layers.reduce((under, token) => over(under, read(token)), read('bg'))
+      /*
+       * The worst places a line of text can be: over the middle of the disc,
+       * over its rim-ward edge, and in the glow right beside it — each on top
+       * of the strongest light of the sky that is there at the same hour. The
+       * glows are taken at full strength, which they only reach at the disc.
+       */
+      const places = {
+        'the sun overhead, middle': paint('sky-noon-1', 'sun-core'),
+        'the sun overhead, edge': paint('sky-noon-1', 'sun-edge'),
+        'beside the sun overhead': paint('sky-noon-1', 'sun-halo', 'sun-haze'),
+        'the rising sun, middle': paint('sky-dawn-1', 'sun-low-core'),
+        'the rising sun, edge': paint('sky-dawn-1', 'sun-low-edge'),
+        'the setting sun, middle': paint('sky-dusk-1', 'sun-low-core'),
+        'the setting sun, edge': paint('sky-dusk-1', 'sun-low-edge'),
+        'beside the setting sun': paint('sky-dusk-1', 'sun-low-halo', 'sun-low-haze'),
+        'the dark of the moon': paint('sky-night-1', 'moon-shade'),
+      }
+      for (const [place, colour] of Object.entries(places)) {
+        expect(contrast(read('fg'), colour), `headings over ${place}`).toBeGreaterThanOrEqual(7)
+        expect(contrast(read('fg-2'), colour), `body copy over ${place}`).toBeGreaterThanOrEqual(4.5)
+        // The faint labels are the price: they start near 4 : 1 (dark) and 3 : 1 (light) and must not fall below 2.
+        expect(contrast(read('fg-3'), colour), `labels over ${place}`).toBeGreaterThanOrEqual(2)
+      }
+    })
+  }
 })
 
 describe('the marquee', () => {

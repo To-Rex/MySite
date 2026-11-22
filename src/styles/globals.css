@@ -61,6 +61,21 @@
   --sky-night-1: rgba(50, 62, 142, 0.22);
   --sky-night-2: rgba(50, 62, 142, 0.07);
   --star: #f6f2e6;
+  /* The sun and the moon in it: a disc dim enough to read through, a rim and a glow that say what it is. */
+  --sun-core: rgba(255, 228, 184, 0.15);
+  --sun-edge: rgba(255, 214, 152, 0.085);
+  --sun-rim: rgba(255, 228, 184, 0.3);
+  --sun-halo: rgba(255, 208, 140, 0.13);
+  --sun-haze: rgba(255, 196, 120, 0.05);
+  --sun-low-core: rgba(255, 160, 96, 0.14);
+  --sun-low-edge: rgba(255, 132, 66, 0.09);
+  --sun-low-rim: rgba(255, 168, 104, 0.36);
+  --sun-low-halo: rgba(255, 122, 62, 0.12);
+  --sun-low-haze: rgba(244, 100, 50, 0.06);
+  --moon-lit: rgba(242, 240, 230, 0.8);
+  --moon-shade: rgba(200, 208, 240, 0.05);
+  --moon-rim: rgba(214, 220, 244, 0.17);
+  --moon-halo: rgba(170, 184, 240, 0.08);
 }
 
 :root[data-theme='light'] {
@@ -96,6 +111,20 @@
   --sky-night-1: rgba(92, 102, 184, 0.2);
   --sky-night-2: rgba(92, 102, 184, 0.06);
   --star: transparent;
+  --sun-core: rgba(255, 253, 246, 0.94);
+  --sun-edge: rgba(255, 244, 214, 0.9);
+  --sun-rim: rgba(238, 176, 94, 0.5);
+  --sun-halo: rgba(255, 196, 110, 0.36);
+  --sun-haze: rgba(255, 186, 110, 0.15);
+  --sun-low-core: rgba(255, 240, 222, 0.92);
+  --sun-low-edge: rgba(255, 176, 122, 0.52);
+  --sun-low-rim: rgba(232, 118, 64, 0.5);
+  --sun-low-halo: rgba(255, 138, 84, 0.22);
+  --sun-low-haze: rgba(255, 130, 82, 0.13);
+  --moon-lit: rgba(255, 255, 255, 0.97);
+  --moon-shade: rgba(92, 102, 184, 0.07);
+  --moon-rim: rgba(92, 102, 184, 0.24);
+  --moon-halo: rgba(255, 255, 255, 0.55);
 }
 
 @custom-variant short (@media (orientation: landscape) and (max-height: 540px));

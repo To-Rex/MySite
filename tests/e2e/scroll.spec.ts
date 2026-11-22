@@ -79,6 +79,78 @@ test('the sky is morning at the top of the page and night at the bottom', async 
   expect(problems).toEqual([])
 })
 
+/** Where something in the sky is: its centre as a fraction of the screen, and how much of it is drawn. */
+const inTheSky = (page: Page, what: 'sun' | 'moon') =>
+  page.locator(`.scroll-sky__${what}`).evaluate((el) => {
+    const box = el.getBoundingClientRect()
+    return {
+      x: (box.left + box.width / 2) / window.innerWidth,
+      y: (box.top + box.height / 2) / window.innerHeight,
+      opacity: Number(getComputedStyle(el).opacity),
+    }
+  })
+
+/** The sun through the day and the moon at night, read off the real page. */
+async function followTheDay(page: Page): Promise<void> {
+  // Morning: the sun is on the horizon, low on the left, and there is no moon yet.
+  await expect.poll(async () => (await inTheSky(page, 'sun')).opacity).toBeGreaterThan(0.95)
+  const dawn = await inTheSky(page, 'sun')
+  expect(dawn.y).toBeGreaterThan(0.92)
+  expect(dawn.x).toBeGreaterThan(0.1)
+  expect(dawn.x).toBeLessThan(0.3)
+  expect((await inTheSky(page, 'moon')).opacity).toBeLessThan(0.05)
+
+  // The middle of the day: along the top of the screen, above anything being read.
+  await jump(page, (await bottom(page)) * 0.4)
+  await expect.poll(async () => (await inTheSky(page, 'sun')).y).toBeLessThan(0.2)
+  const noon = await inTheSky(page, 'sun')
+  expect(noon.y).toBeGreaterThan(0.05)
+  expect(noon.x).toBeGreaterThan(0.3)
+  expect(noon.x).toBeLessThan(0.6)
+  expect(noon.opacity).toBeGreaterThan(0.95)
+
+  // Night: the sun has gone and the moon is in the top right corner.
+  await expect
+    .poll(async () => {
+      await jump(page, await bottom(page))
+      return (await inTheSky(page, 'moon')).opacity
+    })
+    .toBeGreaterThan(0.95)
+  const night = await inTheSky(page, 'moon')
+  expect(night.x).toBeGreaterThan(0.8)
+  expect(night.x).toBeLessThan(0.95)
+  expect(night.y).toBeGreaterThan(0.05)
+  expect(night.y).toBeLessThan(0.2)
+  expect((await inTheSky(page, 'sun')).opacity).toBeLessThan(0.05)
+}
+
+test('the sun comes up with the page, crosses the top of the screen and leaves the night to the moon', async ({ page }) => {
+  const problems = await open(page, '/?lang=en&theme=dark')
+  await followTheDay(page)
+  expect(problems).toEqual([])
+})
+
+test('the light theme has the same sun and a pale moon in its dusk', async ({ page }) => {
+  const problems = await open(page, '/?lang=en&theme=light')
+  await followTheDay(page)
+  expect(await page.locator('.scroll-sky__disc--moon').evaluate((el) => getComputedStyle(el).display)).not.toBe('none')
+  expect(problems).toEqual([])
+})
+
+test('a browser with no scroll timelines gets the same day from the scroll listener', async ({ page }) => {
+  await page.addInitScript(() => {
+    delete (window as { ScrollTimeline?: unknown }).ScrollTimeline
+  })
+  const problems = await open(page, '/?lang=en&theme=dark')
+  expect(await page.evaluate(() => 'ScrollTimeline' in window)).toBe(false)
+  await followTheDay(page)
+  // The four lights go the same way: night at the bottom, no morning left.
+  const opacity = (layer: string) => page.locator(`.scroll-sky__${layer}`).evaluate((el) => Number(getComputedStyle(el).opacity))
+  expect(await opacity('night')).toBeGreaterThan(0.95)
+  expect(await opacity('dawn')).toBeLessThan(0.05)
+  expect(problems).toEqual([])
+})
+
 test.describe('the projects row', () => {
   const gallery = (page: Page) =>
     page.evaluate(() => {
@@ -180,6 +252,34 @@ test.describe('with reduced motion', () => {
     const transform = await page.locator('.marquee-track').evaluate((el) => getComputedStyle(el).transform)
     await page.waitForTimeout(400)
     expect(await page.locator('.marquee-track').evaluate((el) => getComputedStyle(el).transform)).toBe(transform)
+    expect(problems).toEqual([])
+  })
+
+  test('the sun and the moon come and go where they hang, and do not travel', async ({ page }) => {
+    const problems = await open(page, '/?lang=en&theme=dark')
+    // No sun in the morning: it only shows where it would be highest.
+    expect((await inTheSky(page, 'sun')).opacity).toBeLessThan(0.05)
+    const before = await inTheSky(page, 'sun')
+
+    await jump(page, (await bottom(page)) * 0.4)
+    await expect.poll(async () => (await inTheSky(page, 'sun')).opacity).toBeGreaterThan(0.95)
+    const noon = await inTheSky(page, 'sun')
+    expect(noon.x).toBeCloseTo(before.x, 3)
+    expect(noon.y).toBeCloseTo(before.y, 3)
+    expect(noon.y).toBeLessThan(0.2)
+
+    const moonBefore = await inTheSky(page, 'moon')
+    expect(moonBefore.opacity).toBeLessThan(0.05)
+    await expect
+      .poll(async () => {
+        await jump(page, await bottom(page))
+        return (await inTheSky(page, 'moon')).opacity
+      })
+      .toBeGreaterThan(0.95)
+    const night = await inTheSky(page, 'moon')
+    expect(night.x).toBeCloseTo(moonBefore.x, 3)
+    expect(night.y).toBeCloseTo(moonBefore.y, 3)
+    expect((await inTheSky(page, 'sun')).opacity).toBeLessThan(0.05)
     expect(problems).toEqual([])
   })
 })

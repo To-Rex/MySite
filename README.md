@@ -410,7 +410,7 @@ who stops stops it.
 | What the reader sees | Where | What drives it |
 | --- | --- | --- |
 | A theropod's trackway along the top edge: one print for every stretch read, the newest fresh in the accent, the older ones drying out | `ReadingTrail.tsx` | one passive listener, which writes only when a print lands or lifts — a few dozen times down the whole page |
-| The time of day behind the page: morning under the hero, a clear sky through the middle, an evening over the work, night and stars behind the contact | `ScrollSky.tsx` | Web Animations on the document's `ScrollTimeline`, on the compositor; one listener where the browser has none |
+| The time of day behind the page: morning under the hero, a clear sky through the middle, an evening over the work, night and stars behind the contact — with a sun that comes up as the page is first moved, crosses the top of the screen and goes down into the dusk, and a young moon that is up by the time the stars are | `ScrollSky.tsx` | Web Animations on the document's `ScrollTimeline`, on the compositor; one listener where the browser has none |
 | The marquee runs faster the faster the page goes, turns round when the reader scrolls back up, leans into its speed and all but stops under the pointer | `Marquee.tsx` | its own frame loop on `window.scrollY`, asleep while off screen |
 | The projects as a row the page slides sideways: the section pins for exactly as long as the row needs, each card swings round to face the reader in the middle, its cover lagging and its numeral running ahead | `ProjectGallery.tsx` | the page scroll sets the row's `scrollLeft`; each card's motion is a CSS view timeline |
 | A flight through the technology universe: in from far out while the technologies gather into their sphere, the composed shot while the stage is wholly on screen, then in over the cloud as it leaves | `universeFlight.ts`, `UniverseScene.tsx` | the canvas's own place on the page, read in its frame loop |
@@ -418,8 +418,9 @@ who stops stops it.
 Every curve is a pure function — `src/lib/scroll.ts` and `universeFlight.ts`,
 neither of which imports React or three.js — and `tests/unit/scroll.test.ts`
 holds them to what they promise: prints only ever land in order and the last
-lands at the bottom, the sky never goes dark in the middle of the page, the
-marquee turns round and comes back to its drift, the gallery's page-to-row
+lands at the bottom, the sky never goes dark in the middle of the page, a low
+sun always has a glow under it and is never up with the moon, body copy keeps
+its contrast over every part of either, the marquee turns round and comes back to its drift, the gallery's page-to-row
 mapping is its own inverse, and the camera never flies into a node.
 `tests/e2e/scroll.spec.ts` drives the real page, on a desktop and on a phone.
 
@@ -450,6 +451,36 @@ What is load-bearing:
   Animating their colours instead would repaint four full-screen gradients on
   every scroll frame. The keyframes and the fallback are built from the same
   table (`SKY`), so the two paths cannot disagree.
+- **The sun and the moon are two more of those animations, not a second
+  mechanism.** A stop can carry a sideways drift and a size as well, so a path
+  across the screen is just a curve with more stops: `SUN` and `MOON` are arcs
+  (`rise`, `set`, where along the horizon, how high), sampled into thirty-odd
+  stops, and the sun's two colours — red on the horizon, pale overhead — are two
+  discs cross-faded the same way. The arc climbs at a walk and then runs along
+  the top of the screen for most of the day, because that is the one band of a
+  page nobody is reading; the moon goes up the right-hand edge into the top
+  right corner, which is the only place the footer leaves empty on a phone and
+  on a desktop alike.
+- **They sit behind the text, so their brightness is a contrast budget.** In
+  the dark theme a disc bright enough to look like the sun would wash out
+  whatever paragraph was over it, so it is a dim disc with a brighter rim and a
+  glow, and the moon is a thin lit edge on a disc of earthshine. In the light
+  theme the sun's face is lighter than the page, which costs dark text nothing.
+  `tests/unit/scroll.test.ts` reads the tokens out of `globals.css`, paints each
+  part of each disc over the strongest light of the sky that can be under it,
+  and requires 7 : 1 for headings and 4.5 : 1 for body copy. The faint labels
+  (`--fg-3`) are the price: they start near 4 : 1 and 3 : 1 and can drop to a
+  little over 2 : 1 for as long as one is directly over the disc. The moon's lit
+  edge is the one bright thing in the sky; it is a few pixels wide.
+- **Everything in the sky is timed in one place and in one unit.** `SKY`,
+  `SUN` and `MOON` sit together in `lib/scroll.ts` and are all in time of day,
+  0 to 1, tuned against each other: the sun is low only while a glow is under
+  it and high for the whole of the clear sky; the moon is not drawn before the
+  stars. `DAY` maps the page onto that day and is a straight line today — the
+  top of the page is morning, the bottom night. A page that grows a section
+  with a sky of its own should not retune thirty numbers: it gives `DAY` two
+  knots with the same time, and the whole sky holds still across that stretch
+  (`curveKeyframes` adds a keyframe at each knot, so the hold is exact).
 - **The universe holds still while it can be pointed at.** The flight leaves
   the shot the section was composed around exactly as it was for the middle
   fifth of the stage's passage, which is when the whole stage is on screen.
@@ -460,8 +491,9 @@ What is load-bearing:
   out they would crowd a cloud the size of a coin, and close in they would swell
   across the lens.
 - **Reduced motion.** The projects are the plain grid, the marquee is a still
-  row, the sky changes its light but does not drift, and nothing twinkles. The
-  trail stays — it is a progress indicator — but lands without its little
+  row, the sky changes its light but does not drift, the sun and the moon come
+  and go where they would hang highest instead of travelling, and nothing
+  twinkles. The trail stays — it is a progress indicator — but lands without its little
   press.
 
 What it costs, scrolling the whole page at 1,400 px/s in headless Chrome on an
@@ -1233,7 +1265,7 @@ split by *what has to exist* for a check to be possible.
 | --- | --- | --- | --- |
 | Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the scroll curves and the universe's flight, the architecture rules |
 | Build | `npm run test:dist` | `dist/` | the CSP and its hashes, what loads up front and how big it is, what the minifier did to the CSS |
-| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the trail, the sky, the projects row and the marquee as the page scrolls, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
+| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the trail, the sky with its sun and moon, the projects row and the marquee as the page scrolls, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
 
 **The architecture rules are tests.** `tests/unit/architecture.test.ts` follows
 static imports from `main.tsx` and `not-found.tsx` and fails if three.js is reachable without

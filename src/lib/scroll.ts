@@ -97,67 +97,155 @@ export interface PageLink {
  * Plays each element's curve across the page, top to bottom: as Web
  * Animations on the document's scroll timeline where the browser has one —
  * opacity and transform, so they run on the compositor — and from one shared
- * listener where it has not.
+ * listener where it has not. `clock` says what time of the curve each part of
+ * the page shows; left out, the top of the page is its start and the bottom
+ * its end.
  */
-export function animateAlongPage(links: readonly PageLink[]): () => void {
+export function animateAlongPage(links: readonly PageLink[], clock: Clock = STRAIGHT): () => void {
   const timeline = pageTimeline()
   if (timeline && links.every(({ element }) => typeof element.animate === 'function')) {
-    const animations = links.map(({ element, stops }) => element.animate(curveKeyframes(stops), { timeline, fill: 'both', easing: 'linear' }))
+    const animations = links.map(({ element, stops }) => element.animate(curveKeyframes(stops, clock), { timeline, fill: 'both', easing: 'linear' }))
     return () => animations.forEach((animation) => animation.cancel())
   }
-  return followPageProgress((progress) => links.forEach(({ element, stops }) => applyCurve(element, stops, progress)))
+  return followPageProgress((progress) => links.forEach(({ element, stops }) => applyCurve(element, stops, progress, clock)))
 }
 
 // ---------------------------------------------------------------- curves
 
-/** A value along the page: `at` is the page progress, the rest is what holds there. */
+/** A value along the page: `at` is when it holds, the rest is what holds then. */
 export interface Stop {
   at: number
   opacity: number
-  /** Vertical drift, in viewport heights × 100 (vh). */
+  /** Vertical drift, in hundredths of the viewport's height (vh). */
   y?: number
+  /** Sideways drift, in hundredths of the viewport's width (vw). */
+  x?: number
+  /** Size, as a factor of the element's own. */
+  scale?: number
 }
 
+export interface CurvePoint {
+  opacity: number
+  x: number
+  y: number
+  scale: number
+}
+
+const pointOf = (stop: Stop): CurvePoint => ({ opacity: stop.opacity, x: stop.x ?? 0, y: stop.y ?? 0, scale: stop.scale ?? 1 })
+
 /** A stop's numbers between two stops, linearly; held flat before the first and after the last. */
-export function curveAt(stops: readonly Stop[], progress: number): { opacity: number; y: number } {
+export function curveAt(stops: readonly Stop[], progress: number): CurvePoint {
   const p = clamp01(progress)
   const first = stops[0]
   const last = stops[stops.length - 1]
-  if (!first || !last) return { opacity: 0, y: 0 }
-  if (p <= first.at) return { opacity: first.opacity, y: first.y ?? 0 }
-  if (p >= last.at) return { opacity: last.opacity, y: last.y ?? 0 }
+  if (!first || !last) return { opacity: 0, x: 0, y: 0, scale: 1 }
+  if (p <= first.at) return pointOf(first)
+  if (p >= last.at) return pointOf(last)
   for (let i = 1; i < stops.length; i++) {
     const b = stops[i]!
     const a = stops[i - 1]!
     if (p <= b.at) {
       const t = b.at > a.at ? (p - a.at) / (b.at - a.at) : 1
-      return { opacity: lerp(a.opacity, b.opacity, t), y: lerp(a.y ?? 0, b.y ?? 0, t) }
+      const from = pointOf(a)
+      const to = pointOf(b)
+      return { opacity: lerp(from.opacity, to.opacity, t), x: lerp(from.x, to.x, t), y: lerp(from.y, to.y, t), scale: lerp(from.scale, to.scale, t) }
     }
   }
-  return { opacity: last.opacity, y: last.y ?? 0 }
+  return pointOf(last)
 }
 
-const drift = (y: number) => `translate3d(0, ${Number(y.toFixed(3))}vh, 0)`
+const trim = (value: number) => Number(value.toFixed(3))
 
-/** The same curve as Web Animation keyframes, from the top of the page to the bottom. */
-export function curveKeyframes(stops: readonly Stop[]): Keyframe[] {
-  const points = [0, ...stops.map((stop) => clamp01(stop.at)), 1].filter((at, i, all) => all.indexOf(at) === i).sort((a, b) => a - b)
+/**
+ * A curve either only fades and drifts up and down, or travels: the first is
+ * written the short way, and every keyframe of one curve the same way, so
+ * the browser can interpolate them function for function.
+ */
+const travels = (stops: readonly Stop[]) => stops.some((stop) => stop.x !== undefined || stop.scale !== undefined)
+
+const pose = (point: CurvePoint, travelling: boolean) =>
+  travelling ? `translate3d(${trim(point.x)}vw, ${trim(point.y)}vh, 0) scale(${trim(point.scale)})` : `translate3d(0, ${trim(point.y)}vh, 0)`
+
+/**
+ * What time it is at each part of the page: knots of [page progress, time],
+ * both from 0 to 1. Progress climbs from knot to knot; time never goes back,
+ * and where it stands still the curve holds for that stretch of the page.
+ */
+export type Clock = readonly (readonly [progress: number, time: number])[]
+
+/** The page read straight through: the top is the start of the curve, the bottom its end. */
+export const STRAIGHT: Clock = [
+  [0, 0],
+  [1, 1],
+]
+
+/** The time a clock shows at a page progress. */
+export function clockAt(clock: Clock, progress: number): number {
+  const p = clamp01(progress)
+  const first = clock[0]
+  const last = clock[clock.length - 1]
+  if (!first || !last) return p
+  if (p <= first[0]) return clamp01(first[1])
+  if (p >= last[0]) return clamp01(last[1])
+  for (let i = 1; i < clock.length; i++) {
+    const [p1, t1] = clock[i]!
+    const [p0, t0] = clock[i - 1]!
+    if (p <= p1) return clamp01(p1 > p0 ? lerp(t0, t1, (p - p0) / (p1 - p0)) : t1)
+  }
+  return clamp01(last[1])
+}
+
+/** Every page progress at which a clock comes to show `time` while it is running. */
+function progressAt(clock: Clock, time: number): number[] {
+  const found: number[] = []
+  for (let i = 1; i < clock.length; i++) {
+    const [p1, t1] = clock[i]!
+    const [p0, t0] = clock[i - 1]!
+    if (t1 > t0 && time >= t0 && time <= t1) found.push(lerp(p0, p1, (time - t0) / (t1 - t0)))
+  }
+  return found
+}
+
+/**
+ * The same curve as Web Animation keyframes, from the top of the page to the
+ * bottom. Between two keyframes both the clock and the curve are straight
+ * lines, so the browser's own interpolation lands exactly on the curve.
+ */
+export function curveKeyframes(stops: readonly Stop[], clock: Clock = STRAIGHT): Keyframe[] {
+  const travelling = travels(stops)
+  const points = [0, 1, ...clock.map(([progress]) => progress), ...stops.flatMap((stop) => progressAt(clock, stop.at))]
+    .map(clamp01)
+    .sort((a, b) => a - b)
+    // Two ways of arriving at the same place can differ in the last bit, and two keyframes a hair apart are a jump.
+    .filter((at, i, all) => i === 0 || at - all[i - 1]! > 1e-9)
+  // Whatever was merged, the curve still ends at the bottom of the page: a last keyframe short of it lets go of the element there.
+  points[points.length - 1] = 1
   return points.map((at) => {
-    const { opacity, y } = curveAt(stops, at)
-    return { offset: at, opacity, transform: drift(y) }
+    const point = curveAt(stops, clockAt(clock, at))
+    return { offset: at, opacity: point.opacity, transform: pose(point, travelling) }
   })
 }
 
 /** A stop applied by hand, for the fallback: what the keyframes would have set. */
-export function applyCurve(element: HTMLElement, stops: readonly Stop[], progress: number): void {
-  const { opacity, y } = curveAt(stops, progress)
-  element.style.opacity = opacity.toFixed(3)
-  element.style.transform = drift(y)
+export function applyCurve(element: HTMLElement, stops: readonly Stop[], progress: number, clock: Clock = STRAIGHT): void {
+  const point = curveAt(stops, clockAt(clock, progress))
+  element.style.opacity = point.opacity.toFixed(3)
+  element.style.transform = pose(point, travels(stops))
 }
 
 // ---------------------------------------------------------------- the sky
 
 export type SkyLayer = 'dawn' | 'noon' | 'dusk' | 'night'
+
+/*
+ * Everything in the sky is timed in the same terms: 0 is the top of the page
+ * and 1 the bottom, unless `DAY` below says otherwise. The four lights, the
+ * sun and the moon are tuned against each other — the sun is on the horizon
+ * while the dawn glows, overhead through the clear stretch, down as the dusk
+ * is at its fullest, and the moon is up by the time the stars are out — so
+ * they are kept here together, and a page whose sections move should move
+ * them together, or leave them alone and change `DAY`.
+ */
 
 /**
  * The time of day down the page. The hero is morning, the middle of the page
@@ -187,6 +275,127 @@ export const SKY: Record<SkyLayer, readonly Stop[]> = {
     { at: 0.76, opacity: 0, y: 7 },
     { at: 0.95, opacity: 1, y: 0 },
   ],
+}
+
+/** The path of something that rises, crosses the screen and sets. */
+export interface Arc {
+  /** When it comes over the horizon and when it has gone under it. Either may lie off the page. */
+  rise: number
+  set: number
+  /** Where along the horizon it rises and where it sets, in vw. */
+  from: number
+  to: number
+  /** How far down the screen its highest point is, and where the horizon lies, in vh. */
+  top: number
+  horizon: number
+  /**
+   * How soon it is up. 1 is a plain arc; higher climbs faster and then runs
+   * along the top of the screen for longer — which is where a reader's eyes
+   * are not.
+   */
+  shoulder: number
+  /** How much larger it looks on the horizon than overhead. */
+  swell: number
+}
+
+/** The sun: on the horizon at the very top of the page, across the top of the screen all day, down with the dusk. */
+export const SUN: Arc = { rise: -0.004, set: 0.81, from: 21, to: 68, top: 11.5, horizon: 103, shoulder: 2.2, swell: 1.3 }
+
+/**
+ * The moon: a young one, so it is in the west where the sun went down. It
+ * comes up the right-hand edge as the stars come out and is still climbing at
+ * the foot of the page, into the one corner the footer leaves empty at every
+ * width.
+ */
+export const MOON: Arc = { rise: 0.79, set: 1.36, from: 97, to: 70, top: 10.5, horizon: 107, shoulder: 3, swell: 1.16 }
+
+/**
+ * What time of day each part of the page shows. Straight through: the page is
+ * one day. A stretch of the page that should not use up any of the day — a
+ * pinned scene with a sky of its own, say — is two knots with the same time.
+ */
+export const DAY: Clock = STRAIGHT
+
+export interface ArcPoint {
+  /** Across and down the screen, in vw and vh. */
+  x: number
+  y: number
+  scale: number
+  /** How high it stands: 0 on the horizon, 1 at the top of its path. */
+  height: number
+  /** Whether it is over the horizon at all. */
+  up: boolean
+}
+
+/** Where on its path something is at a time of day. */
+export function arcAt(arc: Arc, time: number): ArcPoint {
+  const span = arc.set - arc.rise
+  const raw = span > 0 ? (finite(time) - arc.rise) / span : 0
+  const u = clamp01(raw)
+  // A sine arc with its top held: it leaves the horizon at a steady pace, not straight up.
+  const height = 1 - Math.pow(Math.max(0, 1 - Math.sin(Math.PI * u)), Math.max(1, finite(arc.shoulder, 1)))
+  return {
+    x: lerp(arc.from, arc.to, u),
+    y: lerp(arc.horizon, arc.top, height),
+    scale: lerp(arc.swell, 1, height),
+    height,
+    up: raw > 0 && raw < 1,
+  }
+}
+
+/** The times at which a path is sampled: the part of it that falls on the page, closer together where it turns fastest. */
+function arcTimes(arc: Arc, steps: number): number[] {
+  const n = Math.max(2, Math.floor(steps))
+  const span = arc.set - arc.rise
+  const times: number[] = []
+  for (let i = 0; i <= n; i++) {
+    // Evenly round the half circle, so the steep ends get as many samples as the flat top.
+    const time = arc.rise + span * (0.5 - 0.5 * Math.cos((Math.PI * i) / n))
+    if (time >= 0 && time <= 1) times.push(time)
+  }
+  for (const end of [clamp01(arc.rise), clamp01(arc.set)]) if (!times.includes(end)) times.push(end)
+  return times.sort((a, b) => a - b)
+}
+
+/**
+ * A path as stops: across the screen in a straight line of time, up and over
+ * in an arc. It is there for as long as it is over the horizon, and fades in
+ * the last step down to it — the horizon is off the bottom of the screen, so
+ * that is a sinking, not a switch.
+ */
+export function arcStops(arc: Arc, steps = 32): Stop[] {
+  return arcTimes(arc, steps).map((time) => {
+    const point = arcAt(arc, time)
+    return { at: time, opacity: point.up ? 1 : 0, x: trim(point.x), y: trim(point.y), scale: trim(point.scale) }
+  })
+}
+
+/**
+ * The two colours of something in the sky, as a cross-fade: `low` is the
+ * colour it has on the horizon, `high` the one it has overhead, and between
+ * them the two always add up to the whole of it.
+ */
+export function arcTintStops(arc: Arc, tint: 'low' | 'high', steps = 32): Stop[] {
+  return arcTimes(arc, steps).map((time) => {
+    const high = smoothstep(0.25, 0.8, arcAt(arc, time).height)
+    return { at: time, opacity: trim(tint === 'high' ? high : 1 - high) }
+  })
+}
+
+/**
+ * The same thing for a reader who has asked for less motion: it does not
+ * travel. It hangs where it would be highest and comes and goes with the
+ * light, like the four layers do.
+ */
+export function arcStillStops(arc: Arc, steps = 32): Stop[] {
+  const rest = arcAt(arc, (arc.rise + arc.set) / 2)
+  return arcTimes(arc, steps).map((time) => ({
+    at: time,
+    opacity: trim(smoothstep(0.5, 0.95, arcAt(arc, time).height)),
+    x: trim(rest.x),
+    y: trim(rest.y),
+    scale: 1,
+  }))
 }
 
 export interface Star {
