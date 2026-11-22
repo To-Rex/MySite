@@ -1,13 +1,27 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Float, Html, PerformanceMonitor } from '@react-three/drei'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { BufferAttribute, BufferGeometry, MathUtils, Quaternion, Vector3, type Group, type Mesh, type MeshPhysicalMaterial } from 'three'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import {
+  BufferAttribute,
+  BufferGeometry,
+  MathUtils,
+  Quaternion,
+  Vector3,
+  type Group,
+  type LineBasicMaterial,
+  type Mesh,
+  type MeshPhysicalMaterial,
+  type Points,
+  type WebGLProgramParametersWithUniforms,
+} from 'three'
 import { pointer } from '@/lib/pointer'
+import { clamp01, finite, hash } from '@/lib/scroll'
 import type { Theme } from '@/theme/context'
 import { qualityFor, type DeviceTier } from '@/hooks/useDeviceTier'
 import { technologies, type Technology } from '@/content/technologies'
 import type { TechId } from '@/i18n/types'
 import { ThemedEnvironment } from './ThemedEnvironment'
+import { FLIGHT_KEYS, UNIVERSE, cameraPosition, layoutNodes, stageProgress, universeFlight, type Flight } from './universeFlight'
 
 export interface UniverseSceneProps {
   theme: Theme
@@ -25,21 +39,6 @@ const PALETTE = {
   light: { node: '#f1ede6', nodeActive: '#9a6b2a', core: '#f3efe8', wire: '#121211', line: '#121211', label: '#121211' },
 } as const
 
-/** Deterministic, evenly spread positions on a slightly flattened sphere. */
-function layoutNodes(items: readonly Technology[], radius: number, compact: boolean) {
-  const n = items.length
-  const golden = Math.PI * (3 - Math.sqrt(5))
-  return items.map((item, i) => {
-    const y = 1 - (i / (n - 1)) * 2 // 1 → -1
-    const r = Math.sqrt(1 - y * y)
-    const theta = golden * i + 0.6
-    const spread = item.core ? radius * 0.72 : radius
-    const x = Math.cos(theta) * r * spread * (compact ? 0.82 : 1)
-    const z = Math.sin(theta) * r * spread * 0.7
-    return new Vector3(x, y * spread * 0.78, z)
-  })
-}
-
 interface NodeProps {
   tech: Technology
   base: Vector3
@@ -48,6 +47,7 @@ interface NodeProps {
   isActive: boolean
   compact: boolean
   reducedMotion: boolean
+  flightRef: RefObject<Flight>
   onActivate: (id: TechId) => void
   register: (id: TechId, refs: NodeRefs | null) => void
 }
@@ -57,12 +57,13 @@ interface NodeRefs {
   holder: Group
 }
 
-function TechNode({ tech, base, label, theme, isActive, compact, reducedMotion, onActivate, register }: NodeProps) {
+function TechNode({ tech, base, label, theme, isActive, compact, reducedMotion, flightRef, onActivate, register }: NodeProps) {
   const mesh = useRef<Mesh>(null)
   const holder = useRef<Group>(null)
   const material = useRef<MeshPhysicalMaterial>(null)
   const button = useRef<HTMLButtonElement>(null)
   const scale = useRef(1)
+  const hidden = useRef(false)
   const p = PALETTE[theme]
   const size = 0.09 + tech.weight * 0.08
 
@@ -87,8 +88,16 @@ function TechNode({ tech, base, label, theme, isActive, compact, reducedMotion, 
     const opacity = 0.35 + k * 0.65
     if (material.current) material.current.opacity = isActive ? 1 : opacity
     if (button.current) {
-      button.current.style.opacity = String(isActive ? 1 : 0.45 + k * 0.55)
+      // In flight the labels make way: far out they would crowd a cloud the
+      // size of a coin, and close in they would swell across the lens.
+      const shown = clamp01(flightRef.current.labels)
+      button.current.style.opacity = String((isActive ? 1 : 0.45 + k * 0.55) * shown)
       button.current.dataset.active = isActive ? 'true' : 'false'
+      const gone = shown < 0.03
+      if (gone !== hidden.current) {
+        hidden.current = gone
+        button.current.style.visibility = gone ? 'hidden' : ''
+      }
     }
   })
 
@@ -185,17 +194,107 @@ function Core({ theme, tier, activeId, reducedMotion }: { theme: Theme; tier: De
   )
 }
 
-function Constellation({ theme, tier, reducedMotion, compact, activeId, onActivate, labels }: Omit<UniverseSceneProps, 'active'>) {
+/**
+ * Flies the camera with the page (`universeFlight.ts`). Mounted ahead of the
+ * constellation so its frame runs first: it reads the canvas's place on the
+ * page before anything else this frame has written to the DOM, and everything
+ * after it reads the flight it settled on.
+ */
+function FlightRig({ flightRef, rest, reducedMotion }: { flightRef: RefObject<Flight>; rest: number; reducedMotion: boolean }) {
+  const { camera, gl } = useThree()
+  const seen = useRef(0)
+
+  useFrame((_, dt) => {
+    const rect = gl.domElement.getBoundingClientRect()
+    const target = universeFlight(reducedMotion ? 0.5 : stageProgress(rect.top, rect.height, window.innerHeight), rest)
+    // Parked off screen, the canvas drew nothing while the page moved on. Take
+    // up the new shot at once rather than sweeping across from the old one.
+    const now = performance.now()
+    const resumed = now - seen.current > 300
+    seen.current = now
+    const step = Math.min(dt, 0.25)
+    const f = flightRef.current
+    for (const key of FLIGHT_KEYS) f[key] = resumed ? target[key] : finite(MathUtils.damp(f[key], target[key], 3.4, step), target[key])
+    const eye = cameraPosition(f)
+    camera.position.set(finite(eye.x), finite(eye.y), finite(eye.z, rest))
+    camera.lookAt(0, 0, 0)
+  })
+
+  return null
+}
+
+/** Round, soft-edged motes, never more than a few pixels however close one drifts to the lens. */
+function roundMotes(shader: WebGLProgramParametersWithUniforms) {
+  shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', 'gl_PointSize = min(gl_PointSize, 9.0);\n#include <fog_vertex>')
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <color_fragment>',
+    '#include <color_fragment>\nvec2 moteUv = gl_PointCoord - 0.5;\ndiffuseColor.a *= smoothstep(0.25, 0.04, dot(moteUv, moteUv));',
+  )
+}
+
+/** Motes around the constellation, fixed in the world, so a moving camera has something to move past. */
+function Dust({ theme, count }: { theme: Theme; count: number }) {
+  const points = useRef<Points>(null)
+  const turn = useRef(0)
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(count * 3)
+    for (let i = 0; i < count; i++) {
+      const u = hash(i, 41) * 2 - 1
+      const a = hash(i, 42) * Math.PI * 2
+      const r = 3.8 + Math.pow(hash(i, 43), 0.75) * 11
+      const ring = Math.sqrt(1 - u * u) * r
+      positions[i * 3] = Math.cos(a) * ring
+      positions[i * 3 + 1] = u * r * 0.75
+      positions[i * 3 + 2] = Math.sin(a) * ring
+    }
+    const g = new BufferGeometry()
+    g.setAttribute('position', new BufferAttribute(positions, 3))
+    return g
+  }, [count])
+  useEffect(() => () => geometry.dispose(), [geometry])
+
+  useFrame((_, dt) => {
+    turn.current += Math.min(dt, 0.25) * 0.01
+    if (points.current) points.current.rotation.y = turn.current
+  })
+
+  return (
+    <points ref={points} geometry={geometry}>
+      <pointsMaterial
+        size={0.05}
+        sizeAttenuation
+        transparent
+        depthWrite={false}
+        opacity={theme === 'dark' ? 0.36 : 0.26}
+        color={theme === 'dark' ? '#f4f3f0' : '#121211'}
+        onBeforeCompile={roundMotes}
+      />
+    </points>
+  )
+}
+
+function Constellation({
+  theme,
+  tier,
+  reducedMotion,
+  compact,
+  activeId,
+  onActivate,
+  labels,
+  flightRef,
+}: Omit<UniverseSceneProps, 'active'> & { flightRef: RefObject<Flight> }) {
   const group = useRef<Group>(null)
   const spin = useRef(0)
   const lines = useRef<BufferGeometry>(null)
+  const lineMaterial = useRef<LineBasicMaterial>(null)
   const nodes = useRef(new Map<TechId, NodeRefs>())
   const { camera } = useThree()
   const q = qualityFor(tier)
   const p = PALETTE[theme]
+  const lineOpacity = theme === 'dark' ? 0.1 : 0.12
 
-  const radius = compact ? 2.05 : 2.7
-  const bases = useMemo(() => layoutNodes(technologies, radius, compact), [radius, compact])
+  const radius = compact ? UNIVERSE.radius.compact : UNIVERSE.radius.wide
+  const bases = useMemo(() => layoutNodes(technologies, radius, compact).map(({ x, y, z }) => new Vector3(x, y, z)), [radius, compact])
 
   const register = useMemo(
     () => (id: TechId, refs: NodeRefs | null) => {
@@ -217,8 +316,14 @@ function Constellation({ theme, tier, reducedMotion, compact, activeId, onActiva
 
     const mx = pointer.inside && !pointer.isTouch ? pointer.nx : 0
     const my = pointer.inside && !pointer.isTouch ? pointer.ny : 0
-    g.rotation.y = MathUtils.damp(g.rotation.y, spin.current + mx * 0.25, 4, delta)
+    const f = flightRef.current
+    // The scroll turns the whole sphere as well as flying past it.
+    g.rotation.y = MathUtils.damp(g.rotation.y, spin.current + mx * 0.25 + finite(f.turn), 4, delta)
     g.rotation.x = MathUtils.damp(g.rotation.x, -my * 0.18, 4, delta)
+    // Flung wide on the way in, the nodes gather into their sphere; the lines
+    // to the core only draw once they have.
+    const spread = finite(f.spread, 1)
+    if (lineMaterial.current) lineMaterial.current.opacity = lineOpacity * clamp01(1 - (spread - 1) / 0.55)
 
     // Magnetic drift toward the pointer, computed in screen space.
     tmpQuat.copy(g.quaternion).invert()
@@ -244,9 +349,9 @@ function Constellation({ theme, tier, reducedMotion, compact, activeId, onActiva
       }
       // Screen-space offset → world → local (group) space.
       tmpVec.set(ox, oy, 0).applyQuaternion(camera.quaternion).applyQuaternion(tmpQuat)
-      holder.position.x = MathUtils.damp(holder.position.x, base.x + tmpVec.x, 6, delta)
-      holder.position.y = MathUtils.damp(holder.position.y, base.y + tmpVec.y, 6, delta)
-      holder.position.z = MathUtils.damp(holder.position.z, base.z + tmpVec.z, 6, delta)
+      holder.position.x = MathUtils.damp(holder.position.x, base.x * spread + tmpVec.x, 6, delta)
+      holder.position.y = MathUtils.damp(holder.position.y, base.y * spread + tmpVec.y, 6, delta)
+      holder.position.z = MathUtils.damp(holder.position.z, base.z * spread + tmpVec.z, 6, delta)
 
       linePositions[i * 6 + 0] = 0
       linePositions[i * 6 + 1] = 0
@@ -269,7 +374,7 @@ function Constellation({ theme, tier, reducedMotion, compact, activeId, onActiva
           <bufferGeometry ref={lines}>
             <bufferAttribute attach="attributes-position" args={[linePositions, 3]} />
           </bufferGeometry>
-          <lineBasicMaterial color={p.line} transparent opacity={theme === 'dark' ? 0.1 : 0.12} />
+          <lineBasicMaterial ref={lineMaterial} color={p.line} transparent opacity={lineOpacity} />
         </lineSegments>
       )}
       {technologies.map((tech, i) => (
@@ -282,6 +387,7 @@ function Constellation({ theme, tier, reducedMotion, compact, activeId, onActiva
           isActive={activeId === tech.id}
           compact={compact}
           reducedMotion={reducedMotion}
+          flightRef={flightRef}
           onActivate={onActivate}
           register={register}
         />
@@ -290,11 +396,16 @@ function Constellation({ theme, tier, reducedMotion, compact, activeId, onActiva
   )
 }
 
-/** Interactive technology universe — a calm constellation around a central core. */
+/**
+ * Interactive technology universe — a calm constellation around a central
+ * core, which the page scroll flies the camera through.
+ */
 export default function UniverseScene(props: UniverseSceneProps) {
-  const { theme, tier, active, compact } = props
+  const { theme, tier, active, compact, reducedMotion } = props
   const q = qualityFor(tier)
   const [dpr, setDpr] = useState<number | [number, number]>(q.dpr)
+  const rest = compact ? UNIVERSE.rest.compact : UNIVERSE.rest.wide
+  const flightRef = useRef<Flight>(universeFlight(0.5, rest))
 
   return (
     <Canvas
@@ -305,10 +416,12 @@ export default function UniverseScene(props: UniverseSceneProps) {
       style={{ background: 'transparent' }}
     >
       <PerformanceMonitor onDecline={() => setDpr(1)} flipflops={2} />
+      <FlightRig flightRef={flightRef} rest={rest} reducedMotion={reducedMotion} />
       <ambientLight intensity={theme === 'dark' ? 0.2 : 0.55} />
       <directionalLight position={[3, 5, 4]} intensity={theme === 'dark' ? 0.5 : 0.8} />
       <ThemedEnvironment theme={theme} resolution={Math.min(q.env, 128)} />
-      <Constellation {...props} />
+      {q.particles > 0 && <Dust theme={theme} count={q.particles * 4} />}
+      <Constellation {...props} flightRef={flightRef} />
     </Canvas>
   )
 }

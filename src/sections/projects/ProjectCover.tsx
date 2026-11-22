@@ -26,11 +26,11 @@ export function ProjectCover({ project, index, alt, className }: ProjectCoverPro
       ) : (
         <>
           <div className="cover-grid absolute inset-0" aria-hidden />
-          <span className="absolute top-5 left-6 font-mono text-[0.68rem] tracking-[0.18em] text-fg/60" aria-hidden>
+          <span className="cover-label absolute top-5 left-6 font-mono text-[0.68rem] tracking-[0.18em] text-fg/60" aria-hidden>
             {String(index + 1).padStart(2, '0')}
           </span>
           <span
-            className="absolute right-5 bottom-3 font-mono text-[clamp(4rem,9vw,7rem)] leading-none font-bold tracking-[-0.06em] text-fg/[0.06] select-none"
+            className="cover-index absolute right-5 bottom-3 font-mono text-[clamp(4rem,9vw,7rem)] leading-none font-bold tracking-[-0.06em] text-fg/[0.06] select-none"
             aria-hidden
           >
             {String(index + 1).padStart(2, '0')}

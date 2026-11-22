@@ -9,6 +9,8 @@ import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { Seo } from '@/components/seo/Seo'
 import { Navigation } from '@/components/layout/Navigation'
 import { Footer } from '@/components/layout/Footer'
+import { ReadingTrail } from '@/components/layout/ReadingTrail'
+import { ScrollSky } from '@/components/layout/ScrollSky'
 import { CustomCursor } from '@/components/cursor/CustomCursor'
 import { Preloader } from '@/components/loader/Preloader'
 import { Companion } from '@/components/three/Companion'
@@ -34,6 +36,7 @@ function Shell() {
   return (
     <IntroContext.Provider value={introDone}>
       <Seo />
+      <ScrollSky />
       <ReactLenis root options={{ lerp: 0.09, smoothWheel: !reduced, syncTouch: false, autoRaf: true }}>
         <a href="#main" className="sr-only-focusable fixed top-4 left-4 z-[2000] rounded-full bg-fg px-4 py-2 text-sm font-medium text-bg">
           {t.common.skipToContent}
@@ -52,6 +55,7 @@ function Shell() {
         </main>
         <Footer />
       </ReactLenis>
+      <ReadingTrail />
       <CustomCursor />
       <Companion />
       <Valley />

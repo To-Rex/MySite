@@ -46,8 +46,10 @@ src/
   theme/          dark/light ThemeProvider (View Transitions circular reveal)
   components/
     ui/           Button, SplitText, Reveal, Magnetic, TiltCard, Marquee, icons…
-    layout/       Navigation, MobileMenu, Footer, LanguageSwitcher, ThemeToggle
+    layout/       Navigation, MobileMenu, Footer, LanguageSwitcher, ThemeToggle,
+                  ReadingTrail (the prints along the top), ScrollSky (the time of day)
     three/        HeroScene, UniverseScene, ThemedEnvironment (all lazy)
+                  universeFlight.ts — the camera's flight through the universe (three-free)
                   Companion.tsx — gate for the scroll companion (three-free)
                   CompanionTurtle.tsx — the turtle that follows the reader
                   creatureRig.ts / creatureFittings.tsx — shared skeleton, eyes, teeth
@@ -60,7 +62,7 @@ src/
   features/
     github/       live GitHub data (API + hook + contribution graph)
   sections/       Hero, About, Philosophy, TechUniverse, Building, Projects, GithubActivity, Presence, Contact
-  hooks/, lib/    shared utilities (media queries, device tier, pointer store…)
+  hooks/, lib/    shared utilities (media queries, device tier, pointer store, scroll curves…)
 ```
 
 ### Languages (oz default · uz · en · de · ru)
@@ -398,6 +400,73 @@ three separate places now drive the same skeletons — the hero, the easter egg 
 the cameos. The hero's tyrannosaur keeps its own much richer idle; the cameo
 animator is deliberately compact, because the creature is on screen for three
 seconds and the only thing that has to read is *running*.
+
+### Scroll
+
+Five things on the page answer the scroll. Each one is tied to the scroll
+*position*, never to a timer, so scrolling back runs it backwards and a reader
+who stops stops it.
+
+| What the reader sees | Where | What drives it |
+| --- | --- | --- |
+| A theropod's trackway along the top edge: one print for every stretch read, the newest fresh in the accent, the older ones drying out | `ReadingTrail.tsx` | one passive listener, which writes only when a print lands or lifts — a few dozen times down the whole page |
+| The time of day behind the page: morning under the hero, a clear sky through the middle, an evening over the work, night and stars behind the contact | `ScrollSky.tsx` | Web Animations on the document's `ScrollTimeline`, on the compositor; one listener where the browser has none |
+| The marquee runs faster the faster the page goes, turns round when the reader scrolls back up, leans into its speed and all but stops under the pointer | `Marquee.tsx` | its own frame loop on `window.scrollY`, asleep while off screen |
+| The projects as a row the page slides sideways: the section pins for exactly as long as the row needs, each card swings round to face the reader in the middle, its cover lagging and its numeral running ahead | `ProjectGallery.tsx` | the page scroll sets the row's `scrollLeft`; each card's motion is a CSS view timeline |
+| A flight through the technology universe: in from far out while the technologies gather into their sphere, the composed shot while the stage is wholly on screen, then in over the cloud as it leaves | `universeFlight.ts`, `UniverseScene.tsx` | the canvas's own place on the page, read in its frame loop |
+
+Every curve is a pure function — `src/lib/scroll.ts` and `universeFlight.ts`,
+neither of which imports React or three.js — and `tests/unit/scroll.test.ts`
+holds them to what they promise: prints only ever land in order and the last
+lands at the bottom, the sky never goes dark in the middle of the page, the
+marquee turns round and comes back to its drift, the gallery's page-to-row
+mapping is its own inverse, and the camera never flies into a node.
+`tests/e2e/scroll.spec.ts` drives the real page, on a desktop and on a phone.
+
+What is load-bearing:
+
+- **The projects row is a real horizontal scroller, kept in step both ways.**
+  The obvious build — a strip moved with a transform inside a pinned box — has
+  no way to show a card that receives focus: a browser brings a focused element
+  into view by scrolling its containers, and a transform is not a scroll. Tab
+  walked into cards that stayed off screen, and so did the test suite's
+  `scrollIntoViewIfNeeded`. Now the page scroll writes `scrollLeft`, and a
+  `scrollLeft` this code did not write — a swipe, a trackpad, focus — moves the
+  page to the matching place. Mostly-sideways trackpad gestures are left to the
+  row with `data-lenis-prevent-horizontal`; Lenis already ignores purely
+  sideways ones.
+- **The cover and the numeral take the card's timeline by name.** An anonymous
+  `view()` belongs to the nearest scroll container, and the cover's clipping
+  box is one — `overflow: hidden` still scrolls, to a script — so they timed
+  themselves against a box that never moves and drifted off on the overflow
+  their own transforms created. The card declares `view-timeline:
+  --gallery-card inline` and both follow that.
+- **The last card travels to the middle.** The row's end padding is half the
+  screen less half a card, so the last one gets its turn facing the reader like
+  every other, and the count reaches it. Before, it stopped at the right edge,
+  half turned away, with the counter one short.
+- **The sky is only ever faded and slid.** Four soft layers, each with one
+  opacity-and-translate animation, which the browser runs off the main thread.
+  Animating their colours instead would repaint four full-screen gradients on
+  every scroll frame. The keyframes and the fallback are built from the same
+  table (`SKY`), so the two paths cannot disagree.
+- **The universe holds still while it can be pointed at.** The flight leaves
+  the shot the section was composed around exactly as it was for the middle
+  fifth of the stage's passage, which is when the whole stage is on screen.
+  `FlightRig` places the camera and is mounted ahead of the constellation, so
+  its frame reads the canvas's rect before anything else that frame has written
+  to the DOM. A canvas back from being parked takes up the new shot at once
+  instead of sweeping across from where it was left. Labels fade in flight: far
+  out they would crowd a cloud the size of a coin, and close in they would swell
+  across the lens.
+- **Reduced motion.** The projects are the plain grid, the marquee is a still
+  row, the sky changes its light but does not drift, and nothing twinkles. The
+  trail stays — it is a progress indicator — but lands without its little
+  press.
+
+What it costs, scrolling the whole page at 1,400 px/s in headless Chrome on an
+M2: 60 fps in every section at DPR 1 and 2, and on a phone-sized viewport at
+DPR 3; with the CPU throttled four times on that phone, 56–60 fps.
 
 ### The extinction cinematic
 
@@ -1149,7 +1218,7 @@ its box and targets too small for a thumb — turned up, and what changed:
 
 - The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only (~140 kB, 42 kB gzipped).
 - Scenes render only while on screen (`frameloop="never"` off-screen), DPR adapts via `PerformanceMonitor`, and a device-tier estimate (`useDeviceTier`) scales geometry/particles; WebGL-less browsers get a designed 2D fallback.
-- `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor.
+- `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor, turns the projects row back into a grid and stops the sky from drifting.
 
 ## Testing
 
@@ -1162,9 +1231,9 @@ split by *what has to exist* for a check to be possible.
 
 | Layer | Command | Reads | Guards |
 | --- | --- | --- | --- |
-| Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the architecture rules |
+| Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the scroll curves and the universe's flight, the architecture rules |
 | Build | `npm run test:dist` | `dist/` | the CSP and its hashes, what loads up front and how big it is, what the minifier did to the CSS |
-| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
+| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the trail, the sky, the projects row and the marquee as the page scrolls, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
 
 **The architecture rules are tests.** `tests/unit/architecture.test.ts` follows
 static imports from `main.tsx` and `not-found.tsx` and fails if three.js is reachable without

@@ -395,3 +395,384 @@
     box-shadow: 0 0 0 12px transparent;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   The reading trail: a theropod's prints along the top edge (ReadingTrail.tsx)
+--------------------------------------------------------------------------- */
+.reading-trail {
+  --down: 0;
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  height: 1.05rem;
+  pointer-events: none;
+}
+.reading-trail__defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.reading-trail__print {
+  /* 1 once the reader has passed this print, 0 before it. */
+  --on: clamp(0, var(--down) - var(--i), 1);
+  /* How many have landed since: the newest is fresh, the older ones dry out. */
+  --age: clamp(0, (var(--down) - var(--i) - 1) / 8, 1);
+  --press: calc(1.8 - var(--on) * 0.8);
+  position: absolute;
+  top: 50%;
+  width: 0.78rem;
+  height: 0.78rem;
+  margin: -0.39rem 0 0 -0.39rem;
+  color: color-mix(in oklab, var(--accent) calc(100% - var(--age) * 100%), var(--fg-3));
+  opacity: calc(var(--on) * (1 - var(--age) * 0.45));
+  transform: translateY(var(--y)) rotate(var(--r)) scale(calc(var(--s) * var(--press)), calc(var(--s) * var(--m) * var(--press)));
+  transition:
+    opacity 0.4s var(--ease-out),
+    /* A touch of overshoot: the foot presses in, then lifts its weight. */
+    transform 0.6s cubic-bezier(0.2, 1.45, 0.4, 1),
+    color 0.9s linear;
+}
+.reading-trail__print svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+@media (max-width: 767px) {
+  .reading-trail {
+    height: 0.9rem;
+  }
+  .reading-trail__print {
+    width: 0.66rem;
+    height: 0.66rem;
+    margin: -0.33rem 0 0 -0.33rem;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   The sky behind the page: morning at the top, night at the bottom (ScrollSky.tsx)
+--------------------------------------------------------------------------- */
+.scroll-sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.scroll-sky__layer {
+  position: absolute;
+  inset-inline: -4%;
+  opacity: 0;
+  will-change: opacity, transform;
+}
+/* Each layer is taller than the band it lights, so drifting never shows an edge. */
+.scroll-sky__dawn {
+  bottom: -14vh;
+  height: 74vh;
+  opacity: 1;
+  background: radial-gradient(72% 62% at 50% 100%, var(--sky-dawn-1), var(--sky-dawn-2) 46%, transparent 76%);
+}
+.scroll-sky__noon {
+  top: -10vh;
+  height: 82vh;
+  background: linear-gradient(to bottom, var(--sky-noon-1), var(--sky-noon-2) 48%, transparent 90%);
+}
+.scroll-sky__dusk {
+  bottom: -18vh;
+  height: 84vh;
+  background:
+    radial-gradient(58% 46% at 50% 100%, var(--sky-dusk-1), transparent 72%),
+    radial-gradient(96% 80% at 50% 100%, var(--sky-dusk-2), transparent 78%);
+}
+.scroll-sky__night {
+  top: -10vh;
+  height: 88vh;
+  background: linear-gradient(to bottom, var(--sky-night-1), var(--sky-night-2) 52%, transparent 94%);
+}
+.scroll-sky__stars {
+  position: absolute;
+  inset: 0;
+  fill: var(--star);
+}
+.scroll-sky__twinkle {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+  border-radius: 50%;
+  background: var(--star);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--star) 55%, transparent);
+  animation: sky-twinkle var(--t) ease-in-out var(--d) infinite alternate;
+}
+@keyframes sky-twinkle {
+  from {
+    opacity: 0.25;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* One meteor now and then, across the upper sky, falling left. */
+.scroll-sky__meteor {
+  position: absolute;
+  top: 16%;
+  left: 82%;
+  width: 9rem;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--star));
+  opacity: 0;
+  transform-origin: 100% 50%;
+  animation: sky-meteor 13s linear 6s infinite;
+}
+@keyframes sky-meteor {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) rotate(152deg) scaleX(0.3);
+  }
+  1.6% {
+    opacity: 0.9;
+  }
+  6% {
+    opacity: 0;
+    transform: translate3d(-32vw, 17vh, 0) rotate(152deg) scaleX(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-32vw, 17vh, 0) rotate(152deg) scaleX(1);
+  }
+}
+:root[data-theme='light'] .scroll-sky__stars,
+:root[data-theme='light'] .scroll-sky__twinkle,
+:root[data-theme='light'] .scroll-sky__meteor {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scroll-sky__twinkle {
+    animation: none;
+  }
+  .scroll-sky__meteor {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   The projects gallery: pinned, and slid sideways by the page (ProjectGallery.tsx)
+--------------------------------------------------------------------------- */
+.gallery-stage {
+  --card-w: clamp(16.5rem, min(30vw, 46svh), 26rem);
+}
+@media (max-width: 639px) {
+  .gallery-stage {
+    --card-w: min(80vw, 22rem);
+  }
+}
+/* The section's own word, huge and hollow, drifting slower than the row. It
+   starts behind the first card rather than the heading, which it would only
+   make harder to read. */
+.gallery-word {
+  position: absolute;
+  top: 50%;
+  left: 40vw;
+  z-index: 0;
+  font-size: clamp(7rem, 25vw, 25rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.06em;
+  white-space: nowrap;
+  color: transparent;
+  -webkit-text-stroke: 1px var(--border-2);
+  transform: translate3d(0, -50%, 0);
+  will-change: transform;
+  user-select: none;
+  pointer-events: none;
+}
+/* On a phone the heading is the whole first screen; the word waits off to its
+   right and comes in behind the cards. */
+@media (max-width: 639px) {
+  .gallery-word {
+    left: 88vw;
+  }
+}
+.gallery-scroller {
+  position: relative;
+  z-index: 1;
+  container-type: inline-size;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  scroll-padding-inline: var(--gutter);
+}
+.gallery-scroller::-webkit-scrollbar {
+  display: none;
+}
+.gallery-rail {
+  /* Lines the heading up with the page's own column... */
+  --edge: max(var(--gutter), calc((100cqw - var(--container)) / 2 + var(--gutter)));
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: max-content;
+  /* ...and lets the last card travel all the way to the middle, so it gets
+     its turn facing the reader like every other, and the count reaches it. */
+  padding: 2.5rem max(var(--edge), calc(50cqw - var(--card-w) / 2)) 2.5rem 0;
+}
+.gallery-intro {
+  flex: none;
+  box-sizing: content-box;
+  width: min(30rem, 76cqw);
+  padding-left: var(--edge);
+  padding-right: clamp(2rem, 7cqw, 7rem);
+}
+.gallery-list {
+  display: flex;
+  align-items: stretch;
+  gap: clamp(1rem, 2cqw, 1.75rem);
+}
+.gallery-card {
+  flex: none;
+  width: var(--card-w);
+}
+.gallery-card[data-featured] {
+  width: calc(var(--card-w) * 1.42);
+}
+@media (max-width: 639px) {
+  .gallery-card[data-featured] {
+    width: var(--card-w);
+  }
+}
+.gallery-cover-box {
+  height: clamp(10.5rem, 34svh, 20rem);
+}
+/* The cover drifts and is enlarged to do it, which carries the small corner
+   number out past the clip; the big numeral and the count say it anyway. */
+.gallery-card .cover-label {
+  display: none;
+}
+.gallery-meter {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  color: var(--fg-2);
+}
+.gallery-meter__track {
+  position: relative;
+  flex: 1;
+  max-width: 22rem;
+  height: 1px;
+  overflow: hidden;
+  background: var(--border-2);
+}
+.gallery-meter__fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+}
+.gallery-meter__hint {
+  display: inline-flex;
+  color: var(--accent);
+  animation: gallery-nudge 1.8s var(--ease-in-out) infinite;
+}
+@keyframes gallery-nudge {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 6px 0;
+  }
+}
+
+/* Each card's own place in the row moves it: it swings round to face the
+   reader as it reaches the middle and away again as it leaves, its cover
+   lagging behind it and its numeral running ahead. Where the browser has no
+   view timelines the cards simply slide, flat.
+
+   The cover and the numeral follow the card's timeline by name rather than
+   taking `view()` of their own. An anonymous view timeline belongs to the
+   nearest scroll container, and the cover's clipping box is one (overflow:
+   hidden scrolls, to a script) — so they were timing themselves against a box
+   that never moves, and drifted off on the overflow their own transforms made. */
+@supports (animation-timeline: view()) {
+  .gallery-card {
+    view-timeline: --gallery-card inline;
+  }
+  .gallery-card,
+  .gallery-cover,
+  .gallery-card .cover-index,
+  .gallery-intro {
+    animation-duration: 1ms;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+  }
+  .gallery-card {
+    animation-name: gallery-card;
+    animation-timeline: --gallery-card;
+  }
+  .gallery-cover {
+    animation-name: gallery-cover;
+    animation-timeline: --gallery-card;
+  }
+  .gallery-card .cover-index {
+    animation-name: gallery-index;
+    animation-timeline: --gallery-card;
+  }
+  .gallery-intro {
+    animation-name: gallery-intro;
+    animation-timeline: view(inline);
+    animation-range: exit 0% exit 100%;
+  }
+}
+@keyframes gallery-card {
+  0% {
+    opacity: 0.3;
+    transform: perspective(1600px) translateX(10%) rotateY(16deg) scale(0.86);
+  }
+  34%,
+  66% {
+    opacity: 1;
+    transform: perspective(1600px) translateX(0) rotateY(0deg) scale(1);
+  }
+  100% {
+    opacity: 0.3;
+    transform: perspective(1600px) translateX(-10%) rotateY(-16deg) scale(0.86);
+  }
+}
+@keyframes gallery-cover {
+  from {
+    transform: translateX(-9%) scale(1.2);
+  }
+  to {
+    transform: translateX(9%) scale(1.2);
+  }
+}
+@keyframes gallery-index {
+  from {
+    transform: translateX(40%);
+  }
+  to {
+    transform: translateX(-40%);
+  }
+}
+@keyframes gallery-intro {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(32%);
+  }
+}
