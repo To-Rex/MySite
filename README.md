@@ -1350,6 +1350,21 @@ GitHub is mocked at the network layer — the requests still leave the page, so
 `connect-src` still has to allow them — which keeps the suite off the
 sixty-an-hour limit.
 
+**What is over in a second is watched a frame at a time.** A number counting
+to its value and a string turning into its translation both take about a
+second, and what has to be checked is what they showed on the way. Watched in
+real time that depends on how many frames the machine drew: a laptop draws
+sixty, and the CI runner, drawing the page's 3D in software, draws two or
+three — the count goes 0, 38, 42, and a test that wanted to see it climb fails
+with nothing wrong. Both of the first versions of those tests passed here and
+failed there. So they stop the page's clock (`tests/e2e/time.ts`, on
+Playwright's `page.clock`) and deal the frames out by hand; every run then sees
+the same frames at any speed, and the assertions can be exact — the Uzbek word
+is seen in precisely three states, the year lands a year at a time. The one
+thing the page's clock does not own is the browser telling the page that
+something has scrolled into view, so the count's test deals frames until that
+has happened and only then starts counting them.
+
 Locally the browser tests drive the Chrome that is already installed, so there
 is nothing to download; CI installs Playwright's Chromium. `PW_CHANNEL=chromium`
 forces the bundled one.

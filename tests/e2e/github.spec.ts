@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { github, open, scrollTo } from './site'
+import { changes, frames, freeze } from './time'
 
 /**
  * The GitHub section arriving: its numbers count to their values the first
@@ -14,25 +15,18 @@ const joined = new Date(github.profile.created_at).getFullYear()
 /** What each of the five numbers says once it has landed, in the order they are shown. */
 const LANDED = [String(github.profile.public_repos), String(github.profile.followers), String(stars), String(github.contributions.total.lastYear), String(joined)]
 
-/**
- * Starts writing down everything each stat shows, frame by frame, from before
- * it exists. A count is over in a second or so; polling from the test would
- * see its end and little else.
- */
-async function record(page: Page): Promise<void> {
+/** What each of the five numbers shows right now: the figure on screen, not the one a screen reader is given. */
+const shown = () => [...document.querySelectorAll('#github [data-stat] .count > [aria-hidden]')].map((el) => el.textContent ?? '')
+
+const states = (page: Page) => page.locator('#github [data-stat] .count').evaluateAll((all) => all.map((el) => el.getAttribute('data-count')))
+
+/** Brings the section close enough for its numbers to be fetched, with the row that shows them still below the screen. */
+async function fetchTheNumbers(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const seen: string[][] = []
-    Object.assign(window, { __seen: seen })
-    const tick = () => {
-      document.querySelectorAll('#github [data-stat] .count > [aria-hidden]').forEach((el, i) => {
-        const text = el.textContent ?? ''
-        const row = (seen[i] ??= [])
-        if (row[row.length - 1] !== text) row.push(text)
-      })
-      requestAnimationFrame(tick)
-    }
-    tick()
+    const section = document.getElementById('github')!
+    window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY - window.innerHeight - 200)
   })
+  await expect(page.locator('#github [data-stat]')).toHaveCount(LANDED.length)
 }
 
 /**
@@ -47,45 +41,69 @@ async function seeTheNumbers(page: Page): Promise<void> {
   await numbers.last().scrollIntoViewIfNeeded()
 }
 
-const seen = (page: Page) => page.evaluate(() => (window as unknown as { __seen: string[][] }).__seen)
-const states = (page: Page) => page.locator('#github [data-stat] .count').evaluateAll((all) => all.map((el) => el.getAttribute('data-count')))
-const landed = (page: Page) => expect.poll(() => states(page)).toEqual(['done', 'done', 'done', 'done', 'done'])
+/**
+ * Every frame of the count, from before it starts until `after` frames past
+ * the moment the first number moves. That a number is on screen is the
+ * browser's to report, and it reports it in its own time, not the page's — on
+ * a machine drawing in software that can be most of a second — so frames are
+ * dealt out, with a pause for the browser between them, until it has.
+ */
+async function watchTheCount(page: Page, after: number): Promise<string[][]> {
+  const seen = await frames(page, 0, shown)
+  for (let waited = 0; waited < 200 && (await states(page)).every((state) => state === 'waiting'); waited++) {
+    await page.waitForTimeout(50)
+    seen.push(...(await frames(page, 1, shown)).slice(1))
+  }
+  seen.push(...(await frames(page, after, shown)).slice(1))
+  return seen
+}
 
 test('the numbers count to the ones GitHub gave, once, and a screen reader is only ever told the answer', async ({ page }) => {
+  await page.clock.install()
   const problems = await open(page, '/?lang=en')
-  await record(page)
-  await seeTheNumbers(page)
-  // What is in the document for anything that reads it is the number itself, from the moment there is one.
+  await fetchTheNumbers(page)
+  // What is in the document for anything that reads it is the number itself, from the moment there is one;
+  // what is drawn has not moved yet, because nobody has seen it.
   const spoken = page.locator('#github [data-stat] .count > .sr-only')
   await expect(spoken).toHaveText(LANDED)
-  expect(await page.locator('#github [data-stat] .count > [aria-hidden]').count()).toBe(LANDED.length)
-  await landed(page)
-  await expect(page.locator('#github [data-stat] .count > [aria-hidden]')).toHaveText(LANDED)
+  expect(await states(page)).toEqual(['waiting', 'waiting', 'waiting', 'waiting', 'waiting'])
 
-  const rows = await seen(page)
-  expect(rows).toHaveLength(LANDED.length)
-  for (const [i, row] of rows.entries()) {
+  // From here the frames are dealt out by hand, so every run sees the same count.
+  await freeze(page)
+  await seeTheNumbers(page)
+  const seen = await watchTheCount(page, 220)
+  expect(seen[seen.length - 1]).toEqual(LANDED)
+  expect(await states(page)).toEqual(['done', 'done', 'done', 'done', 'done'])
+  await expect(spoken).toHaveText(LANDED)
+
+  for (const [i, landed] of LANDED.entries()) {
+    const row = changes(seen.map((frame) => frame[i]!))
     const numbers = row.map(Number)
     expect(numbers.every(Number.isInteger), `stat ${i}: ${row.join(' ')}`).toBe(true)
-    expect(row[row.length - 1], `stat ${i}`).toBe(LANDED[i])
+    expect(row[row.length - 1], `stat ${i}`).toBe(landed)
     const down = i === LANDED.length - 1
     // Each one only ever moves towards its number: up to a count, back to a year.
     for (let j = 1; j < numbers.length; j++) expect(down ? numbers[j]! < numbers[j - 1]! : numbers[j]! > numbers[j - 1]!, `stat ${i}: ${row.join(' ')}`).toBe(true)
   }
-  // The big ones are seen on their way, not just at the end.
-  expect(rows[0]!.length).toBeGreaterThan(4)
-  expect(rows[3]!.length).toBeGreaterThan(8)
-  expect(Number(rows[0]![0])).toBeLessThan(github.profile.public_repos)
-  // The year is counted back to from this one.
-  expect(Number(rows[4]![0])).toBeGreaterThan(joined)
+  const [repos, , , contributions, since] = LANDED.map((_, i) => changes(seen.map((frame) => frame[i]!)))
+  // They are seen on their way, from nought, not just at the end.
+  expect(repos![0]).toBe('0')
+  expect(repos!.length).toBeGreaterThan(20)
+  expect(contributions!.length).toBeGreaterThan(40)
+  // The year is counted back to from this one, a year at a time.
+  expect(Number(since![0])).toBeGreaterThan(joined)
+  expect(since!.length).toBe(Number(since![0]) - joined + 1)
+  // A small number is there before a large one: the row lands from the left.
+  const landedAt = (i: number) => seen.findIndex((frame) => frame[i] === LANDED[i])
+  expect(landedAt(1)).toBeLessThan(landedAt(0))
+  expect(landedAt(0)).toBeLessThan(landedAt(3))
 
   // Once: leaving and coming back does not run them again.
-  await page.evaluate(() => (window as unknown as { __seen: string[][] }).__seen.forEach((row) => row.splice(0, row.length - 1)))
   await scrollTo(page, 'home')
   await page.waitForTimeout(300)
   await seeTheNumbers(page)
-  await page.waitForTimeout(900)
-  expect(await seen(page)).toEqual(LANDED.map((value) => [value]))
+  await page.waitForTimeout(600)
+  expect(changes((await frames(page, 80, shown)).map((frame) => frame.join(' ')))).toEqual([LANDED.join(' ')])
   expect(await states(page)).toEqual(['done', 'done', 'done', 'done', 'done'])
   expect(problems).toEqual([])
 })
@@ -143,13 +161,16 @@ test.describe('with reduced motion', () => {
   test.use({ reducedMotion: 'reduce' })
 
   test('every number stands at its value and the graph is simply there', async ({ page }) => {
+    await page.clock.install()
     const problems = await open(page, '/?lang=en')
-    await record(page)
+    await fetchTheNumbers(page)
+    // Standing at its value before anyone has seen it, and still standing there after.
+    expect(await page.evaluate(shown)).toEqual(LANDED)
+    expect(await states(page)).toEqual(['done', 'done', 'done', 'done', 'done'])
+    await freeze(page)
     await seeTheNumbers(page)
-    await landed(page)
-    await page.waitForTimeout(500)
-    // Nothing was ever shown on the way: each stat has only ever said its number.
-    expect(await seen(page)).toEqual(LANDED.map((value) => [value]))
+    await page.waitForTimeout(600)
+    expect(changes((await frames(page, 120, shown)).map((frame) => frame.join(' ')))).toEqual([LANDED.join(' ')])
 
     const graph = page.locator('#github .contrib')
     await graph.scrollIntoViewIfNeeded()

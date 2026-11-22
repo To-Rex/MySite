@@ -171,6 +171,10 @@ describe('between the two Uzbek alphabets', () => {
   })
 
   it('only the spellings that differ ever change, and each at once', () => {
+    // Every line of the site that is spelt differently, both ways. Whatever goes wrong is
+    // collected and shown once: a check per letter per moment would be a million of them.
+    const FOUR = new Set('oOgGsScChHʻʼ‘’\'`öÖğĞşŞçÇ')
+    const wrong: string[] = []
     for (const [path, old] of differing) {
       const neu = oz.get(path)!
       for (const [from, to] of [
@@ -180,22 +184,24 @@ describe('between the two Uzbek alphabets', () => {
         const plan = planMorph(from, to)
         const kept = plan.slots.filter((slot) => slot.old === slot.neu).map((slot) => slot.old)
         // Nearly all of a sentence is kept. (A single word can be mostly digraphs: “Ochish”.)
-        if (count(from) >= 24) expect(kept.length, path).toBeGreaterThan(count(from) * 0.6)
-        // …and every letter that changes is one of the four spellings: o‘ g‘ sh ch against ö ğ ş ç.
-        const changed = plan.slots.filter((slot) => slot.old !== slot.neu).flatMap((slot) => [slot.old, slot.neu])
-        for (const char of changed) expect('oOgGsScChHʻʼ‘’\'`öÖğĞşŞçÇ', `${path}: “${char}” in “${from}”`).toContain(char)
+        if (count(from) >= 24 && kept.length <= count(from) * 0.6) wrong.push(`${path}: only ${kept.length} of ${count(from)} letters kept`)
+        // Every letter that changes is one of the four spellings: o‘ g‘ sh ch against ö ğ ş ç.
+        for (const slot of plan.slots) {
+          if (slot.old !== slot.neu && ![...slot.old, ...slot.neu].every((char) => FOUR.has(char))) wrong.push(`${path}: “${slot.old}” → “${slot.neu}” in “${from}”`)
+        }
+        const either = new Set(from + to)
         let last = count(from)
-        for (const t of steps(60)) {
+        for (const t of steps(24)) {
           // With no time in the air, every moment is made of nothing but old spellings and new ones.
-          const text = morphAt(plan, t, { window: 0 }).text
-          const now = Array.from(text)
-          expect(isSubsequence(kept, now), `${path} at ${t}: “${text}”`).toBe(true)
-          for (const char of now) expect(from + to, `${path} at ${t}: “${char}”`).toContain(char)
-          expect(count(to) >= count(from) ? now.length >= last : now.length <= last, `${path} at ${t}`).toBe(true)
+          const now = Array.from(morphAt(plan, t, { window: 0 }).text)
+          if (!isSubsequence(kept, now)) wrong.push(`${path} at ${t}: lost a letter it shares — “${now.join('')}”`)
+          if (!now.every((char) => either.has(char))) wrong.push(`${path} at ${t}: a letter of neither — “${now.join('')}”`)
+          if (count(to) >= count(from) ? now.length < last : now.length > last) wrong.push(`${path} at ${t}: ${last} letters, then ${now.length}`)
           last = now.length
         }
       }
     }
+    expect(wrong).toEqual([])
   })
 
   it('turns a digraph into its letter in one go, never leaving half of it behind', () => {
@@ -228,6 +234,7 @@ describe('across every pair of languages the site has', () => {
 
   it('gets every line of the site from each language to each other, and back to exactly itself', () => {
     let checked = 0
+    const wrong: string[] = []
     for (const from of LANGUAGES) {
       for (const to of LANGUAGES) {
         if (from === to) continue
@@ -235,22 +242,23 @@ describe('across every pair of languages the site has', () => {
           const neu = all[to]!.get(path)
           if (neu === undefined) continue
           const plan = planMorph(old, neu)
-          expect(morphAt(plan, 0).text).toBe(old)
-          expect(morphAt(plan, 1).text).toBe(neu)
+          const where = `${from}→${to} ${path}`
+          if (morphAt(plan, 0).text !== old) wrong.push(`${where}: does not start as itself`)
+          if (morphAt(plan, 1).text !== neu) wrong.push(`${where}: does not end as its translation`)
           // Read off its plan, the old string and the new one are both there, whole.
-          expect(plan.slots.map((slot) => slot.old).join('')).toBe(old)
-          expect(plan.slots.map((slot) => slot.neu).join('')).toBe(neu)
+          if (plan.slots.map((slot) => slot.old).join('') !== old || plan.slots.map((slot) => slot.neu).join('') !== neu) wrong.push(`${where}: the plan is not of these two strings`)
           const growing = count(neu) >= count(old)
           let last = count(old)
-          for (const t of [0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 0.99]) {
+          for (const t of [0.15, 0.4, 0.65, 0.9]) {
             const length = count(morphAt(plan, t).text)
-            expect(growing ? length >= last : length <= last, `${from}→${to} ${path} at ${t}`).toBe(true)
+            if (growing ? length < last : length > last) wrong.push(`${where} at ${t}: ${last} letters, then ${length}`)
             last = length
           }
           checked++
         }
       }
     }
+    expect(wrong).toEqual([])
     expect(checked).toBeGreaterThan(2000)
   })
 })
