@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { github, open, scrollTo } from './site'
-import { changes, frames, freeze } from './time'
+import { changes, frames, freeze, withoutWebGL } from './time'
 
 /**
  * The GitHub section arriving: its numbers count to their values the first
@@ -58,9 +58,11 @@ async function watchTheCount(page: Page, after: number): Promise<string[][]> {
   return seen
 }
 
-test('the numbers count to the ones GitHub gave, once, and a screen reader is only ever told the answer', async ({ page }) => {
+test('the numbers count to the ones GitHub gave, once, and a screen reader is only ever told the answer', async ({ page, context }) => {
+  await withoutWebGL(context)
   await page.clock.install()
   const problems = await open(page, '/?lang=en')
+  expect(await page.locator('canvas').count()).toBe(0)
   await fetchTheNumbers(page)
   // What is in the document for anything that reads it is the number itself, from the moment there is one;
   // what is drawn has not moved yet, because nobody has seen it.
@@ -71,7 +73,7 @@ test('the numbers count to the ones GitHub gave, once, and a screen reader is on
   // From here the frames are dealt out by hand, so every run sees the same count.
   await freeze(page)
   await seeTheNumbers(page)
-  const seen = await watchTheCount(page, 220)
+  const seen = await watchTheCount(page, 150)
   expect(seen[seen.length - 1]).toEqual(LANDED)
   expect(await states(page)).toEqual(['done', 'done', 'done', 'done', 'done'])
   await expect(spoken).toHaveText(LANDED)
@@ -103,7 +105,7 @@ test('the numbers count to the ones GitHub gave, once, and a screen reader is on
   await page.waitForTimeout(300)
   await seeTheNumbers(page)
   await page.waitForTimeout(600)
-  expect(changes((await frames(page, 80, shown)).map((frame) => frame.join(' ')))).toEqual([LANDED.join(' ')])
+  expect(changes((await frames(page, 30, shown)).map((frame) => frame.join(' ')))).toEqual([LANDED.join(' ')])
   expect(await states(page)).toEqual(['done', 'done', 'done', 'done', 'done'])
   expect(problems).toEqual([])
 })
@@ -160,7 +162,8 @@ test('the language bars grow, and their shares count up, when the list is seen',
 test.describe('with reduced motion', () => {
   test.use({ reducedMotion: 'reduce' })
 
-  test('every number stands at its value and the graph is simply there', async ({ page }) => {
+  test('every number stands at its value and the graph is simply there', async ({ page, context }) => {
+    await withoutWebGL(context)
     await page.clock.install()
     const problems = await open(page, '/?lang=en')
     await fetchTheNumbers(page)
@@ -170,7 +173,7 @@ test.describe('with reduced motion', () => {
     await freeze(page)
     await seeTheNumbers(page)
     await page.waitForTimeout(600)
-    expect(changes((await frames(page, 120, shown)).map((frame) => frame.join(' ')))).toEqual([LANDED.join(' ')])
+    expect(changes((await frames(page, 30, shown)).map((frame) => frame.join(' ')))).toEqual([LANDED.join(' ')])
 
     const graph = page.locator('#github .contrib')
     await graph.scrollIntoViewIfNeeded()

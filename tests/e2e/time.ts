@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { BrowserContext, Page } from '@playwright/test'
 
 /**
  * Time driven by hand, for the things that are over in a second.
@@ -13,7 +13,27 @@ import type { Page } from '@playwright/test'
  *
  * `page.clock.install()` has to come before the page is opened. Until
  * `freeze`, time runs as usual.
+ *
+ * And they run with no WebGL (`withoutWebGL`). A frame dealt out is a frame
+ * every canvas on the page draws, and in software that is most of a second
+ * each: the first version of these tests dealt two hundred of them and took
+ * the whole suite past CI's fifteen minutes. None of what they watch is 3D,
+ * and the page without WebGL is a page the site really serves.
  */
+
+/**
+ * Takes WebGL away from every page of a context, before any of them is
+ * opened: the site then shows what it shows a browser that has none, and has
+ * no canvases to draw.
+ */
+export async function withoutWebGL(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+      return /webgl/i.test(kind) ? null : (original as (...args: unknown[]) => unknown).call(this, kind, ...rest)
+    } as typeof original
+  })
+}
 
 /** One animation frame, in the milliseconds the page's clock is moved by. */
 const FRAME = 16

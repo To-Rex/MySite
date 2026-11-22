@@ -1363,7 +1363,11 @@ the same frames at any speed, and the assertions can be exact — the Uzbek word
 is seen in precisely three states, the year lands a year at a time. The one
 thing the page's clock does not own is the browser telling the page that
 something has scrolled into view, so the count's test deals frames until that
-has happened and only then starts counting them.
+has happened and only then starts counting them. They also run with WebGL
+taken away: a frame dealt out is a frame every canvas draws, in software that
+is most of a second each, and the first version to deal two hundred of them
+took the suite past CI's fifteen minutes. Nothing they watch is 3D, and the
+page without WebGL is one the site really serves.
 
 Locally the browser tests drive the Chrome that is already installed, so there
 is nothing to download; CI installs Playwright's Chromium. `PW_CHANNEL=chromium`

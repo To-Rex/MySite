@@ -5,7 +5,7 @@ import { oz } from '../../src/i18n/locales/oz'
 import { ru } from '../../src/i18n/locales/ru'
 import { uz } from '../../src/i18n/locales/uz'
 import { open } from './site'
-import { changes, frames, freeze } from './time'
+import { changes, frames, freeze, withoutWebGL } from './time'
 
 /**
  * A change of language, watched. The state changes at once; what is on screen
@@ -41,12 +41,16 @@ const look = (watched: Record<string, string>) => ({
 })
 
 const count = (text: string) => Array.from(text).length
-/** Two and a half seconds of frames: longer than any change takes. */
-const A_CHANGE = 160
+/** A second and three quarters of frames: longer than any change takes, which is a third of a second to start and one more to run. */
+const A_CHANGE = 110
+
+// Frames are dealt out by hand here, and a frame is cheap only if no canvas has to draw it.
+test.beforeEach(async ({ context }) => withoutWebGL(context))
 
 test('a change of language is shown letter by letter, and ends as the page that language is served as', async ({ page, context, isMobile }) => {
   await page.clock.install()
   const problems = await open(page, '/?lang=en')
+  expect(await page.locator('canvas').count()).toBe(0)
   const scope = await controls(page, isMobile)
   const link = linkTo('about', isMobile)
   await expect(page.locator(link)).toHaveText(en.nav.about)
@@ -167,7 +171,7 @@ test.describe('with reduced motion', () => {
     await expect(page.locator(link)).toHaveText(en.nav.about)
     await freeze(page)
     await scope.locator('button[lang="de"]').click()
-    const seen = await frames(page, 60, look, { link })
+    const seen = await frames(page, 20, look, { link })
     expect(changes(seen.map((frame) => frame.said.link!))).toEqual([de.nav.about])
     expect(seen.some((frame) => frame.morphing || frame.busy)).toBe(false)
     expect(Math.min(...seen.map((frame) => frame.dim))).toBe(1)
