@@ -60,7 +60,7 @@ src/
     loader/       cinematic preloader
     seo/          localized meta / OG / hreflang / JSON-LD
   features/
-    github/       live GitHub data (API + hook + contribution graph)
+    github/       live GitHub data (API + hook + contribution graph, which draws in as a wave)
   sections/       Hero, About, Philosophy, TechUniverse, Building, Projects, GithubActivity, Presence, Contact
   hooks/, lib/    shared utilities (media queries, device tier, pointer store, scroll curves…)
 ```
@@ -499,6 +499,40 @@ What is load-bearing:
 What it costs, scrolling the whole page at 1,400 px/s in headless Chrome on an
 M2: 60 fps in every section at DPR 1 and 2, and on a phone-sized viewport at
 DPR 3; with the CPU throttled four times on that phone, 56–60 fps.
+
+**The GitHub section is the one thing here that is tied to being seen, not to
+the scroll position** — it has to be: its data is not there until the reader
+is nearly at it. The first time each number is on screen it counts to its
+value (`CountUp.tsx`), and the first time the graph is, it draws in as a wave
+from the oldest week to the newest with a patch of light running ahead of the
+front (`ContributionGraph.tsx`); the language bars and their shares do the
+same. Both run once and are not replayed by scrolling away and back.
+
+- **The numbers are GitHub's and only their arrival is animated.** `countAt`
+  (`lib/count.ts`) only ever moves towards the value, in whole numbers, never
+  passes it and ends on exactly it; `formatCompact` writes every frame, so a
+  count through a thousand turns into "1.2K" the way the final figure is
+  written. The year the account was made is counted *back to* from this year —
+  a year is not an amount, and 0 → 2021 would say nothing. While there is no
+  number there is still a skeleton, never a zero.
+- **A screen reader is told the answer, not the count.** Each number is in the
+  page twice: the value, visually hidden, from the moment it exists; and the
+  figure on its way there, `aria-hidden`. The same goes for anything that reads
+  the document rather than watches it.
+- **How long a count takes goes by the size of the number, not the number**
+  (`countDuration`): seven is there in under a second and three hundred and
+  sixty-five takes about a second and a half, so the row lands left to right
+  instead of all at once, and nothing sits on its second-to-last value — which
+  is what a floored count does, because the last step of an ease-out is the
+  slowest.
+- **The wave is one delay per cell and nothing per frame.** `waveDelay` gives
+  each cell its turn — a little after the one to its left and the one above it,
+  so the front leans — and the crossing takes 900 ms whether there are 53 weeks
+  on a desktop or 26 on a phone. Cells animate transform and opacity only; the
+  light is one element slid across once. The graph used to fade its columns in
+  with a 14 ms stagger and no shape to it.
+- **Reduced motion:** every number stands at its value from the first frame,
+  the graph is simply there, and the bars are full.
 
 ### The extinction cinematic
 
@@ -1250,7 +1284,7 @@ its box and targets too small for a thumb — turned up, and what changed:
 
 - The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only (~140 kB, 42 kB gzipped).
 - Scenes render only while on screen (`frameloop="never"` off-screen), DPR adapts via `PerformanceMonitor`, and a device-tier estimate (`useDeviceTier`) scales geometry/particles; WebGL-less browsers get a designed 2D fallback.
-- `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor, turns the projects row back into a grid and stops the sky from drifting.
+- `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor, turns the projects row back into a grid, stops the sky from drifting and its sun and moon from travelling, and shows the GitHub numbers and graph already arrived.
 
 ## Testing
 
@@ -1263,9 +1297,9 @@ split by *what has to exist* for a check to be possible.
 
 | Layer | Command | Reads | Guards |
 | --- | --- | --- | --- |
-| Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the scroll curves and the universe's flight, the architecture rules |
+| Unit | `npm test` | the source | content and links, translations, the mesher and every creature, the SEO head, the focus trap, the scroll curves and the universe's flight, the counts and the graph's wave, the architecture rules |
 | Build | `npm run test:dist` | `dist/` | the CSP and its hashes, what loads up front and how big it is, what the minifier did to the CSS |
-| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the trail, the sky with its sun and moon, the projects row and the marquee as the page scrolls, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
+| Browser | `npm run test:e2e` | `dist/` in Chrome | the page under the production CSP, languages and themes, the dialog and the menu from the keyboard, the trail, the sky with its sun and moon, the projects row and the marquee as the page scrolls, the GitHub numbers counting to their values and the graph drawing in, the 404 page behind a real 404, the valley's sound (the full showing only where there is a GPU: on CI's software renderer it is over before the test can act) |
 
 **The architecture rules are tests.** `tests/unit/architecture.test.ts` follows
 static imports from `main.tsx` and `not-found.tsx` and fails if three.js is reachable without

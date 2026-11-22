@@ -84,7 +84,8 @@ for (const viewport of VIEWPORTS) {
       for (const [index, id] of SECTIONS.entries()) {
         // Each section framed from its own top edge, so two runs can be compared.
         await scrollTo(page, id)
-        await page.waitForTimeout(id === 'skills' ? 2500 : 1200)
+        // The universe takes a while to fly in, and the GitHub numbers a while to finish counting.
+        await page.waitForTimeout(id === 'skills' || id === 'github' ? 2500 : 1200)
         await shot(`${String(index + 1).padStart(2, '0')}-${id}`)
       }
 

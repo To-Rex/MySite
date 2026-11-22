@@ -233,8 +233,23 @@
 .contrib-months span {
   grid-row: 1;
   white-space: nowrap;
+  opacity: 0;
+}
+.contrib[data-visible='true'] .contrib-months span {
+  animation: contrib-month 0.6s var(--ease-out) var(--d, 0ms) both;
+}
+@keyframes contrib-month {
+  from {
+    opacity: 0;
+    transform: translateY(40%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .contrib-grid {
+  position: relative;
   display: grid;
   gap: 3px;
 }
@@ -250,16 +265,71 @@
   border-radius: 2px;
   background: var(--surface-2);
   opacity: 0;
-  transform: scale(0.5);
-  transition:
-    opacity 0.5s var(--ease-out) var(--d, 0ms),
-    transform 0.5s var(--ease-out) var(--d, 0ms),
-    background-color 0.4s var(--ease-out);
+  transition: background-color 0.4s var(--ease-out);
 }
-.contrib[data-visible='true'] .contrib-cell,
+/*
+ * The wave: every cell rises into place a little after the one to its left and
+ * the one above it (--d, from waveDelay in lib/count.ts), overshooting as it
+ * lands. Transform and opacity only, so three hundred and seventy cells cost
+ * the compositor and nothing else.
+ */
+.contrib[data-visible='true'] .contrib-cell {
+  animation: contrib-in 0.62s var(--ease-out) var(--d, 0ms) both;
+}
 .contrib-cell.is-static {
   opacity: 1;
-  transform: none;
+}
+@keyframes contrib-in {
+  0% {
+    opacity: 0;
+    transform: translateY(46%) scale(0.3);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-9%) scale(1.16);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* The light that runs with the front: one soft patch, slid across once in the time the wave takes, then gone. */
+.contrib-sheen {
+  position: absolute;
+  z-index: 1;
+  inset-block: -16px;
+  left: 0;
+  width: 22%;
+  background: radial-gradient(closest-side, var(--sheen), var(--sheen-soft) 55%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  --sheen: color-mix(in srgb, var(--accent-2) 36%, transparent);
+  --sheen-soft: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+/* On a light page the accent is darker than the page, and a dark patch is a shadow, not a light. */
+:root[data-theme='light'] .contrib-sheen {
+  --sheen: rgba(255, 188, 96, 0.5);
+  --sheen-soft: rgba(255, 196, 120, 0.2);
+}
+.contrib[data-visible='true'] .contrib-sheen {
+  animation: contrib-sheen var(--across, 0.9s) linear both;
+}
+/* From its middle on the first column to its middle on the last. */
+@keyframes contrib-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%);
+  }
+  12% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(405%);
+  }
 }
 .contrib-cell[data-level='empty'] { background: transparent; }
 .contrib-cell[data-level='1'] { background: color-mix(in srgb, var(--accent) 30%, var(--surface-2)); }
@@ -285,12 +355,36 @@
 .contrib-legend span:first-child { margin-right: 4px; }
 .contrib-legend span:last-child { margin-left: 4px; }
 @media (prefers-reduced-motion: reduce) {
-  .contrib-cell { transition: none; opacity: 1; transform: none; }
+  .contrib-cell,
+  .contrib[data-visible='true'] .contrib-cell,
+  .contrib-months span,
+  .contrib[data-visible='true'] .contrib-months span {
+    animation: none;
+    transition: none;
+    opacity: 1;
+    transform: none;
+  }
+  .contrib-sheen,
+  .contrib[data-visible='true'] .contrib-sheen {
+    display: none;
+  }
 }
 
-/* Language bars grow in */
+/* A number on its way to its value (CountUp.tsx): lit while it runs, settling to its own colour as it lands. */
+.count {
+  transition: color 0.7s var(--ease-out);
+}
+.count[data-count='counting'] {
+  color: var(--accent);
+  transition-duration: 0.15s;
+}
+
+/* Language bars grow in, the first time the list is seen */
 .lang-bar {
+  transform: scaleX(0);
   transform-origin: left;
+}
+.lang-bars[data-visible='true'] .lang-bar {
   animation: bar-grow 1s var(--ease-out) both;
 }
 @keyframes bar-grow {
@@ -327,7 +421,8 @@
 @media (prefers-reduced-motion: reduce) {
   .float-tile { animation: none; }
   .skeleton::after { animation: none; }
-  .lang-bar { animation: none; }
+  .lang-bar,
+  .lang-bars[data-visible='true'] .lang-bar { animation: none; transform: none; }
 }
 
 /* ---------------------------------------------------------------------------

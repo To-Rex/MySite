@@ -2,6 +2,7 @@ import { respell } from '@/i18n/newLatin'
 import { useInView } from 'motion/react'
 import { useMemo, useRef, type CSSProperties } from 'react'
 import type { ContributionDay } from './api'
+import { WAVE, waveDelay } from '@/lib/count'
 import { useI18n } from '@/i18n/context'
 
 interface ContributionGraphProps {
@@ -10,7 +11,12 @@ interface ContributionGraphProps {
   weeks?: number
 }
 
-/** GitHub-style heat grid rendered in the site's own palette; cells bloom in by column. */
+/**
+ * GitHub-style heat grid rendered in the site's own palette. It draws itself
+ * in the first time it is seen: a wave from the oldest week to this one, each
+ * cell rising a little late on the one above it, with a band of light running
+ * ahead of the front.
+ */
 export function ContributionGraph({ days, weeks = 53 }: ContributionGraphProps) {
   const { t, locale } = useI18n()
   const ref = useRef<HTMLDivElement>(null)
@@ -44,15 +50,23 @@ export function ContributionGraph({ days, weeks = 53 }: ContributionGraphProps) 
   const dateFmt = useMemo(() => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric' }), [locale])
 
   return (
-    <div ref={ref} data-visible={inView} className="contrib" role="img" aria-label={t.a11y.contributionGraph}>
+    <div
+      ref={ref}
+      data-visible={inView}
+      className="contrib"
+      role="img"
+      aria-label={t.a11y.contributionGraph}
+      style={{ '--across': `${WAVE.across}ms` } as CSSProperties}
+    >
       <div className="contrib-months" aria-hidden style={{ gridTemplateColumns: `repeat(${columns.length}, 1fr)` }}>
         {months.map((m) => (
-          <span key={`${m.col}-${m.label}`} style={{ gridColumnStart: m.col + 1 }}>
+          <span key={`${m.col}-${m.label}`} style={{ gridColumnStart: m.col + 1, '--d': `${waveDelay(m.col, 0, columns.length)}ms` } as CSSProperties}>
             {m.label}
           </span>
         ))}
       </div>
       <div className="contrib-grid" style={{ gridTemplateColumns: `repeat(${columns.length}, 1fr)` }}>
+        <i className="contrib-sheen" aria-hidden />
         {columns.map((col, ci) => (
           <div key={ci} className="contrib-col">
             {Array.from({ length: 7 }).map((_, ri) => {
@@ -62,7 +76,7 @@ export function ContributionGraph({ days, weeks = 53 }: ContributionGraphProps) 
                   key={ri}
                   className="contrib-cell"
                   data-level={d ? d.level : 'empty'}
-                  style={{ '--d': `${ci * 14}ms` } as CSSProperties}
+                  style={{ '--d': `${waveDelay(ci, ri, columns.length)}ms` } as CSSProperties}
                   title={d ? `${respell(locale, dateFmt.format(new Date(d.date + 'T00:00:00')))}: ${d.count}` : undefined}
                 />
               )

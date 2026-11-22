@@ -1,3 +1,4 @@
+import { useInView } from 'motion/react'
 import { useRef } from 'react'
 import { useI18n } from '@/i18n/context'
 import { site } from '@/config/site'
@@ -8,6 +9,7 @@ import { useGithub } from '@/features/github/useGithub'
 import { ContributionGraph } from '@/features/github/ContributionGraph'
 import { SectionHeading } from '@/components/ui/SectionHeading'
 import { Reveal } from '@/components/ui/Reveal'
+import { CountUp } from '@/components/ui/CountUp'
 import { LinkButton } from '@/components/ui/Button'
 import { ArrowUpRight, Fork, GitHub, Star } from '@/components/ui/Icons'
 import { formatCompact, formatRelative } from '@/lib/format'
@@ -15,6 +17,17 @@ import { cn } from '@/lib/cn'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={cn('skeleton rounded-xl', className)} aria-hidden />
+}
+
+/** The year the page was opened in: where the count back to the year the account was made starts. */
+const THIS_YEAR = new Date().getFullYear()
+
+interface Stat {
+  label: string
+  /** The number as GitHub gave it, or null while there is none to show. */
+  value: number | null
+  format: (value: number) => string
+  from?: number
 }
 
 export function GithubActivity() {
@@ -25,12 +38,19 @@ export function GithubActivity() {
   const gh = useGithub(near)
   const loading = gh.status === 'idle'
 
-  const stats = [
-    { label: t.github.stats.repos, value: gh.profile ? formatCompact(gh.profile.public_repos, locale) : null },
-    { label: t.github.stats.followers, value: gh.profile ? formatCompact(gh.profile.followers, locale) : null },
-    { label: t.github.stats.stars, value: gh.repos.length ? formatCompact(gh.totalStars, locale) : null },
-    { label: t.github.stats.contributions, value: gh.contributions ? formatCompact(gh.contributions.total, locale) : null },
-    { label: t.github.stats.since, value: gh.profile ? String(new Date(gh.profile.created_at).getFullYear()) : null },
+  const languages = useRef<HTMLUListElement>(null)
+  const languagesSeen = useInView(languages, { once: true, amount: 0.35 })
+
+  // Each of these counts to its number the first time it is seen. The numbers
+  // are GitHub's; what moves is only how they arrive.
+  const compact = (value: number) => formatCompact(value, locale)
+  const stats: Stat[] = [
+    { label: t.github.stats.repos, value: gh.profile ? gh.profile.public_repos : null, format: compact },
+    { label: t.github.stats.followers, value: gh.profile ? gh.profile.followers : null, format: compact },
+    { label: t.github.stats.stars, value: gh.repos.length ? gh.totalStars : null, format: compact },
+    { label: t.github.stats.contributions, value: gh.contributions ? gh.contributions.total : null, format: compact },
+    // A year is not an amount: it is counted back to from this one.
+    { label: t.github.stats.since, value: gh.profile ? new Date(gh.profile.created_at).getFullYear() : null, format: String, from: THIS_YEAR },
   ]
 
   return (
@@ -75,12 +95,14 @@ export function GithubActivity() {
                   <p className="font-mono text-[0.66rem] tracking-[0.14em] text-fg-3 uppercase">github.com</p>
                 </div>
               </div>
-              {stats.map((s) => (
+              {stats.map((s, i) => (
                 <div key={s.label} className="bg-bg p-6">
                   {s.value === null ? (
                     <Skeleton className="h-9 w-20" />
                   ) : (
-                    <p className="text-[2rem] leading-none font-bold tracking-[-0.03em] tabular-nums">{s.value}</p>
+                    <p className="text-[2rem] leading-none font-bold tracking-[-0.03em] tabular-nums" data-stat>
+                      <CountUp value={s.value} from={s.from} format={s.format} delay={i * 0.09} />
+                    </p>
                   )}
                   <p className="mt-3 text-[0.78rem] leading-snug text-fg-2">{s.label}</p>
                 </div>
@@ -94,7 +116,8 @@ export function GithubActivity() {
                   <h3 className="text-lg font-semibold tracking-[-0.01em]">{t.github.contributionsTitle}</h3>
                   {gh.contributions && (
                     <p className="text-sm text-fg-2">
-                      <span className="font-semibold text-fg tabular-nums">{formatCompact(gh.contributions.total, locale)}</span> {t.github.contributionsTotal}
+                      <CountUp value={gh.contributions.total} format={compact} className="font-semibold text-fg tabular-nums" />{' '}
+                      {t.github.contributionsTotal}
                     </p>
                   )}
                 </div>
@@ -111,18 +134,23 @@ export function GithubActivity() {
               <Reveal delay={0.1} className="rounded-[2rem] border border-border p-6 md:p-8 lg:col-span-4">
                 <h3 className="text-lg font-semibold tracking-[-0.01em]">{t.github.languagesTitle}</h3>
                 <p className="mt-1 text-[0.78rem] text-fg-3">{t.github.languagesNote}</p>
-                <ul className="mt-6 flex flex-col gap-4">
+                <ul ref={languages} data-visible={languagesSeen} className="lang-bars mt-6 flex flex-col gap-4">
                   {gh.languages.length
                     ? gh.languages.map((l, i) => (
                         <li key={l.name}>
                           <div className="flex items-baseline justify-between text-sm">
                             <span className="font-medium">{l.name}</span>
-                            <span className="text-fg-3 tabular-nums">{Math.round(l.share * 100)}%</span>
+                            <CountUp
+                              value={Math.round(l.share * 100)}
+                              format={(value) => `${value}%`}
+                              delay={i * 0.09}
+                              className="text-fg-3 tabular-nums"
+                            />
                           </div>
                           <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface-2">
                             <div
                               className={cn('lang-bar h-full rounded-full', i === 0 ? 'bg-accent' : 'bg-fg-2')}
-                              style={{ width: `${Math.max(4, l.share * 100)}%`, transitionDelay: `${i * 90}ms` }}
+                              style={{ width: `${Math.max(4, l.share * 100)}%`, animationDelay: `${i * 90}ms` }}
                             />
                           </div>
                         </li>
