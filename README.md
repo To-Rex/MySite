@@ -402,20 +402,20 @@ seconds and the only thing that has to read is *running*.
 ### The extinction cinematic
 
 Clicking the name in the nav — the one in the header, not the headline — puts the
-page aside for about eighteen seconds and shows what the valley looked like
-before any of this. `src/lib/valley.ts` holds the act, `ValleyScene.tsx` plays
+page aside for about twenty seconds and shows what the valley looked like
+before any of this, and what happened to it. `src/lib/valley.ts` holds the act, `ValleyScene.tsx` plays
 it, and `Hero.tsx` takes the headline down for the duration.
 
 | Act | Seconds | What happens |
 | --- | --- | --- |
 | `load` | — | Mounted and compiling off the main thread; nothing shown, the hero still moving |
 | `open` | 2.4 | The mist lifts and the camera settles into the valley |
-| `graze` | 4.2 | Two sauropods, two stegosaurs, a tyrannosaur, two turtles, three pterosaurs over the ridge |
+| `graze` | 4.2 | Two sauropods, two stegosaurs, a tyrannosaur, two turtles, three pterosaurs over the ridge, at the size they were |
 | `streak` | 2.6 | Something comes down out of the north-west, and every head comes up |
-| `impact` | 1.8 | White-out, shockwave, fireball, the crater throwing its floor back out |
-| `die` | 3.4 | The herd goes over; the flyers come out of the sky; the column climbs |
-| `dark` | 3 | Dust closes over the valley and the light goes |
-| `return` | 2.8 | Morning, and the headline growing back into place |
+| `impact` | 1.8 | White-out, shockwave, fireball, the crater opening and throwing its floor back out |
+| `die` | 3.4 | The blast front lays the herd down and the valley catches fire behind it; the flyers come out of the sky; the column climbs |
+| `dark` | 3.2 | Smoke over the burning valley and only the fire to see by; the camera climbs until the crater is below it |
+| `return` | 3.6 | Morning over the ash, and the headline growing back into place |
 
 Nothing in it is meshed on demand. `Valley.tsx` dynamically imports a warm-up
 nine seconds after load, which builds all five species into the shared creature
@@ -434,11 +434,13 @@ three-free so none of this is in the main chunk; the fade in and out is a CSS
 keyframe rather than React state, because a `setState` in an effect to run a
 fade is a re-render per frame for something the compositor does for free.
 
-Everything is procedural like the rest of the site, and it is split six ways:
-`valleyLand.ts` is the height field and the scatter, `valleyMaterials.ts` the
-shaders (and the wind), `valleyForest.ts` and `valleyFlora.tsx` the trees and
-ferns, `valleyGrass.ts` the meadow, `valleyMountains.ts` the ranges beyond the
-valley, and `ValleyScene.tsx` the cast, the rock and the timeline.
+Everything is procedural like the rest of the site, and it is split seven ways:
+`valleyLand.ts` is the height field, the scatter, the crater and the blast
+front, `valleyMaterials.ts` the shaders (and the wind, and the fire),
+`valleyForest.ts` and `valleyFlora.tsx` the trees and ferns, `valleyGrass.ts`
+the meadow, `valleyMountains.ts` the ranges beyond the valley, `valleyFire.ts`
+where the valley burns, and `ValleyScene.tsx` the cast, the rock and the
+timeline.
 
 **The land.** A displaced plane: value noise for the ground itself, ridges on
 both sides and a rise at the far end so the camera looks *along* a valley rather
@@ -524,7 +526,9 @@ turned into each plant's own frame, because instances are yawed at random and a
 sway along local x sent every tree a different way — and the leaves flutter on
 top, more the further they stand from the stem. Light comes through the leaves
 and the blades from the low sun behind them. The ones within reach of the
-impact go over as the blast front passes, scorched on the side that faced it.
+impact go over as the blast front passes, away from it — for a while the axis
+was wound the other way and every tree in the valley fell towards the blast —
+and what stood where the crater opens is gone with the ground under it.
 
 **The meadow** (`valleyGrass.ts`) is up to a hundred and sixty thousand blades
 that are never placed on the CPU. A blade is seven vertices near and one
@@ -593,9 +597,23 @@ to the sky the water follows. Ripples are two scrolling noise fields differenced
 into a normal, and they are gentle on purpose — at five times the strength the
 surface was a field of random facets and the lake rendered as glitter.
 
-**The cast** is the same rigged creatures as everywhere else, at `low` detail
-so the meshes come out of the cache the hero already filled. Each stands with
-its feet on the ground, which took two things. A rig's origin is its middle and
+**The cast** is the same rigged creatures as everywhere else, at the size the
+animals were: every mesh is one unit long, so a size is a length in metres — a
+twelve-and-a-half-metre tyrannosaur thirty metres from the lens, sauropods of
+twenty-one and twenty-four, stegosaurs of eight and nine. They were half that,
+which was fine against stacked-cone trees and bare ground and read as toys once
+the trees were twenty-metre araucarias standing in a meadow a metre deep. A
+mesh's facets grow with it, so the big ones are meshed finer where the card can
+take it (`castDetail`): on `ultra` the tyrannosaur is the hero's own mesh,
+which a desktop has already built, and the sauropods and stegosaurs are
+`medium`; the small and far ones, and everything on a phone, stay `low`. The
+tyrannosaur stands near the middle of the frame, because a phone held upright
+sees only the middle. Each goes over when the blast front reaches it, rolled
+about its own length onto its flank and lying on the ground — it used to pitch
+nose-down as well, which at the real size left a tail or a neck standing out of
+the ground like a horn and the rest under it — and chars as the fire behind
+the front reaches it (`char` on `SkinMaterial`, which strips the hide's coat
+and sheen too). Each stands with its feet on the ground, which took two things. A rig's origin is its middle and
 its feet are below it, so every animal is lifted by however far its geometry
 reaches down — placed at the height of the ground they were buried to the
 belly, the tyrannosaur a crocodile. And "the ground" is `groundAt`, the height
@@ -630,12 +648,61 @@ It lights the valley on the way down, and the crater lights it after.
 **The impact** is five things at once. A white-out held against the lens. A
 fireball of sprites that carry their own temperature — blackbody, roughly:
 white at the heart through orange to soot at the edges as it climbs and cools —
-which is not a sphere, because a sphere was an egg. A crater cut into the mesh
-itself on the frame the rock lands, a bowl with a raised rim, with char
-spreading out from it in the ground material. A wall of dust the blast front
-drives across the floor at ground level, the trees going over as it reaches
-them. And the column of smoke that goes up after, sprites with a size and an
-opacity each, so where they overlap they do not pile up into a black disc.
+which is not a sphere, because a sphere was an egg. The crater, opening. A wall
+of dust the blast front drives across the floor at ground level, the trees
+going over as it reaches them. And the column of smoke that goes up after,
+sprites with a size and an opacity each, so where they overlap they do not pile
+up into a black disc.
+
+**The crater** is a simple one, the kind a rock a few metres across makes: a
+bowl a fifth as deep as it is wide — twenty-two metres to the crest of the rim,
+nine deep — flat at the bottom, steepest half way up the wall and rounded over
+at the crest, a rim of upturned rock four metres high (higher in some places
+than others), and a blanket of what came out of it thinning out to two and a
+half radii (`craterProfile`). It opens in the first part of a second under the
+flash, self-similarly, a small bowl widening and deepening into the whole one,
+and blocks of its floor go up on ballistic arcs, come down on the blanket and
+lie there cooling. It used to be cut into the ground mesh on one frame: two
+and a half metres a quad, six and a half deep, and seen from beside it a
+crater is a ridge — nobody saw it. It is now cut into ground of its own
+(`buildCraterPatch`), a polar grid on the mesh exactly, finer round the crest,
+displaced in the vertex shader by the same function the CPU uses to stand the
+herd and the sparks on it; the ground under it is lowered out of the way,
+vertex by vertex, only where every triangle a vertex touches lies under the
+patch. In it: the beds of rock it was cut through, pale scree down the walls,
+and on the floor melt, glowing all over as it forms and then cooling to a black
+crust with the cracks in it glowing longest, lighting the lower walls red; the
+blanket is rays of pale ejecta over the char. Then the camera climbs, out over
+the burning valley until the crater is below it, because from the ground the
+rim hides all but the far wall.
+
+**The fire** comes in just behind the blast front (`blastFront` and
+`blastArrival`, the same function both ways, and the same again in GLSL), a
+patch here catching a little later than a patch there, and past where the
+front dies out it carries on by itself, slower, up the slopes and the
+volcano's foot, until all of the valley has burnt. Everything that burns asks
+the same question — how long has it been burning at my spot — and goes by the
+answer, so the ground, the grass, the trees, the flames and the smoke agree
+about where the fire is. The ground goes to char behind the front and then to
+grey ash, palest where the grass stood thickest, with flames as it passes,
+smouldering patches and fine sparks in the char that go out one by one; rock
+is only blackened. Grass is dried by the heat ahead of the front and burns down
+from the tip to a black stubble that greys. The fire climbs a tree: the leaves
+scorch brown, then burn away from a ragged glowing edge until none are left,
+and the wood chars, glows in its cracks for a while and stays — a forest burns
+down to its trunks and limbs. On top of that are flames — sprites on the
+crowns, the ferns and the open ground, a flame drawn in each: turbulence
+rising through a teardrop, torn into tongues — and smoke rising off all of it,
+lit orange from beneath while the flames are under it (black on a black sky,
+it was never seen). None of it moves on the CPU: each sprite is placed once,
+and the card works out from where it stands when it catches, how long it
+burns, how it flickers and where its smoke has got to. The light after the rock
+is the fire's: the moods go from the burn to the valley on fire under the
+spreading smoke, to nothing but smoke and the fire to see by, to a grey morning
+through the ash, and the fill light lights the undersides of things orange
+from below. The dark used to be dark — a black screen with a few embers in it,
+the dust in front of the lens closing to black — and the crater, the burning
+and what was left were never seen at all.
 
 Two lighting notes, both learned the hard way. The hide is a physical material,
 so with no environment to reflect it goes to near-black and the entire herd came
@@ -647,7 +714,7 @@ the fog colour and the four sky uniforms, all from one `MOOD` table.
 
 The rock's trail is a cone laid along the flight path with its point at the rock
 and its length set by how far it has already come, so it streaks back across the
-sky instead of hanging wherever it was authored. The ejecta are fourteen chunks
+sky instead of hanging wherever it was authored. The ejecta are twenty-two blocks
 on plain ballistic arcs, and the ash is a 340-point field whose x, z and ground
 height are computed once and wrapped round to the top as each fleck lands.
 
@@ -723,12 +790,25 @@ under one frame a second on `high`:
 | Blades of grass (16:9) | — | 30 000 | 93 000 | 165 000 |
 | Rock relief / cloud deck | — / — | ✓ / — | ✓ / ✓ | ✓ / ✓ |
 | Fireball / column / dust sprites | 90 / 460 / 150 | 90 / 460 / 150 | 150 / 640 / 220 | 240 / 960 / 320 |
-| Molten sparks / ground fires | — | 110 / 140 | 220 / 300 | 360 / 520 |
+| Molten sparks | — | 110 | 220 | 360 |
+| Flames on the ground / puffs of smoke | — / — | 360 / 220 | 800 / 420 | 1200 / 680 |
+| Herd's mesh (tyrannosaur / big ones) | low / low | low / low | medium / medium | high / medium |
 
-`ultra` holds sixty frames a second on an M2 at 1×, through every act. Its
-ceiling used to be 2×, and at 2× the meadow alone is four times the pixels;
-the opening then ran so slowly that the step-down took everything away. 1.6×
-is indistinguishable behind 4× MSAA and leaves the step-down something to do.
+`ultra` holds sixty frames a second on an M2 at 1× until the rock lands, and
+fifty-five to sixty while the valley burns. Its ceiling used to be 2×, and at
+2× the meadow alone is four times the pixels; the opening then ran so slowly
+that the step-down took everything away. 1.6× is indistinguishable behind 4×
+MSAA and leaves the step-down something to do.
+
+The fire costs little because almost none of it is worked out until it is
+needed: no shader asks where the fire is before the rock has landed, and a
+leaf, a blade or a patch of ground ahead of the front skips the burn entirely.
+What cost most was the crater. Its patch was four times as fine at first, and
+from the camera it is a sliver a few hundred pixels across: fifty thousand
+triangles of a pixel or less, every one shaded as at least a two-by-two block
+— ten frames a second, for fragments nobody saw. It is drawn before the ground
+as well, so the pit the ground is lowered into is hidden, not shaded and then
+covered.
 
 More sprites change the density, not the look: their alphas are divided by how
 many there are, so a column of 960 puffs is as dark as one of 460 and only
@@ -742,8 +822,7 @@ dust in front of the lens, or halos float over a black screen. The ejected
 chunks of crater stay out of it — glowing, they read as a row of small suns.
 
 **After the impact.** Molten droplets go up out of the crater on ballistic arcs,
-land, and go on glowing where they land until they cool; fires burn in patches
-across the floor through the dark and go out with the morning; the blast front
+land, and go on glowing where they land until they cool; the blast front
 arriving at the camera, a couple of seconds after the flash, shakes it a second
 time and throws dust at the lens; and there is lightning in the column, which is
 what a cloud that size full of grit does — three bolts, each a path split again

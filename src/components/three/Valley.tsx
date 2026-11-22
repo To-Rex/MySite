@@ -32,8 +32,6 @@ export function Valley() {
   const tier = useDeviceTier()
   const touch = useIsTouch()
   const quality = useMemo(() => valleyQuality(tier, gpuClass(), touch), [tier, touch])
-  // The forest and the warm-up only know three levels.
-  const plantTier = quality === 'ultra' ? 'high' : quality
   const reduced = useReducedMotion()
   const usable = !reduced && supportsWebGL()
 
@@ -58,13 +56,13 @@ export function Valley() {
     const warm = window.setTimeout(() => {
       warmed.current = true
       void import('./valleyWarm')
-        .then((m) => m.warmValley(plantTier))
+        .then((m) => m.warmValley(quality))
         .then(() => setBuiltFor(runNow.current + 1))
     }, WARM_AT)
     return () => {
       window.clearTimeout(warm)
     }
-  }, [usable, plantTier])
+  }, [usable, quality])
 
   // A showing has just ended: build a fresh scene for the next one, later,
   // rather than on the heels of the last with the hero back in view.
@@ -90,7 +88,7 @@ export function Valley() {
   const leaving = act === 'return'
   const fade = {
     opacity: hidden ? 0 : undefined,
-    animation: hidden ? 'none' : leaving ? 'valley-out 1200ms ease-in 1400ms forwards' : 'valley-in 900ms ease-out both',
+    animation: hidden ? 'none' : leaving ? 'valley-out 1200ms ease-in 2200ms forwards' : 'valley-in 900ms ease-out both',
   }
   return (
     <>

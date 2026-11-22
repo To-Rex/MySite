@@ -17,7 +17,6 @@ import {
   Vector3,
   Vector4,
   WebGLRenderTarget,
-  type BufferGeometry,
   type Texture,
   type WebGLRenderer,
 } from 'three'
@@ -29,6 +28,10 @@ import {
   ATMOS_PARS_FRAG,
   ATMOS_PARS_VERT,
   ATMOS_VERT_BODY,
+  CRATER_GLSL,
+  FIRE,
+  FIRE_GLSL,
+  FIRE_PARS,
   MIST_BODY,
   NOISE_GLSL,
   WIND_GLSL,
@@ -147,8 +150,6 @@ export const GRASS = {
   uClear: {
     value: HERD.map((h) => new Vector3(h.x, h.z, h.size * (CLEARING[h.kind] ?? 0))),
   },
-  /** The crater, once it is cut: x, z, radius, and 1. */
-  uCrater: { value: new Vector4(0, 0, 1, 0) },
   /** The blast front: x, z, how far it has got, and 1 once it is moving. */
   uBlast: { value: new Vector4(0, 0, 0, 0) },
 }
@@ -158,20 +159,8 @@ const FIRST = { near: { value: 0 }, far: { value: 0 } }
 
 /** Back to how the meadow was before the rock. */
 export function resetGrass(): void {
-  GRASS.uCrater.value.w = 0
   GRASS.uBlast.value.set(0, 0, 0, 0)
   GRASS.uStride.value = 1
-}
-
-/** The ground has been cut: copy the mesh's new heights in so the blades stand on it. */
-export function regroundGrass(terrain: BufferGeometry): void {
-  const texture = GRASS.uHeights.value
-  if (!texture) return
-  const data = texture.image.data as Float32Array
-  const position = terrain.attributes.position as BufferAttribute
-  const count = Math.min(position.count, data.length)
-  for (let i = 0; i < count; i++) data[i] = position.getY(i)
-  texture.needsUpdate = true
 }
 
 /* -------------------------------------------------------------------------- */
@@ -267,13 +256,11 @@ const PARS_VERT = /* glsl */ `
 uniform float uFirst;
 uniform float uPixel;
 uniform float uStride;
-uniform vec4 uCrater;
 uniform vec4 uBlast;
-uniform vec3 uScorch;
-uniform float uScorchAmount;
 uniform sampler2D uBakeA;
 uniform sampler2D uBakeB;
 varying vec3 vgColor;
+varying vec3 vgGlow;
 varying float vgT;
 `
 
@@ -308,10 +295,21 @@ const PLACE = /* glsl */ `
     vgStand(vgP, vgId, vgK, vgY, vgGrad, vgH, vgBase, vgSeedHead);
   #endif
 
-  // Burnt to stubble round the impact, and gone from the crater.
-  float vgBurn = (1.0 - smoothstep(uScorch.z * 0.45, uScorch.z, distance(vgP, uScorch.xy))) * uScorchAmount;
-  vgH *= 1.0 - vgBurn * 0.74;
-  if (uCrater.w > 0.5 && distance(vgP, uCrater.xy) < uCrater.z * 1.12) vgH = 0.0;
+  // The crater, as it opens: the blades ride the ground it moves, and where
+  // the bowl is and the ejecta lie thick there are none, vaporised or buried.
+  if (uCrater.w > 0.0) {
+    vec3 vgCr = vcCrater(vgP, uCrater.w);
+    float vgQ = distance(vgP, uCrater.xy) / (uCrater.z * uCrater.w);
+    vgY += vgCr.x + 0.08 * step(vgQ, VC_REACH);
+    vgGrad += vgCr.yz;
+    vgH *= smoothstep(1.25, 1.85, vgQ);
+  }
+  // The fire. The heat ahead of it dries a blade; then it burns down from the
+  // tip to a black stubble, glowing where it burns, and the stubble greys.
+  float vgAge = uSince > -50.0 ? vfAge(vgP) + (vgRand(vgId, 8u) - 0.5) * 0.35 : -100.0;
+  float vgGone = smoothstep(0.0, 1.2, vgAge);
+  float vgDry = smoothstep(-0.8, 0.05, vgAge) * (1.0 - vgGone);
+  vgH *= 1.0 - 0.86 * vgGone;
 
   // Never narrower than about a pixel where it stands.
   float vgCam = distance(cameraPosition, vec3(vgP.x, vgY, vgP.y));
@@ -359,13 +357,19 @@ const PLACE = /* glsl */ `
   vec3 vgC = mix(vgBase, vgBase * vec3(1.3, 1.2, 0.78) + vec3(0.03, 0.025, 0.0), vgTt * vgTt * 0.7);
   vgC = mix(vgC, vec3(0.3, 0.22, 0.1) * (0.7 + 0.6 * vgTone), vgSeedHead * smoothstep(0.62, 0.9, vgTt));
   vgC *= mix(0.26, 1.0, smoothstep(0.0, 0.62, vgTt));
-  vgColor = mix(vgC, vec3(0.03, 0.024, 0.02), vgBurn);
+  vgC = mix(vgC, vec3(0.2, 0.13, 0.05) * (0.7 + 0.6 * vgTone), vgDry * 0.85);
+  vec3 vgAshen = mix(vec3(0.022, 0.02, 0.018), vec3(0.22, 0.215, 0.21), smoothstep(2.0, 6.0, vgAge) * 0.7);
+  vgColor = mix(vgC, vgAshen, vgGone);
+  // The tip of a blade that is burning, briefly, and not every blade at once.
+  float vgFlame = smoothstep(-0.05, 0.12, vgAge) * (1.0 - smoothstep(0.25, 0.7, vgAge)) * step(0.45, vgRand(vgId, 9u));
+  vgGlow = vec3(1.0, 0.36, 0.07) * vgFlame * smoothstep(0.4, 1.0, vgTt) * 1.3;
   vgT = vgTt;
 `
 
 const PARS_FRAG = /* glsl */ `
 uniform vec3 uBack;
 varying vec3 vgColor;
+varying vec3 vgGlow;
 varying float vgT;
 `
 
@@ -387,8 +391,9 @@ function grassProgram(first: { value: number }, baked: boolean): (shader: Shader
       uTime: ATMOS.uTime,
       uWind: ATMOS.uWind,
       uWindDir: ATMOS.uWindDir,
-      uScorch: ATMOS.uScorch,
-      uScorchAmount: ATMOS.uScorchAmount,
+      uCrater: FIRE.uCrater,
+      uSince: FIRE.uSince,
+      uMelt: FIRE.uMelt,
       uWaterLevel: ATMOS.uWaterLevel,
       uLake: ATMOS.uLake,
       uSunDir: ATMOS.uSunDir,
@@ -400,6 +405,9 @@ function grassProgram(first: { value: number }, baked: boolean): (shader: Shader
       WIND_PARS +
       NOISE_GLSL +
       WIND_GLSL +
+      FIRE_PARS +
+      CRATER_GLSL +
+      FIRE_GLSL +
       COMMON +
       PARS_VERT +
       shader.vertexShader
@@ -416,6 +424,7 @@ function grassProgram(first: { value: number }, baked: boolean): (shader: Shader
           '#include <normal_fragment_begin>',
           '#include <normal_fragment_begin>\n  #ifdef DOUBLE_SIDED\n  normal *= faceDirection;\n  nonPerturbedNormal = normal;\n  #endif',
         )
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += vgGlow;')
         .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>' + THROUGH)
         .replace('#include <fog_fragment>', '#include <fog_fragment>' + MIST_BODY)
   }

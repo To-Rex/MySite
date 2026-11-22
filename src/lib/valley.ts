@@ -4,8 +4,8 @@ import { useSyncExternalStore } from 'react'
  * The extinction cinematic, shared between the nav, the headline and the scene.
  *
  * Clicking the name in the nav opens a valley where the headline was: a herd
- * grazing under a late sun, an asteroid coming down through it, and the dark
- * afterwards — then everything back exactly as it was.
+ * grazing under a late sun, an asteroid coming down through it, the crater it
+ * leaves and the valley burning to ash — then everything back exactly as it was.
  *
  * Same shape as the hero's easter-egg store, and for the same reason: the scene
  * owns the timeline because it is the only thing with a frame clock, and only
@@ -31,9 +31,9 @@ export type ValleyAct =
   | 'impact'
   /** Nothing survives it. */
   | 'die'
-  /** Ash, and then no light at all. */
+  /** Smoke over the valley as it burns, and only the fire to see by. */
   | 'dark'
-  /** Morning, and the name growing back. */
+  /** Morning over the ash and the crater, and the name growing back. */
   | 'return'
 
 export interface ValleyState {

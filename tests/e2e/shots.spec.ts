@@ -16,6 +16,13 @@ import { SECTIONS, introDone, mockGithub, scrollTo } from './site'
  * meaningless. This makes the test browser look like the machine it stands for.
  */
 
+/*
+ * `npm run shots` runs these two at a time. Each one ends by playing the valley
+ * at the quality a desktop gets, and four of those starting at once on one
+ * card — burning forest, crater and all — took over a minute to get past
+ * their opening frame.
+ */
+
 const OUT = join('test-results', 'shots')
 
 const VIEWPORTS = [
@@ -112,6 +119,7 @@ for (const viewport of VIEWPORTS) {
         [9.6, 'impact'],
         [12, 'die'],
         [15.03, 'lightning'],
+        [18.8, 'aftermath'],
       ] as const) {
         await page.waitForTimeout(Math.max(0, at * 1000 - (Date.now() - start)))
         await shot(`13-valley-${name}`)

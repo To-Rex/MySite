@@ -42,7 +42,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 | `Companion.tsx`, `CompanionTurtle.tsx`, `useCreature.ts` | The scroll companion |
 | `Spectacle.tsx`, `stage.ts`, `mascots.ts`, `lib/spectacle.ts` | The hero's easter egg |
 | `Cameo.tsx`, `useCameoDirector.ts` | Cameos |
-| `Valley.tsx`, `ValleyScene.tsx`, `valley*.ts(x)`, `lib/valley.ts`, `glowPass.ts` | The extinction cinematic (The meadow, The ranges, What it costs, Quality, Sound) |
+| `Valley.tsx`, `ValleyScene.tsx`, `valley*.ts(x)`, `lib/valley.ts`, `glowPass.ts` | The extinction cinematic (The cast, The crater, The fire, The meadow, The ranges, What it costs, Quality, Sound) |
 | `404.html`, `NotFound*.tsx`, `notFound*.ts`, `lib/notFound.ts` | The 404 page |
 | `src/features/sound/*` | The 404 page → Sound · The extinction cinematic → Sound |
 | any `<Canvas>` | Canvases and the pointer · Parked canvases and the clock |

@@ -257,6 +257,7 @@ interface Uniforms {
   uHideDorsal: { value: Color }
   uHideVentral: { value: Color }
   uMottle: { value: number }
+  uChar: { value: number }
 }
 
 export interface SkinMaterialProps {
@@ -275,6 +276,12 @@ export interface SkinMaterialProps {
   halfHeight: number
   /** 0 = fine scales, 1 = coarse plates. Turtles want plates for shell scutes. */
   plateMix?: number
+  /**
+   * How burnt the hide is, 0 to 1, driven from outside: the extinction
+   * cinematic chars its herd as the fire passes over them. Leave it out
+   * everywhere else and the program is the plain one.
+   */
+  char?: { value: number }
 }
 
 /**
@@ -372,7 +379,7 @@ const PALETTE = {
   },
 } as const
 
-export function SkinMaterial({ theme, species, texScale, bump, halfHeight, plateMix = 0 }: SkinMaterialProps) {
+export function SkinMaterial({ theme, species, texScale, bump, halfHeight, plateMix = 0, char }: SkinMaterialProps) {
   const material = useRef<MeshPhysicalMaterial>(null)
   const texture = useMemo(() => getSkinTexture(), [])
 
@@ -394,8 +401,9 @@ export function SkinMaterial({ theme, species, texScale, bump, halfHeight, plate
       uHideVentral: { value: new Color(HIDE[species][theme].ventral) },
       // Blotching needs three more texture fetches, so it rides along with bump.
       uMottle: { value: bump > 0 ? 0.5 : 0 },
+      uChar: char ?? { value: 0 },
     }),
-    [texture, texScale, bump, theme, halfHeight, plateMix, species],
+    [texture, texScale, bump, theme, halfHeight, plateMix, species, char],
   )
 
   const onBeforeCompile = useMemo(
@@ -409,6 +417,7 @@ export function SkinMaterial({ theme, species, texScale, bump, halfHeight, plate
           .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n  vSkinNormal = normal;')
 
       shader.fragmentShader =
+        (char ? '#define DH_CHAR\nuniform float uChar;\n' : '') +
         FRAGMENT_HEAD +
         shader.fragmentShader
           // Sample once, up front: three's colour and roughness chunks both run
@@ -433,18 +442,38 @@ export function SkinMaterial({ theme, species, texScale, bump, halfHeight, plate
   if (uMottle > 0.0) {
     float dhBlotch = dhSkinMottle(vSkinPos * uTexScale * 0.3, vSkinNormal);
     diffuseColor.rgb *= mix(1.0, 0.78 + 0.34 * dhBlotch, uMottle);
-  }`,
+  }
+  #ifdef DH_CHAR
+    // Burnt: black, broken by the ash that settles in the grooves.
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.035, 0.03, 0.027) + vec3(0.11) * (1.0 - dhHeight) * uChar, uChar);
+  #endif`,
           )
           // Creases and seams are duller than the surrounding hide.
           .replace(
             '#include <roughnessmap_fragment>',
             `#include <roughnessmap_fragment>
-  roughnessFactor = clamp(roughnessFactor + (1.0 - dhAo) * uAoRough, 0.04, 1.0);`,
+  roughnessFactor = clamp(roughnessFactor + (1.0 - dhAo) * uAoRough, 0.04, 1.0);
+  #ifdef DH_CHAR
+    roughnessFactor = mix(roughnessFactor, 1.0, uChar);
+  #endif`,
           )
           // Perturb the shading normal once the geometric one is established.
           .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>' + BUMP_BODY)
+          // Burnt hide has lost its sheen and its wet coat.
+          .replace(
+            '#include <lights_physical_fragment>',
+            `#include <lights_physical_fragment>
+  #ifdef DH_CHAR
+    #ifdef USE_CLEARCOAT
+      material.clearcoat *= 1.0 - uChar;
+    #endif
+    #ifdef USE_SHEEN
+      material.sheenColor *= 1.0 - uChar;
+    #endif
+  #endif`,
+          )
     },
-    [uniforms],
+    [uniforms, char],
   )
 
   /**
@@ -455,9 +484,9 @@ export function SkinMaterial({ theme, species, texScale, bump, halfHeight, plate
    * and handed this material their program, silently dropping the skin chunks.
    */
   const cacheKey = useMemo(() => {
-    const key = `dh-skin-${species}-${theme}-${plateMix}-${bump > 0 ? 'bump' : 'flat'}`
+    const key = `dh-skin-${species}-${theme}-${plateMix}-${bump > 0 ? 'bump' : 'flat'}${char ? '-char' : ''}`
     return () => key
-  }, [species, theme, plateMix, bump])
+  }, [species, theme, plateMix, bump, char])
 
   useEffect(() => {
     if (material.current) material.current.needsUpdate = true

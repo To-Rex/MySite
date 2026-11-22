@@ -1,5 +1,8 @@
 import { RATE } from './dsp'
-import { ENTRY_SECONDS, type BankName, type LoopName, type VoiceName } from './voices'
+// Types only: the bank itself is imported dynamically, so it stays out of the
+// page's chunk until there is a sound to make. A static import of one number
+// from it pulled the whole bank back in, and the build said so.
+import type { BankName, LoopName, VoiceName } from './voices'
 import type { VoiceMessage, VoiceRequest } from './voices.worker'
 
 /**
@@ -91,6 +94,8 @@ interface PlayOptions {
   bus: Bus
   gain: number
   rate?: number
+  /** Plays it at whatever rate makes it last this many seconds, in place of `rate`. */
+  lasting?: number
   pan?: number
   /** Pans from `pan` to here over `panOver` seconds. */
   panTo?: number
@@ -229,7 +234,7 @@ export function createEngine(bank: BankName): SoundEngine {
 
     const source = context.createBufferSource()
     source.buffer = buffer
-    source.playbackRate.value = options.rate ?? 1
+    source.playbackRate.value = options.lasting ? buffer.duration / options.lasting : (options.rate ?? 1)
 
     let chain: AudioNode = source
     if (options.lowpass) {
@@ -472,7 +477,8 @@ export function createEngine(bank: BankName): SoundEngine {
         }
         case 'entry':
           // Loud, but not as loud as what it does when it lands.
-          play('entry', { bus: 'sky', gain: 0.72, rate: ENTRY_SECONDS / cue.seconds, pan: -0.75, panTo: 0.15, panOver: cue.seconds, send: 0.35 })
+          // Stretched to end on the impact, however long the streak is.
+          play('entry', { bus: 'sky', gain: 0.72, lasting: cue.seconds, pan: -0.75, panTo: 0.15, panOver: cue.seconds, send: 0.35 })
           duck(0.5, cue.seconds)
           break
         case 'sonicBoom':

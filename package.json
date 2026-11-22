@@ -17,7 +17,7 @@
     "test:watch": "vitest --project unit",
     "test:dist": "vitest run --project dist",
     "test:e2e": "playwright test --project=desktop --project=mobile",
-    "shots": "playwright test --project=shots",
+    "shots": "playwright test --project=shots --workers=2",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build && npm run test:dist && npm run test:e2e"
   },
   "dependencies": {

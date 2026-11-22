@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import { BufferAttribute } from 'three'
 import { GRASS_DENSITY, bladeCount, fanFor } from '@/components/three/valleyGrass'
-import { LAKE, WATER_LEVEL, groundAt, groundNormalAt, heightAt } from '@/components/three/valleyLand'
+import {
+  CRATER,
+  LAKE,
+  WATER_LEVEL,
+  blastArrival,
+  blastFront,
+  buildCraterPatch,
+  craterAt,
+  craterProfile,
+  fellAt,
+  groundAt,
+  groundNormalAt,
+  heightAt,
+  inCrater,
+} from '@/components/three/valleyLand'
 import { geometryFor, spotsFor } from '@/components/three/valleyForest'
 import { RANGE, buildRange, rangeHeight } from '@/components/three/valleyMountains'
+import { HERD, castDetail } from '@/components/three/valleyCast'
+import { buildFireSmoke, buildFlames } from '@/components/three/valleyFire'
+import { CRATER_GLSL, FIRE_GLSL } from '@/components/three/valleyMaterials'
 
 /**
  * The world the extinction cinematic stands in: the meadow's layout, the
@@ -157,5 +174,111 @@ describe('the conifers', () => {
     const height = geometry.boundingBox!.max.y
     expect(height).toBeGreaterThan(kind === 'umbrella' ? 17 : 13)
     expect(height).toBeLessThan(kind === 'umbrella' ? 21 : 16)
+  })
+})
+
+describe('the herd', () => {
+  it('is the size the animals were', () => {
+    const size = (kind: string) => Math.max(...HERD.filter((h) => h.kind === kind).map((h) => h.size))
+    // Nose to tail, in metres: a tyrannosaur was twelve or thirteen, a
+    // sauropod over twenty. At half that they read as toys under the trees.
+    expect(size('dino')).toBeGreaterThan(11)
+    expect(size('sauropod')).toBeGreaterThan(20)
+    expect(size('stegosaur')).toBeGreaterThan(7.5)
+  })
+
+  it('stands clear of the crater, its ejecta and the lake', () => {
+    for (const h of HERD) {
+      const fromCrater = Math.hypot(h.x - CRATER.x, h.z - CRATER.z) - h.size / 2
+      expect(fromCrater, h.kind).toBeGreaterThan(CRATER.r * 1.25)
+      expect(Math.hypot(h.x - LAKE.x, h.z - LAKE.z), h.kind).toBeGreaterThan(LAKE.r * 1.12)
+    }
+  })
+
+  it('is meshed finely enough for its size where the card can take it', () => {
+    expect(castDetail('dino', 'ultra')).toBe('high')
+    expect(castDetail('sauropod', 'high')).toBe('medium')
+    for (const kind of ['dino', 'sauropod', 'stegosaur', 'turtle', 'pterosaur'] as const) {
+      expect(castDetail(kind, 'low')).toBe('low')
+      expect(castDetail(kind, 'medium')).toBe('low')
+    }
+  })
+})
+
+describe('the crater', () => {
+  it('is a bowl with a raised rim and a blanket that thins to nothing', () => {
+    expect(craterProfile(0)).toBeCloseTo(-CRATER.depth, 5)
+    expect(craterProfile(1)).toBeCloseTo(CRATER.rim, 5)
+    // No step at the crest, where the bowl meets the blanket.
+    expect(Math.abs(craterProfile(0.999) - craterProfile(1.001))).toBeLessThan(0.05)
+    for (let q = 1; q < CRATER.reach; q += 0.05) expect(craterProfile(q + 0.05)).toBeLessThanOrEqual(craterProfile(q) + 1e-9)
+    expect(craterProfile(CRATER.reach)).toBeCloseTo(0, 5)
+  })
+
+  it('opens from a small bowl into the whole one', () => {
+    expect(craterAt(CRATER.x, CRATER.z, 0)).toBe(0)
+    expect(craterAt(CRATER.x, CRATER.z, 0.5)).toBeCloseTo(-CRATER.depth / 2, 5)
+    expect(craterAt(CRATER.x, CRATER.z, 1)).toBeCloseTo(-CRATER.depth, 5)
+    // Past the edge of the ejecta the ground is untouched.
+    expect(craterAt(CRATER.x + CRATER.r * CRATER.reach + 1, CRATER.z)).toBe(0)
+  })
+
+  it('never runs into the lake', () => {
+    // The water is a disc a little wider than the lake; the bowl must not reach it.
+    expect(Math.hypot(CRATER.x - LAKE.x, CRATER.z - LAKE.z)).toBeGreaterThan(LAKE.r * 1.12 + CRATER.r)
+  })
+
+  it('is cut into ground of its own that starts on the ground exactly and faces up', () => {
+    const patch = buildCraterPatch()
+    const pos = patch.attributes.position as BufferAttribute
+    for (let i = 0; i < pos.count; i += 97) expect(pos.getY(i)).toBeCloseTo(groundAt(pos.getX(i), pos.getZ(i)), 4)
+    const normals = patch.attributes.normal as BufferAttribute
+    let up = 0
+    for (let i = 0; i < normals.count; i++) up += normals.getY(i)
+    expect(up / normals.count).toBeGreaterThan(0.8)
+  })
+
+  it('has the same shape on the card as here', () => {
+    // The shaders spell the crater out again; the numbers have to agree.
+    expect(CRATER_GLSL).toContain(`VC_DEPTH = ${CRATER.depth}.0`)
+    expect(CRATER_GLSL).toContain(`VC_REACH = ${CRATER.reach}`)
+    expect(FIRE_GLSL).toContain('if (d <= 79.0) return 0.3 + (d - 4.0) / 50.0;')
+  })
+})
+
+describe('the blast and the fire', () => {
+  it('runs out from the crater and arrives where it says it will', () => {
+    for (let t = 0.35; t < 3.9; t += 0.1) expect(blastArrival(blastFront(t)), `${t.toFixed(2)}s`).toBeCloseTo(t, 2)
+    for (let t = 0.3; t < 6; t += 0.1) expect(blastFront(t + 0.1)).toBeGreaterThanOrEqual(blastFront(t))
+    // It reaches the camera before it dies out.
+    expect(blastArrival(Math.hypot(CRATER.x, CRATER.z - 16))).toBeLessThan(2)
+  })
+
+  it('puts trees down away from the crater, and none that stood in it', () => {
+    for (const kind of ['umbrella', 'tiered', 'treeFern'] as const) {
+      for (const spot of spotsFor('high', kind)) {
+        const fell = fellAt(spot.x, spot.z)
+        if (!fell) continue
+        expect((spot.x - CRATER.x) * fell.dx + (spot.z - CRATER.z) * fell.dz).toBeGreaterThan(0)
+      }
+    }
+    expect(inCrater(CRATER.x, CRATER.z)).toBe(true)
+    expect(inCrater(CRATER.x + CRATER.r * 2, CRATER.z)).toBe(false)
+  })
+
+  it('burns more on the levels that can take it, and nothing where the crater is', () => {
+    const count = (g: { attributes: Record<string, unknown> }) => (g.attributes.position as BufferAttribute).count
+    const counts = (['low', 'medium', 'high', 'ultra'] as const).map((q) => count(buildFlames(q)))
+    for (let i = 1; i < counts.length; i++) expect(counts[i]).toBeGreaterThan(counts[i - 1]!)
+    const flames = buildFlames('ultra')
+    const pos = flames.attributes.position as BufferAttribute
+    const look = flames.attributes.aFlame as BufferAttribute
+    for (let i = 0; i < pos.count; i++) {
+      expect(inCrater(pos.getX(i), pos.getZ(i))).toBe(false)
+      expect(look.getX(i)).toBeGreaterThan(0)
+      expect(Number.isFinite(pos.getY(i))).toBe(true)
+    }
+    expect(count(buildFireSmoke('low'))).toBe(0)
+    expect(count(buildFireSmoke('ultra'))).toBeGreaterThan(400)
   })
 })

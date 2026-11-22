@@ -1,4 +1,4 @@
-import { BufferAttribute, MathUtils, PlaneGeometry, type BufferGeometry } from 'three'
+import { BufferAttribute, BufferGeometry, MathUtils, PlaneGeometry } from 'three'
 
 /**
  * The lie of the land: the height field the whole valley is built on, and the
@@ -213,22 +213,154 @@ export function buildTerrain(): BufferGeometry {
   return geometry
 }
 
+/* -------------------------------------------------------------------------- */
+/* The crater and the fire                                                     */
+/* -------------------------------------------------------------------------- */
+
 /**
- * The ground after the impact: a bowl with a raised rim, pressed into the
- * mesh in place. Done once, on the frame the rock lands.
+ * Where the rock comes down, and the hole it leaves: the radius of the rim's
+ * crest, how far the floor goes below the ground that was there, how high the
+ * rim stands above it, and how far out, in radii, the thrown-out rock still
+ * lies on the ground.
+ *
+ * A simple crater, the kind a rock a few metres across makes: a bowl a fifth
+ * as deep as it is wide, a rim of upturned rock, and a blanket of what came
+ * out of it thinning with distance. It is well clear of the herd, so nobody is
+ * standing in it, and clear of the lake, so the water never runs into it.
  */
-export function carveCrater(geometry: BufferGeometry, x: number, z: number, radius: number, depth: number): void {
-  const pos = geometry.attributes.position as BufferAttribute
-  for (let i = 0; i < pos.count; i++) {
-    const d = Math.hypot(pos.getX(i) - x, pos.getZ(i) - z)
-    if (d > radius * 1.4) continue
-    const q = d / radius
-    const bowl = q < 1 ? -depth * Math.pow(1 - q * q, 2) : 0
-    const rim = depth * 0.3 * smoothstep(0.55, 0.95, q) * (1 - smoothstep(0.95, 1.4, q))
-    pos.setY(i, pos.getY(i) + bowl + rim)
+export const CRATER = { x: 12, z: -58, r: 22, depth: 9, rim: 4, reach: 2.4 } as const
+
+/**
+ * The crater's shape at q radii from its centre, fully formed, in metres
+ * above the ground that was there: a bowl that is flat at the bottom,
+ * steepest half way up the wall and rounded over at the crest, and outside
+ * the crest a blanket of ejecta that falls away from it.
+ */
+export function craterProfile(q: number, rim: number = CRATER.rim): number {
+  if (q < 1) return -CRATER.depth + (CRATER.depth + rim) * (1 - (1 - q * q) ** 2)
+  const a = 2.2 * (q - 1)
+  return (rim / (1 + a * a) ** 1.5) * (1 - smoothstep(CRATER.reach - 0.45, CRATER.reach, q))
+}
+
+/** The rim is higher in some places than others, the same on both sides of the GPU. */
+export function rimAt(angle: number): number {
+  return CRATER.rim * (0.82 + 0.16 * Math.sin(3 * angle + 1) + 0.1 * Math.sin(5 * angle + 2.3) + 0.05 * Math.sin(11 * angle + 0.4))
+}
+
+/**
+ * How far the ground at a point has moved, `grow` of the way through the
+ * crater's opening. It opens self-similarly, a small bowl widening and
+ * deepening into the full one, which is roughly what an excavating crater does.
+ */
+export function craterAt(x: number, z: number, grow = 1): number {
+  if (grow <= 0) return 0
+  const dx = x - CRATER.x
+  const dz = z - CRATER.z
+  const q = Math.hypot(dx, dz) / (CRATER.r * grow)
+  if (q >= CRATER.reach) return 0
+  return grow * craterProfile(q, rimAt(Math.atan2(dz, dx)))
+}
+
+let patch: BufferGeometry | null = null
+
+/**
+ * The ground the crater is cut into, finer than the rest: a polar grid out to
+ * the edge of the ejecta, its vertices on the mesh exactly, displaced in the
+ * shader as the crater opens. The ground mesh's quads are two and a half
+ * metres, and the crest of a rim cut into them was a polygon you could count
+ * the sides of against the glow inside it. Built once and kept, like the
+ * ground; the terrain under it is lowered out of the way when it is shown.
+ */
+export function buildCraterPatch(): BufferGeometry {
+  if (patch) return patch
+  // Rings closest together round the crest, where the silhouette is, and
+  // further apart over the floor and the outer blanket. It was four times
+  // this once: from the camera the patch is a sliver a few hundred pixels
+  // across, and fifty thousand triangles in it, each a pixel or less, cost
+  // ten frames a second in fragments shaded for nothing.
+  const rings = 56
+  const around = 176
+  const columns = around + 1
+  const position = new Float32Array(columns * (rings + 1) * 3)
+  for (let ring = 0; ring <= rings; ring++) {
+    const u = ring / rings
+    const q = u < 0.6 ? (u / 0.6) * 1.3 : 1.3 + ((u - 0.6) / 0.4) * (CRATER.reach - 1.3)
+    const r = q * CRATER.r
+    for (let i = 0; i < columns; i++) {
+      const a = (i / around) * Math.PI * 2
+      const x = CRATER.x + Math.cos(a) * r
+      const z = CRATER.z + Math.sin(a) * r
+      position.set([x, groundAt(x, z), z], (ring * columns + i) * 3)
+    }
   }
-  pos.needsUpdate = true
-  geometry.computeVertexNormals()
+  const index: number[] = []
+  for (let ring = 0; ring < rings; ring++) {
+    for (let i = 0; i < around; i++) {
+      const a = ring * columns + i
+      const b = a + columns
+      // Wound to face up, like the ground.
+      index.push(a, a + 1, b, a + 1, b + 1, b)
+    }
+  }
+  const built = new BufferGeometry()
+  built.setAttribute('position', new BufferAttribute(position, 3))
+  built.setIndex(index)
+  built.computeVertexNormals()
+  built.computeBoundingSphere()
+  // Room for the rim and the ejecta it will grow.
+  if (built.boundingSphere) built.boundingSphere.radius += CRATER.rim * 2
+  patch = built
+  return built
+}
+
+/**
+ * How far the blast front has run from the crater, seconds after the rock
+ * lands: fast at first, slowing, and spent by about a hundred and thirty
+ * metres. The dust wall rides it, the grass and trees go down as it passes,
+ * the herd goes over, and the fire comes in behind it.
+ */
+export function blastFront(since: number): number {
+  if (since < 0.3) return 0
+  if (since < 1.8) return 4 + ((since - 0.3) / 1.5) * 75
+  const k = Math.min(1, (since - 1.8) / 2.1)
+  return 79 + 50 * (1 - (1 - k) * (1 - k))
+}
+
+/**
+ * When the blast front reaches a distance: `blastFront` the other way round.
+ * Past where the front ran out the fire carries on by itself, slower.
+ */
+export function blastArrival(distance: number): number {
+  if (distance <= 4) return 0.3
+  if (distance <= 79) return 0.3 + (distance - 4) / 50
+  if (distance <= 129) return 1.8 + 2.1 * (1 - Math.sqrt(Math.max(0, 1 - (distance - 79) / 50)))
+  return 3.9 + (distance - 129) / 20
+}
+
+/**
+ * Whether something planted at a point is where the crater opens, or under
+ * the ejecta piled round its rim: gone the moment the rock lands, rather than
+ * left standing on ground that is no longer there.
+ */
+export function inCrater(x: number, z: number): boolean {
+  return Math.hypot(x - CRATER.x, z - CRATER.z) < CRATER.r * 1.55
+}
+
+/** How far from the crater the blast puts trees down. */
+const FELL_REACH = 85
+
+/**
+ * A tree standing at a point, and the blast: when the front reaches it, how
+ * far over it goes, in radians — further the nearer it stands — and which way
+ * on the map, straight away from the crater. Null if the front never gets to
+ * it with the strength to put it down.
+ */
+export function fellAt(x: number, z: number): { at: number; tilt: number; dx: number; dz: number } | null {
+  const dx = x - CRATER.x
+  const dz = z - CRATER.z
+  const d = Math.hypot(dx, dz)
+  if (d >= FELL_REACH || d < 1e-3) return null
+  return { at: blastArrival(d), tilt: (1 - (d / FELL_REACH) * 0.55) * 1.3, dx: dx / d, dz: dz / d }
 }
 
 /* -------------------------------------------------------------------------- */

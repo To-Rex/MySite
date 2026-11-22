@@ -8,10 +8,11 @@ import {
   UniformsUtils,
   Vector2,
   Vector3,
+  Vector4,
   type CanvasTexture,
   type WebGLProgramParametersWithUniforms,
 } from 'three'
-import { LAKE, VOLCANO, WATER_LEVEL } from './valleyLand'
+import { CRATER, LAKE, VOLCANO, WATER_LEVEL } from './valleyLand'
 
 /**
  * Every shader the valley uses, and the uniforms the scene drives per frame.
@@ -60,9 +61,6 @@ export const ATMOS = {
    */
   uMeadow: { value: new Vector3(0, 0, 0) },
   uBump: { value: 0.6 },
-  /** Where the ground burns: x, z and radius, and how far along the burn is. */
-  uScorch: { value: new Vector3(0, 0, 1) },
-  uScorchAmount: { value: 0 },
   /** Sway at the crown, as a fraction of the plant's height. */
   uSway: { value: 0.028 },
   /** The breeze: how hard, 0 to 1, and which way it blows on the map. */
@@ -72,6 +70,30 @@ export const ATMOS = {
   uSunDir: { value: SUN_DIR.clone() },
   /** What comes through them: the low sun's colour and strength. Set per frame. */
   uBack: { value: new Color('#ffb877') },
+}
+
+/**
+ * The crater and the fire, from the moment the rock lands. Everything that
+ * burns reads the same clock and the same front, so the ground, the grass,
+ * the trees, the flames and the smoke all agree about where the fire is.
+ */
+export const FIRE = {
+  /** The crater: centre x, z, the radius of its rim, and how far it has opened, 0 to 1. */
+  uCrater: { value: new Vector4(CRATER.x, CRATER.z, CRATER.r, 0) },
+  /** Seconds since the rock landed; far in the past's opposite before it has. */
+  uSince: { value: -100 },
+  /** How hot the crater's floor still is: 1 as it forms, cooling after. */
+  uMelt: { value: 0 },
+  /** How much of the light in the valley is the fire's, 0 to 1. */
+  uGlow: { value: 0 },
+}
+
+/** Back to before the rock. */
+export function resetFire(): void {
+  FIRE.uCrater.value.w = 0
+  FIRE.uSince.value = -100
+  FIRE.uMelt.value = 0
+  FIRE.uGlow.value = 0
 }
 
 /** The sky dome and everything that reflects it. */
@@ -180,6 +202,106 @@ float vvGust(vec2 p) {
 }
 `
 
+const glslFloat = (n: number) => (Number.isInteger(n) ? `${n}.0` : `${n}`)
+
+/** What reads the crater and the fire: its uniforms. */
+export const FIRE_PARS = /* glsl */ `
+uniform vec4 uCrater;
+uniform float uSince;
+uniform float uMelt;
+`
+
+/**
+ * The crater's shape, the same function as `craterProfile` in `valleyLand.ts`
+ * (the herd and everything else placed on the ground read that one), with its
+ * slope on the map so a displaced surface can be lit.
+ */
+export const CRATER_GLSL = /* glsl */ `
+const float VC_DEPTH = ${glslFloat(CRATER.depth)};
+const float VC_REACH = ${glslFloat(CRATER.reach)};
+float vcRim(float a) {
+  return ${glslFloat(CRATER.rim)} * (0.82 + 0.16 * sin(3.0 * a + 1.0) + 0.1 * sin(5.0 * a + 2.3) + 0.05 * sin(11.0 * a + 0.4));
+}
+// Height above the ground that was there, and its slope, grow of the way open.
+vec3 vcCrater(vec2 p, float grow) {
+  if (grow <= 0.0) return vec3(0.0);
+  vec2 v = p - uCrater.xy;
+  float d = max(length(v), 1e-3);
+  float q = d / (uCrater.z * grow);
+  if (q >= VC_REACH) return vec3(0.0);
+  float rim = vcRim(atan(v.y, v.x));
+  float h;
+  float dh;
+  if (q < 1.0) {
+    float w = 1.0 - q * q;
+    h = -VC_DEPTH + (VC_DEPTH + rim) * (1.0 - w * w);
+    dh = (VC_DEPTH + rim) * 4.0 * q * w;
+  } else {
+    float a = 2.2 * (q - 1.0);
+    float b = 1.0 + a * a;
+    float t = clamp((q - VC_REACH + 0.45) / 0.45, 0.0, 1.0);
+    float f = 1.0 - t * t * (3.0 - 2.0 * t);
+    float base = rim * pow(b, -1.5);
+    h = base * f;
+    dh = rim * -6.6 * a * pow(b, -2.5) * f - base * 6.0 * t * (1.0 - t) / 0.45;
+  }
+  return vec3(h * grow, dh / uCrater.z * (v / d));
+}
+`
+
+/**
+ * The fire. It comes in just behind the blast front — `blastArrival` in
+ * `valleyLand.ts` is the same function — and raggedly, a patch here catching
+ * a little later than a patch there; past where the front ran out it carries
+ * on by itself, slower. Everything that burns asks how long it has been
+ * burning at its own spot, and goes by that.
+ */
+export const FIRE_GLSL = /* glsl */ `
+float vfArrival(float d) {
+  if (d <= 4.0) return 0.3;
+  if (d <= 79.0) return 0.3 + (d - 4.0) / 50.0;
+  if (d <= 129.0) return 1.8 + 2.1 * (1.0 - sqrt(max(0.0, 1.0 - (d - 79.0) / 50.0)));
+  return 3.9 + (d - 129.0) / 20.0;
+}
+// Seconds a point has been burning; negative before the fire reaches it.
+float vfAge(vec2 p) {
+  return uSince - vfArrival(distance(p, uCrater.xy)) - 0.12 - vvNoise(p * 0.05 + 21.0) * 0.75;
+}
+// What burning ground gives off. The flames, in a narrow band as the fire
+// passes and broken into patches, not a sheet; then dull red where the fuel
+// lay thickest, smouldering for a few seconds; and embers, fine sparks in
+// the char, the last to go. foot is how much ground a pixel covers: sparks
+// finer than that are their average glow, not shimmer.
+vec3 vfGroundGlow(vec2 p, float age, float fuel, float foot) {
+  if (age < -0.2 || age > 12.0 || fuel <= 0.01) return vec3(0.0);
+  float flick = vvNoise(p * 0.55 + vec2(uTime * 2.3, -uTime * 1.9));
+  float flame = 0.0;
+  if (age < 0.85) {
+    float patchy = smoothstep(0.25, 0.75, vvNoise(p * 0.12 + 5.0));
+    flame = smoothstep(-0.1, 0.12, age) * (1.0 - smoothstep(0.2, 0.85, age)) * (0.35 + 0.65 * flick) * (0.3 + 0.7 * patchy);
+  }
+  float smoulder = age > 0.3 ? smoothstep(0.62, 0.88, vvNoise(p * 0.9 + 11.0)) * smoothstep(0.3, 1.0, age) * exp(-max(age - 1.0, 0.0) * 0.6) : 0.0;
+  // Sparks finer than a pixel are their average glow, and cost nothing to work out.
+  float far = smoothstep(0.12, 0.5, foot);
+  float speck = far < 1.0 ? mix(smoothstep(0.86, 0.97, vvNoise(p * 4.5 + 7.0)), 0.025, far) : 0.025;
+  float ember = smoothstep(0.3, 1.0, age) * exp(-max(age - 1.0, 0.0) * 0.3) * speck * (0.6 + 0.4 * flick);
+  return (vec3(1.0, 0.38, 0.07) * flame * 1.1 + vec3(0.8, 0.14, 0.02) * smoulder * 0.5 + vec3(1.0, 0.3, 0.05) * ember * 2.0) * fuel;
+}
+// The crater's floor: a pool of melt, glowing all over as it forms and then
+// only along the cracks in the black crust that skins it as it cools.
+vec3 vcMeltGlow(vec2 p, float q, float foot) {
+  if (uMelt <= 0.0 || q > 0.8) return vec3(0.0);
+  float pool = 1.0 - smoothstep(0.3, 0.8, q);
+  float c1 = 1.0 - abs(vvNoise(p * 0.32) * 2.0 - 1.0);
+  float c2 = 1.0 - abs(vvNoise(p * 0.95 + 5.0) * 2.0 - 1.0);
+  float crack = mix(max(pow(c1, 9.0), pow(c2, 12.0) * 0.75), 0.18, smoothstep(0.4, 1.4, foot));
+  float heat = uMelt * pool * (0.07 + 0.93 * crack) + uMelt * uMelt * uMelt * pool * 0.7;
+  vec3 c = mix(vec3(0.5, 0.05, 0.01), vec3(1.0, 0.4, 0.07), smoothstep(0.2, 0.75, heat));
+  c = mix(c, vec3(1.0, 0.86, 0.58), smoothstep(0.85, 1.3, heat));
+  return c * heat * 1.8;
+}
+`
+
 /** The same sky as the dome, callable for any direction — the water reflects it. */
 const SKY_FUNC = /* glsl */ `
 vec3 vvSky(vec3 dir) {
@@ -261,9 +383,10 @@ uniform vec3 uLake;
 uniform vec3 uVolcano;
 uniform vec3 uMeadow;
 uniform float uBump;
-uniform vec3 uScorch;
-uniform float uScorchAmount;
 varying vec3 vvNormalW;
+${FIRE_PARS}
+${CRATER_GLSL}
+${FIRE_GLSL}
 
 // A ridged noise and its gradient: crests, and soft hollows between them.
 // The crest is rounded over a width soft — a true crease turns the light over
@@ -385,10 +508,58 @@ const TERRAIN_COLOR = /* glsl */ `
   // Beyond the blades, the meadow still shows the wind: a gust lays the grass
   // over and its paler side catches the light, in patches that run downwind.
   vtCol *= 1.0 + (vvGust(vtP) - 0.4) * 0.16 * (1.0 - vtRockAmt) * (1.0 - vtShore) * uWind;
-  // And after the rock, the ground around the crater is char.
-  float vtScorch = (1.0 - smoothstep(uScorch.z * 0.45, uScorch.z, distance(vtP, uScorch.xy))) * uScorchAmount;
-  vtCol = mix(vtCol, vec3(0.05, 0.04, 0.035), vtScorch);
+  // After the rock. The fire: what can burn goes to char behind the front and
+  // then to ash, grey, and palest where the grass stood thickest; rock is
+  // only blackened.
+  // None of it is worked out before the rock has landed, or where the fire
+  // has not reached: most of the showing, most of the pixels.
+  float vtAge = uSince > -50.0 ? vfAge(vtP) : -100.0;
+  float vtFuel = (1.0 - vtRockAmt * 0.8) * (1.0 - vtShore * 0.7);
+  float vtCharA = smoothstep(-0.25, 1.0, vtAge);
+  // Where the crater is, in its radii as it opens. Inside the rim everything
+  // below is the crater's own, so the burn is not worked out there at all.
+  float vtQ = uCrater.w > 0.0 ? distance(vtP, uCrater.xy) / (uCrater.z * uCrater.w) : 99.0;
+  if (vtCharA > 0.0 && vtQ > 0.8) {
+    float vtAshA = smoothstep(1.5, 5.5, vtAge + (vtMid - 0.5) * 2.4);
+    vec3 vtCharC = vec3(0.032, 0.029, 0.026) * (0.7 + 0.6 * vtGrain);
+    vec3 vtAshC = mix(vec3(0.16, 0.155, 0.15), vec3(0.42, 0.41, 0.4), vtFine) * (0.65 + 0.7 * (vvNoise(vtP * 0.19 + 3.0) * 0.6 + vtMid * 0.4));
+    vtCol = mix(vtCol, mix(vtCharC, vtAshC, vtAshA * (0.35 + 0.65 * vtGrassy)), vtCharA * vtFuel);
+    vtCol *= 1.0 - vtCharA * (1.0 - vtFuel) * 0.45;
+  }
+  // The crater: fresh rock in its walls, in the beds it was cut through;
+  // black glassy melt on its floor; and round it a blanket of what it threw
+  // out, in rays, lying over the char.
+  float vtBlanket = 0.0;
+  if (vtQ < VC_REACH) {
+    vec2 vtCv = vtP - uCrater.xy;
+    float vtAng = atan(vtCv.y, vtCv.x);
+    // Each part worked out only where it shows: the crater is a fifth of the
+    // screen once the camera is over it, and every lookup here is paid there.
+    float vtRay = vvNoise(vec2(vtAng * 13.0, vtQ * 0.5));
+    vtBlanket = vtQ < 0.8 ? 1.0 : 1.0 - smoothstep(1.0, 1.75 + vtRay * 0.7, vtQ + (vvNoise(vtP * 0.21) - 0.5) * 0.4);
+    vec3 vtCraterC = vec3(0.0);
+    if (vtQ > 0.9) {
+      vtCraterC = mix(vec3(0.13, 0.115, 0.1), vec3(0.37, 0.33, 0.28), smoothstep(0.3, 0.8, vtRay)) * (0.75 + 0.5 * vtFine);
+    }
+    if (vtQ < 1.05) {
+      // The rock it was cut through, in beds, and gullies of fresh scree down
+      // the wall, paler than the beds they cut.
+      float vtBed = vvNoise(vec2(vvWorld.y * 0.8 + vtAng * 0.6, vtAng * 2.0));
+      float vtScree = smoothstep(0.55, 0.85, vvNoise(vec2(vtAng * 26.0, vtQ * 2.5)));
+      vec3 vtWallC = mix(vec3(0.12, 0.1, 0.085), vec3(0.38, 0.32, 0.26), vtBed) * (0.8 + 0.4 * vtFine);
+      vtWallC = mix(vtWallC, vec3(0.42, 0.38, 0.33), vtScree * 0.45 * smoothstep(0.45, 0.8, vtQ));
+      vtCraterC = mix(vtWallC, vtCraterC, smoothstep(0.92, 1.05, vtQ));
+    }
+    vtCraterC = mix(vtCraterC, vec3(0.03, 0.026, 0.024) * (0.8 + 0.4 * vtGrain), 1.0 - smoothstep(0.32, 0.6, vtQ));
+    // The ash coming down settles on all of it.
+    vtCraterC = mix(vtCraterC, vec3(0.3, 0.29, 0.28) * (0.8 + 0.4 * vtFine), smoothstep(3.0, 9.0, uSince) * 0.3 * smoothstep(0.45, 0.7, vtQ));
+    vtCol = mix(vtCol, vtCraterC, vtBlanket);
+  }
   diffuseColor.rgb = vtCol;
+  // What glows: flames and then embers where it burns, melt in the crater,
+  // and the crater's walls lit red from the melt below them.
+  vec3 vtGlow = vfGroundGlow(vtP, vtAge, vtFuel * (1.0 - vtBlanket), vtFoot) + vcMeltGlow(vtP, vtQ, vtFoot);
+  vtGlow += vtCol * vec3(1.0, 0.32, 0.08) * uMelt * 0.55 * (1.0 - smoothstep(0.3, 0.75, vtQ));
 `
 
 /**
@@ -484,6 +655,45 @@ const LEAF_THROUGH = /* glsl */ `
   }
 `
 
+/**
+ * The fire, in a plant. It climbs: the lower branches catch before the crown.
+ * The leaves scorch brown in the heat ahead of it, then burn away from a
+ * ragged glowing edge until nothing of them is left; the wood chars black,
+ * glows in its cracks for a while, and stays — so a forest burns down to its
+ * trunks and limbs, the way one does. `uLeafU` is where the leaf is on the
+ * texture along u; anything outside it is bark.
+ */
+const BURN_VERT = /* glsl */ `
+  #ifdef USE_INSTANCING
+    vfA = uSince > -50.0 ? vfAge(instanceMatrix[3].xz) - clamp(position.y / uSwayHeight, 0.0, 1.0) * 0.7 : -100.0;
+  #else
+    vfA = -100.0;
+  #endif
+`
+const BURN_FRAG = /* glsl */ `
+  #ifdef USE_MAP
+    float vfLeaf = step(uLeafU.x, vMapUv.x) * step(vMapUv.x, uLeafU.y);
+  #else
+    float vfLeaf = 1.0;
+  #endif
+  vec3 vfGlow = vec3(0.0);
+  // Nothing to work out until the heat reaches the plant.
+  if (vfA > -1.0) {
+    float vfN = vvNoise(vvWorld.xz * 1.7 + vvWorld.y * 1.3);
+    float vfCut = smoothstep(0.0, 1.8, vfA) + (vfN - 0.5) * 0.6;
+    if (vfLeaf > 0.5 && vfCut > 0.55) discard;
+    float vfEdge = vfLeaf * smoothstep(0.3, 0.55, vfCut) * step(-0.1, vfA);
+    float vfScorch = smoothstep(-1.0, 0.1, vfA) * vfLeaf;
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.1, 0.04) * (0.6 + 0.8 * vfN), vfScorch * 0.85);
+    float vfChar = max(vfEdge, (1.0 - vfLeaf) * smoothstep(-0.2, 1.4, vfA));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.022, 0.019, 0.017), vfChar);
+    // Embers in the bark: small, here and there, gone in a few seconds.
+    float vfCrack = smoothstep(0.78, 0.93, vvNoise(vec2(dot(vvWorld.xz, vec2(4.1, 3.3)), vvWorld.y * 2.2) + 17.0));
+    vfGlow = vec3(1.0, 0.36, 0.06) * vfEdge * 1.6 * (0.6 + 0.4 * vvNoise(vvWorld.xz * 2.5 + vec2(uTime * 4.0, uTime * 3.1)))
+      + vec3(1.0, 0.24, 0.04) * (1.0 - vfLeaf) * smoothstep(0.3, 1.0, vfA) * exp(-max(vfA - 1.0, 0.0) * 0.7) * vfCrack * 1.1;
+  }
+`
+
 /** Ablation: the face into the wind is white-hot, the rest of the rock dull red. */
 const HEAT_BODY = /* glsl */ `
   {
@@ -509,11 +719,44 @@ export const mistUniforms = () => ({
 /* -------------------------------------------------------------------------- */
 
 /**
+ * The crater, in the ground's vertex shader. The patch (`buildCraterPatch`)
+ * carries it: the bowl and the ejecta from `vcCrater`, rubble on the rim and
+ * the blanket that the crater's own shape does not have, and its slope turned
+ * into the normal. The ground mesh under the patch is lowered out of the way
+ * once the patch is shown — vertex by vertex, so only vertices whose every
+ * triangle lies under the patch go, and the ground past its edge is never
+ * touched.
+ */
+const CRATER_NORMAL = /* glsl */ `
+  #ifdef VT_PATCH
+    vec3 vtCr = vcCrater(position.xz, uCrater.w);
+    float vtLq = uCrater.w > 0.0 ? distance(position.xz, uCrater.xy) / (uCrater.z * uCrater.w) : 99.0;
+    float vtLm = uCrater.w * smoothstep(0.55, 0.95, vtLq) * (1.0 - smoothstep(1.2, 1.75, vtLq));
+    vec3 vtL1 = vvNoiseD(position.xz * 0.42 + 3.0);
+    vec3 vtL2 = vvNoiseD(position.xz * 1.1 + 9.0);
+    float vtLump = ((vtL1.x - 0.5) * 1.1 + (vtL2.x - 0.5) * 0.4) * vtLm;
+    vec2 vtSlope = vtCr.yz + (vtL1.yz * 0.462 + vtL2.yz * 0.44) * vtLm;
+    float vtNy = max(objectNormal.y, 0.2);
+    objectNormal = normalize(vec3(objectNormal.x / vtNy - vtSlope.x, 1.0, objectNormal.z / vtNy - vtSlope.y));
+  #endif
+`
+const CRATER_VERTEX = /* glsl */ `
+  #ifdef VT_PATCH
+    transformed.y += 0.08 + vtCr.x + vtLump;
+  #else
+    if (uCrater.w > 0.0) {
+      float vtUnder = distance(transformed.xz, uCrater.xy) / uCrater.z;
+      transformed.y -= (VC_DEPTH + 4.0) * (1.0 - smoothstep(VC_REACH - 0.32, VC_REACH - 0.2, vtUnder));
+    }
+  #endif
+`
+
+/**
  * The ground. `relief` turns on the rock's analytic relief, eight noise
  * lookups with their gradients on every rocky pixel: everywhere but the
  * software renderer.
  */
-export function terrainProgram(relief: boolean): (shader: Shader) => void {
+export function terrainProgram(relief: boolean, patch = false): (shader: Shader) => void {
   return (shader) => {
     Object.assign(shader.uniforms, mistUniforms(), {
       uWaterLevel: ATMOS.uWaterLevel,
@@ -521,16 +764,23 @@ export function terrainProgram(relief: boolean): (shader: Shader) => void {
       uVolcano: ATMOS.uVolcano,
       uMeadow: ATMOS.uMeadow,
       uBump: ATMOS.uBump,
-      uScorch: ATMOS.uScorch,
-      uScorchAmount: ATMOS.uScorchAmount,
       uTime: ATMOS.uTime,
       uWind: ATMOS.uWind,
       uWindDir: ATMOS.uWindDir,
+      uCrater: FIRE.uCrater,
+      uSince: FIRE.uSince,
+      uMelt: FIRE.uMelt,
     })
     shader.vertexShader =
+      (patch ? '#define VT_PATCH\n' : '') +
       ATMOS_PARS_VERT +
       'varying vec3 vvNormalW;\n' +
+      FIRE_PARS +
+      NOISE_GLSL +
+      CRATER_GLSL +
       shader.vertexShader
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>' + CRATER_NORMAL)
+        .replace('#include <begin_vertex>', '#include <begin_vertex>' + CRATER_VERTEX)
         .replace(
           '#include <defaultnormal_vertex>',
           '#include <defaultnormal_vertex>\n  vvNormalW = normalize(mat3(modelMatrix) * objectNormal);',
@@ -547,8 +797,9 @@ export function terrainProgram(relief: boolean): (shader: Shader) => void {
         .replace('#include <color_fragment>', '#include <color_fragment>' + TERRAIN_COLOR)
         .replace(
           '#include <roughnessmap_fragment>',
-          '#include <roughnessmap_fragment>\n  roughnessFactor = mix(mix(roughnessFactor, 0.5, vtShore), 1.0, max(vtScorch, vtGrassy));',
+          '#include <roughnessmap_fragment>\n  roughnessFactor = mix(mix(mix(roughnessFactor, 0.5, vtShore), 1.0, max(vtCharA, vtGrassy)), 0.42, (1.0 - smoothstep(0.3, 0.55, vtQ)));',
         )
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += vtGlow;')
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>' + TERRAIN_BUMP)
         // Earth and grass are not glossy, and from this low an angle every
         // slope facing away from the sun came out as a grey sheen streaked by
@@ -574,7 +825,7 @@ export function atmosProgram(shader: Shader): void {
  * Foliage: the wind, the leaf, and the mist. `flutter` is how far a leaf moves
  * for each unit it stands out from the stem.
  */
-export function foliageProgram(height: number, flutter: number): (shader: Shader) => void {
+export function foliageProgram(height: number, flutter: number, leafU: readonly [number, number]): (shader: Shader) => void {
   return (shader) => {
     Object.assign(shader.uniforms, mistUniforms(), {
       uTime: ATMOS.uTime,
@@ -584,22 +835,31 @@ export function foliageProgram(height: number, flutter: number): (shader: Shader
       uSwayHeight: { value: height },
       uFlutter: { value: flutter },
       uBack: ATMOS.uBack,
+      uCrater: FIRE.uCrater,
+      uSince: FIRE.uSince,
+      uMelt: FIRE.uMelt,
+      uLeafU: { value: new Vector2(leafU[0], leafU[1]) },
     })
     shader.vertexShader =
       ATMOS_PARS_VERT +
       WIND_PARS +
-      'uniform float uSway;\nuniform float uSwayHeight;\nuniform float uFlutter;\n' +
+      FIRE_PARS +
+      'uniform float uSway;\nuniform float uSwayHeight;\nuniform float uFlutter;\nvarying float vfA;\n' +
       NOISE_GLSL +
       WIND_GLSL +
+      FIRE_GLSL +
       shader.vertexShader
-        .replace('#include <begin_vertex>', '#include <begin_vertex>' + SWAY_BODY)
+        .replace('#include <begin_vertex>', '#include <begin_vertex>' + BURN_VERT + SWAY_BODY)
         .replace('#include <project_vertex>', '#include <project_vertex>' + ATMOS_VERT_BODY)
     shader.fragmentShader =
       ATMOS_PARS_FRAG +
-      'uniform vec3 uBack;\n' +
+      'uniform vec3 uBack;\nuniform float uTime;\nuniform vec2 uLeafU;\nvarying float vfA;\n' +
+      NOISE_GLSL +
       shader.fragmentShader
+        .replace('#include <color_fragment>', '#include <color_fragment>' + BURN_FRAG)
         .replace('#include <alphatest_fragment>', LEAF_COVERAGE + '#include <alphatest_fragment>')
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>' + LEAF_FACING)
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += vfGlow;')
         .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>' + LEAF_THROUGH)
         .replace('#include <fog_fragment>', '#include <fog_fragment>' + MIST_BODY)
   }
@@ -752,6 +1012,252 @@ export function makeTrailMaterial(strength: { value: number }, blur: number): Sh
 }
 
 /**
+ * The ground once more, for the glow pass: black where nothing burns, so
+ * what is behind a ridge or down in the crater stays hidden there too, and
+ * the same flames, embers and melt the ground itself gives off where it does,
+ * so they bloom. Displaced as the ground is — the crater in the patch, the
+ * ground under the patch lowered — or the glow of the crater's floor would be
+ * hidden behind the ground that used to be there. Dimmed with distance by
+ * hand: three's fog would turn it the colour of the haze and light the whole
+ * glow up.
+ */
+export function makeGroundGlowMaterial(patch: boolean): ShaderMaterial {
+  return new ShaderMaterial({
+    defines: patch ? { VT_PATCH: '' } : {},
+    uniforms: {
+      ...UniformsUtils.clone(UniformsLib.fog),
+      uCrater: FIRE.uCrater,
+      uSince: FIRE.uSince,
+      uMelt: FIRE.uMelt,
+      uTime: ATMOS.uTime,
+      uVolcano: ATMOS.uVolcano,
+    },
+    vertexShader: /* glsl */ `
+      ${FIRE_PARS}
+      ${NOISE_GLSL}
+      ${CRATER_GLSL}
+      varying vec3 vWorld;
+      varying float vDepth;
+      varying float vSlope;
+      void main() {
+        vec3 transformed = position;
+        #ifdef VT_PATCH
+          transformed.y += 0.08 + vcCrater(position.xz, uCrater.w).x;
+        #else
+          if (uCrater.w > 0.0) {
+            float under = distance(position.xz, uCrater.xy) / uCrater.z;
+            transformed.y -= (VC_DEPTH + 4.0) * (1.0 - smoothstep(VC_REACH - 0.32, VC_REACH - 0.2, under));
+          }
+        #endif
+        vec4 wp = modelMatrix * vec4(transformed, 1.0);
+        vWorld = wp.xyz;
+        vSlope = 1.0 - normalize(normal).y;
+        vec4 mv = viewMatrix * wp;
+        vDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float fogNear;
+      uniform float fogFar;
+      uniform vec3 uVolcano;
+      ${FIRE_PARS}
+      ${NOISE_GLSL}
+      ${CRATER_GLSL}
+      ${FIRE_GLSL}
+      varying vec3 vWorld;
+      varying float vDepth;
+      varying float vSlope;
+      void main() {
+        vec2 p = vWorld.xz;
+        float foot = length(fwidth(p));
+        float q = uCrater.w > 0.0 ? distance(p, uCrater.xy) / (uCrater.z * uCrater.w) : 99.0;
+        float blanket = 1.0 - smoothstep(1.0, 2.1, q);
+        // Rock, as the ground's own colour has it: steep, high, or the
+        // volcano's bare upper slopes. Without it the fire front crossing the
+        // volcano bloomed into a bright ribbon over rock that does not burn.
+        float onV = 1.0 - smoothstep(uVolcano.z * 0.62, uVolcano.z, distance(p, uVolcano.xy));
+        float rock = max(max(smoothstep(0.24, 0.5, vSlope), smoothstep(24.0, 40.0, vWorld.y) * 0.7), onV * smoothstep(10.0, 22.0, vWorld.y));
+        float fuel = (1.0 - rock * 0.85) * (1.0 - blanket);
+        vec3 glow = vfGroundGlow(p, vfAge(p), fuel, foot) + vcMeltGlow(p, q, foot);
+        gl_FragColor = vec4(glow * (1.0 - smoothstep(fogNear * 0.8, fogFar * 0.6, vDepth)), 1.0);
+      }
+    `,
+    fog: true,
+  })
+}
+
+/**
+ * Flames: sprites that stand on the ground, on a burning crown or a fern,
+ * from the moment the fire reaches the spot they stand on until they have
+ * burnt out. Everything is worked out on the card from where each one stands
+ * — when it catches, how long it burns, how it flickers — so a thousand
+ * flames cost nothing on the CPU. The flame itself is drawn in the sprite: a
+ * column of turbulence rising through a teardrop, torn into tongues at the
+ * top, white-yellow at the root and red at the tips.
+ */
+export function makeFlameMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: {
+      uCrater: FIRE.uCrater,
+      uSince: FIRE.uSince,
+      uMelt: FIRE.uMelt,
+      uTime: ATMOS.uTime,
+      uWind: ATMOS.uWind,
+      uWindDir: ATMOS.uWindDir,
+      uScale: SMOKE.uScale,
+    },
+    vertexShader: /* glsl */ `
+      ${FIRE_PARS}
+      uniform float uTime;
+      uniform float uWind;
+      uniform vec2 uWindDir;
+      uniform float uScale;
+      // Height of the flame in metres, how long it burns, a seed, and how long
+      // after the fire reaches the spot it catches.
+      attribute vec4 aFlame;
+      varying float vHeat;
+      varying float vSeed;
+      ${NOISE_GLSL}
+      ${FIRE_GLSL}
+      void main() {
+        float age = vfAge(position.xz) - aFlame.w;
+        float on = smoothstep(-0.05, 0.35, age) * (1.0 - smoothstep(aFlame.y * 0.45, aFlame.y, age));
+        vHeat = 0.0;
+        vSeed = aFlame.z;
+        if (on < 0.002) {
+          // Off the screen entirely, so it costs no fragments.
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          gl_PointSize = 0.0;
+          return;
+        }
+        float flick = 0.8 + 0.2 * sin(uTime * 13.0 + aFlame.z * 50.0) * sin(uTime * 7.7 + aFlame.z * 23.0);
+        float size = aFlame.x * (0.5 + 0.5 * on) * flick;
+        vec3 p = position;
+        // The sprite is centred, and the flame stands on its root.
+        p.y += size * 0.4;
+        p.xz += uWindDir * size * 0.14 * (0.3 + uWind);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        // uScale is half the canvas's height; at this lens a metre at a distance
+        // of one is that times 2.36 pixels.
+        gl_PointSize = size * uScale * 2.36 / max(-mv.z, 1.0);
+        gl_Position = projectionMatrix * mv;
+        vHeat = on * flick;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      varying float vHeat;
+      varying float vSeed;
+      ${NOISE_GLSL}
+      void main() {
+        if (vHeat < 0.003) discard;
+        vec2 uv = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y);
+        float y = uv.y;
+        // Turbulence rising through it, warped by a coarser turbulence so it
+        // licks and tears rather than wobbling as one shape.
+        float t = uTime * 3.1 + vSeed * 17.0;
+        vec2 q = vec2(uv.x * 2.4 + vSeed * 31.0, y * 2.6 - t);
+        vec2 w = vec2(vvNoise(q * 0.7 + 9.0), vvNoise(q * 0.7 - 5.0)) - 0.5;
+        float n = vvNoise(q + w * 1.6) * 0.55 + vvNoise(q * 2.4 + w + 4.0) * 0.3 + vvNoise(q * 5.1 - 2.0) * 0.15;
+        float x = (uv.x - 0.5) * 2.0 + (n - 0.5) * 1.1 * y + w.x * 0.5 * y + sin(uTime * 2.7 + vSeed * 9.0) * 0.12 * y;
+        float width = 0.74 * pow(max(1.0 - y, 0.0), 0.6) * smoothstep(0.0, 0.14, y + 0.04);
+        float body = 1.0 - smoothstep(width * 0.2, width + 0.05, abs(x));
+        float tongues = smoothstep(0.26, 0.7, n * 1.25 + (1.0 - y) * 0.85 - 0.45);
+        float heat = body * tongues * (1.1 - y * 0.85) * vHeat;
+        if (heat < 0.01) discard;
+        vec3 c = mix(vec3(0.62, 0.09, 0.012), vec3(1.0, 0.42, 0.07), smoothstep(0.08, 0.5, heat));
+        c = mix(c, vec3(1.0, 0.74, 0.36), smoothstep(0.7, 1.1, heat));
+        gl_FragColor = vec4(c * smoothstep(0.0, 0.35, heat) * 1.15, 1.0);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+  })
+}
+
+/**
+ * Smoke off everything that burns: puffs rising from each burning spot and
+ * carried downwind, round and round for as long as it burns and smoulders,
+ * lit orange from beneath while the flames are under them. Like the flames,
+ * worked out on the card from where each stands.
+ */
+export function makeFireSmokeMaterial(map: CanvasTexture | null): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: {
+      uMap: { value: map },
+      uCrater: FIRE.uCrater,
+      uSince: FIRE.uSince,
+      uMelt: FIRE.uMelt,
+      uTime: ATMOS.uTime,
+      uWind: ATMOS.uWind,
+      uWindDir: ATMOS.uWindDir,
+      uLevel: ATMOS.uLevel,
+      uScale: SMOKE.uScale,
+      uColor: { value: new Color('#3b342e') },
+      uFireLit: { value: new Color('#a0522d') },
+      uGlowFire: FIRE.uGlow,
+    },
+    vertexShader: /* glsl */ `
+      ${FIRE_PARS}
+      uniform float uTime;
+      uniform float uWind;
+      uniform vec2 uWindDir;
+      uniform float uScale;
+      // A seed, how long after the fire reaches the spot it starts, its size
+      // in metres, and how high it rises.
+      attribute vec4 aPuff;
+      varying float vA;
+      varying float vLit;
+      ${NOISE_GLSL}
+      ${FIRE_GLSL}
+      void main() {
+        float age = vfAge(position.xz) - aPuff.y;
+        float burning = smoothstep(0.0, 0.9, age) * (1.0 - smoothstep(4.5, 9.0, age));
+        vA = 0.0;
+        vLit = 0.0;
+        if (burning < 0.003) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          gl_PointSize = 0.0;
+          return;
+        }
+        float cycle = 3.4 + aPuff.x * 1.8;
+        float k = fract(uTime / cycle + aPuff.x * 7.31);
+        vec3 p = position;
+        p.y += aPuff.z * 0.3 + k * aPuff.w;
+        p.xz += uWindDir * k * aPuff.w * 0.6 * (0.35 + uWind) + vec2(sin(aPuff.x * 40.0), cos(aPuff.x * 33.0)) * k * 3.0;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = aPuff.z * (0.45 + 1.3 * k) * uScale * 2.36 / max(-mv.z, 1.0);
+        gl_Position = projectionMatrix * mv;
+        vA = burning * smoothstep(0.0, 0.12, k) * (1.0 - smoothstep(0.45, 1.0, k)) * smoothstep(6.0, 24.0, -mv.z);
+        vLit = (1.0 - smoothstep(0.0, 0.55, k)) * (1.0 - smoothstep(2.0, 5.0, age));
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D uMap;
+      uniform vec3 uColor;
+      uniform vec3 uFireLit;
+      uniform float uLevel;
+      uniform float uGlowFire;
+      varying float vA;
+      varying float vLit;
+      void main() {
+        float m = texture2D(uMap, gl_PointCoord).a;
+        // Lit from beneath by the burning valley: orange low down, where the
+        // flames are, and a dull glow all through it while anything burns.
+        // Unlit it was black on a black sky and nobody saw it.
+        vec3 c = uColor * (0.45 + 0.55 * min(uLevel * 1.4, 1.0)) + uFireLit * (vLit * 0.9 + 0.22) * uGlowFire;
+        gl_FragColor = vec4(c, m * vA * 0.55);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+  })
+}
+
+/**
  * Sprites with a size and an opacity each — three's own points material has one
  * of each for the whole cloud, which is no good for smoke that has to thin out
  * puff by puff.
@@ -786,6 +1292,10 @@ export function makeSmokeMaterial(
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         gl_PointSize = aSize * (uScale / -mv.z);
         gl_Position = projectionMatrix * mv;
+        // A puff a few metres from the lens is a disc the size of the screen,
+        // and past the largest point the card draws it is a hard-edged one: as
+        // the camera climbed into the edge of the column it was a black ball.
+        vA *= smoothstep(6.0, 24.0, -mv.z);
       }
     `,
     fragmentShader: /* glsl */ `

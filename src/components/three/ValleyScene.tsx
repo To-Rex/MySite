@@ -20,6 +20,7 @@ import {
   type ShaderMaterial,
   type Mesh,
   type MeshStandardMaterial,
+  type HemisphereLight,
   type PointLight,
   type Points,
   type SkinnedMesh,
@@ -36,10 +37,24 @@ import { Eyes, Teeth } from './creatureFittings'
 import { SkinMaterial } from './skinMaterial'
 import { ThemedEnvironment } from './ThemedEnvironment'
 import type { AnyCreatureKind } from './mascots'
-import { HERD, VALLEY_DETAIL, type Placed } from './valleyCast'
-import { LAKE, VOLCANO, WATER_LEVEL, buildTerrain, carveCrater, groundAt, groundNormalAt, hash2 } from './valleyLand'
+import { HERD, castDetail, type Placed } from './valleyCast'
+import {
+  CRATER,
+  LAKE,
+  VOLCANO,
+  WATER_LEVEL,
+  blastArrival,
+  blastFront,
+  buildCraterPatch,
+  buildTerrain,
+  craterAt,
+  groundAt,
+  groundNormalAt,
+  hash2,
+} from './valleyLand'
 import {
   ATMOS,
+  FIRE,
   WIND_BREEZE,
   HALO,
   ROCK,
@@ -48,15 +63,20 @@ import {
   SKY_VERT,
   SMOKE,
   TRAIL,
+  makeFireSmokeMaterial,
+  makeFlameMaterial,
+  makeGroundGlowMaterial,
   makeSmokeMaterial,
   makeTrailMaterial,
   makeWaterMaterial,
+  resetFire,
   rockProgram,
   terrainProgram,
 } from './valleyMaterials'
 import { Flora, Grass } from './valleyFlora'
+import { buildFireSmoke, buildFlames } from './valleyFire'
 import { buildRange, makeRangeMaterial } from './valleyMountains'
-import { GRASS, bakeGrass, regroundGrass, thinGrass } from './valleyGrass'
+import { GRASS, thinGrass } from './valleyGrass'
 
 /**
  * The extinction cinematic: a valley, a herd, and the thing that ended them.
@@ -84,16 +104,16 @@ const SCRIPT: readonly (readonly [Exclude<ValleyAct, 'idle'>, number])[] = [
   ['streak', 2.6],
   ['impact', 1.8],
   ['die', 3.4],
-  ['dark', 3],
-  ['return', 2.8],
+  ['dark', 3.2],
+  ['return', 3.6],
 ]
 
 /** When the streak begins and how long it runs — the smoke trail is timed off it. */
 const STREAK_AT = SCRIPT.slice(0, 2).reduce((sum, [, len]) => sum + len, 0)
 const STREAK_LEN = SCRIPT[2]?.[1] ?? 2.6
 
-/** Where the rock comes down, on the valley floor. */
-const GROUND_ZERO: readonly [number, number] = [10, -72]
+/** Where the rock comes down, on the valley floor: the middle of the crater it leaves. */
+const GROUND_ZERO: readonly [number, number] = [CRATER.x, CRATER.z]
 
 /** Where the rock comes in from. */
 const ENTRY: readonly [number, number, number] = [-150, 120, -260]
@@ -110,6 +130,15 @@ const AT = (() => {
   }
   return out
 })()
+
+/**
+ * After the blast the camera climbs to see what is left: from when, for how
+ * long, and where it ends up and looks — high over the near valley with the
+ * crater below it and the far end still in the frame.
+ */
+const CRANE_AT = AT.dark + 0.1
+const CRANE_LEN = 4.6
+const CRANE_TO = { eye: [3, 30, 0], at: [8, -2, -66] } as const
 
 /** Where the camera stands, for working out what it hears and when. */
 const CAMERA_AT: readonly [number, number] = [0, 16]
@@ -128,7 +157,6 @@ interface Quality {
   plume: number
   dust: number
   sparks: number
-  embers: number
   water: number
 }
 
@@ -140,10 +168,10 @@ interface Quality {
  * 460, only smoother.
  */
 const QUALITY: Record<ValleyQuality, Quality> = {
-  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, env: 64, fire: 90, plume: 460, dust: 150, sparks: 0, embers: 0, water: 0.18 },
-  medium: { dpr: 1, shadowMap: 1024, bump: 0.022, glow: false, env: 64, fire: 90, plume: 460, dust: 150, sparks: 110, embers: 140, water: 0.32 },
-  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.03, glow: true, env: 64, fire: 150, plume: 640, dust: 220, sparks: 220, embers: 300, water: 0.32 },
-  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.03, glow: true, env: 128, fire: 240, plume: 960, dust: 320, sparks: 360, embers: 520, water: 0.32 },
+  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, env: 64, fire: 90, plume: 460, dust: 150, sparks: 0, water: 0.18 },
+  medium: { dpr: 1, shadowMap: 1024, bump: 0.022, glow: false, env: 64, fire: 90, plume: 460, dust: 150, sparks: 110, water: 0.32 },
+  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.03, glow: true, env: 64, fire: 150, plume: 640, dust: 220, sparks: 220, water: 0.32 },
+  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.03, glow: true, env: 128, fire: 240, plume: 960, dust: 320, sparks: 360, water: 0.32 },
 }
 
 /**
@@ -176,13 +204,24 @@ const glows = (object: Object3D) => object.layers.enable(GLOW_LAYER)
 /* Mood                                                                        */
 /* -------------------------------------------------------------------------- */
 
-/** Sky, fog and sunlight for each act, blended between as the cinematic runs. */
+/**
+ * Sky, fog and sunlight for each act, blended between as the cinematic runs.
+ * After the rock: the valley on fire under smoke spreading across the sky,
+ * then nothing but smoke and the fire's own light under it, and a grey
+ * morning through the ash. The dark used to be dark — a black screen with a
+ * few embers in it — and the burning, the crater and what was left were never
+ * seen at all.
+ */
 const MOOD = {
   day: { low: '#f0d3a4', high: '#4e86bf', glow: '#ffd9a0', sun: 1, fog: '#d6ccb8', light: 1.9, ambient: 0.65, env: 1, cloud: 1, mist: 0.32 },
   burn: { low: '#ffa855', high: '#6d4a45', glow: '#fff0c8', sun: 2.6, fog: '#d79a6a', light: 2.2, ambient: 0.6, env: 1.1, cloud: 0.7, mist: 0.28 },
-  ash: { low: '#2b2724', high: '#14120f', glow: '#3a2a20', sun: 0.4, fog: '#211d19', light: 0.16, ambient: 0.1, env: 0.1, cloud: 0.2, mist: 0.6 },
-  night: { low: '#090807', high: '#040404', glow: '#120c08', sun: 0.1, fog: '#070605', light: 0.04, ambient: 0.03, env: 0.02, cloud: 0, mist: 0.5 },
+  fire: { low: '#6a3416', high: '#1d1411', glow: '#ff8c3a', sun: 0.7, fog: '#3d2619', light: 0.42, ambient: 0.3, env: 0.3, cloud: 0.3, mist: 0.42 },
+  smoke: { low: '#2e170c', high: '#0c0807', glow: '#9a4618', sun: 0.25, fog: '#1d130d', light: 0.12, ambient: 0.16, env: 0.08, cloud: 0, mist: 0.5 },
+  dawn: { low: '#a88468', high: '#4a4b55', glow: '#ffc890', sun: 0.75, fog: '#7c7166', light: 1.05, ambient: 0.48, env: 0.55, cloud: 0.12, mist: 0.5 },
 } as const
+
+/** What the fill light gives the undersides of things: the ground by day, the fire after. */
+const GROUND_LIGHT = { day: new Color('#5a4a33'), fire: new Color('#b4501c') }
 
 type Mood = (typeof MOOD)[keyof typeof MOOD]
 
@@ -203,6 +242,7 @@ function resetSky(): void {
   ROCK.uHeat.value = 0
   TRAIL.uStrength.value = 0
   HALO.uStrength.value = 0
+  resetFire()
 }
 
 /** One scratch colour for the blends, so a frame allocates nothing. */
@@ -215,22 +255,39 @@ const blend = (a: string, b: string, m: number, out: Color) => out.set(a).lerp(M
 /* The cast                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/** Wingspans of nine and ten metres, which is what the big ones had. */
 const FLYERS = [
-  { x: -26, y: 22, z: -40, size: 7.5, phase: 0 },
-  { x: -4, y: 29, z: -58, size: 6.4, phase: 1.4 },
-  { x: 21, y: 18, z: -44, size: 6.8, phase: 2.7 },
+  { x: -26, y: 27, z: -40, size: 10.5, phase: 0 },
+  { x: -4, y: 34, z: -62, size: 9, phase: 1.4 },
+  { x: 21, y: 23, z: -46, size: 9.5, phase: 2.7 },
 ] as const
 
-/** Chunks of the crater floor, thrown out on fixed arcs. */
-const EJECTA = Array.from({ length: 14 }, (_, i) => {
-  const a = (i / 14) * Math.PI * 2 + 0.7
-  const reach = 34 + hash2(i, 91) * 46
+/**
+ * Blocks of the crater floor, thrown out on fixed arcs, that come down on the
+ * blanket round it and stay there, cooling: where each lands, worked out once,
+ * so the flight ends on the ground it lands on.
+ */
+const EJECTA = Array.from({ length: 22 }, (_, i) => {
+  const a = (i / 22) * Math.PI * 2 + 0.7 + (hash2(i, 92) - 0.5) * 0.3
+  const reach = 26 + hash2(i, 91) * 40
+  const vx = Math.cos(a) * reach
+  const vz = Math.sin(a) * reach
+  const vy = 30 + hash2(i, 7) * 26
+  const x = CRATER.x + vx
+  const z = CRATER.z + vz
+  const floor = groundAt(x, z) + craterAt(x, z)
+  const start = groundAt(CRATER.x, CRATER.z) + 1
+  // When it comes down: y = start + vy·s − 26·s², solved for the floor.
+  const lands = (vy + Math.sqrt(Math.max(0, vy * vy - 4 * 26 * (floor - start)))) / 52
   return {
-    vx: Math.cos(a) * reach,
-    vz: Math.sin(a) * reach * 0.6,
-    vy: 34 + hash2(i, 7) * 30,
+    vx,
+    vz,
+    vy,
+    start,
+    lands,
+    floor,
     spin: 3 + hash2(i, 41) * 6,
-    size: 0.35 + hash2(i, 13) * 0.9,
+    size: 0.5 + hash2(i, 13) * 1.2,
     delay: hash2(i, 55) * 0.25,
   }
 })
@@ -527,6 +584,7 @@ interface CastProps {
   spot: Placed | (typeof FLYERS)[number]
   index: number
   theme: Theme
+  quality: ValleyQuality
   bump: number
   shadows: boolean
   beat: RefObject<Beat>
@@ -541,17 +599,22 @@ interface Beat {
   alarm: number
   /** 0 alive, 1 down. */
   dead: number
-  /** 0 before the impact, 1 once the blast front has crossed the valley. */
-  blast: number
+  /** Seconds since the rock landed; negative before it has. */
+  since: number
+}
+
+/** A uniform the frame loop drives, set from outside the component that owns it. */
+function setUniform(uniform: { value: number }, value: number): void {
+  uniform.value = value
 }
 
 const UP = new Vector3(0, 1, 0)
 const EULER = new Euler()
 const SPIN = new Quaternion()
 
-function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
+function Grazer({ spot, index, theme, quality, bump, shadows, beat }: CastProps) {
   const place = spot as Placed
-  const rig = useCreature(place.kind, VALLEY_DETAIL)
+  const rig = useCreature(place.kind, castDetail(place.kind, quality))
   const group = useRef<Group>(null)
   const shade = useRef<Mesh>(null)
   const shadowMap = useMemo(() => contactShadow(), [])
@@ -561,10 +624,12 @@ function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
   // The rig's origin is its middle and its feet are below it, so it is lifted
   // by however far the geometry reaches down — and stood on the slope, not on
   // the level, so all four feet meet the ground.
-  const lift = useMemo(() => {
-    if (!rig) return 0
+  // Lying on its flank it is as high as it is wide.
+  const [lift, flank] = useMemo(() => {
+    if (!rig) return [0, 0]
     rig.geometry.computeBoundingBox()
-    return -(rig.geometry.boundingBox?.min.y ?? 0) * place.size
+    const box = rig.geometry.boundingBox
+    return [-(box?.min.y ?? 0) * place.size, (((box?.max.z ?? 0) - (box?.min.z ?? 0)) / 2) * place.size]
   }, [rig, place.size])
   const tilt = useMemo(() => {
     const n = new Vector3()
@@ -577,38 +642,48 @@ function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
       : place.kind === 'turtle'
         ? { texScale: 1.7, halfHeight: 0.17, plateMix: 0.8 }
         : MASCOT_SKIN[place.kind as 'sauropod']
-  // Whoever stands nearest the impact goes down first.
-  const reach = useMemo(
-    () => Math.hypot(place.x - GROUND_ZERO[0], place.z - GROUND_ZERO[1]) / 90,
+  // It goes over when the blast front reaches it, and burns when the fire
+  // that comes in behind the front does.
+  const struck = useMemo(
+    () => blastArrival(Math.hypot(place.x - GROUND_ZERO[0], place.z - GROUND_ZERO[1])),
     [place.x, place.z],
   )
+  const char = useMemo(() => ({ value: 0 }), [])
   const patch = shadows ? 0.5 : 0.85
   const fell = useRef(false)
 
   useFrame(() => {
     const g = group.current
     if (!rig || !g) return
-    const { t, alarm, dead } = beat.current
-    const gone = MathUtils.clamp((dead - reach * 0.35) * 1.6, 0, 1)
+    const { t, alarm, since } = beat.current
+    const gone = MathUtils.clamp((since - struck - 0.05) / 0.9, 0, 1)
     // Something that size going down is heard, and the bigger it is the more.
     if (!fell.current && gone > 0.55) {
       fell.current = true
-      cue({ kind: 'fall', pan: panAt(place.x, place.z), size: Math.min(1, place.size / 13) })
+      cue({ kind: 'fall', pan: panAt(place.x, place.z), size: Math.min(1, place.size / 22) })
     }
     animateGraze(rig.byName, t, index * 1.7, Math.max(alarm, gone))
+    setUniform(char, 0.82 * MathUtils.smoothstep(since - struck, 0.6, 3.2))
 
     const fall = easeInOut(gone)
-    // Down onto its side and settled into the ground, not merely leaning: at
-    // 1.45 rad the long necks stayed up and the herd read as a row of stakes.
+    // Rolled over about its own length onto its flank, and lying on the
+    // ground, settled into it a little. It used to pitch nose-down as well,
+    // which at the herd's real size left a tail or a neck standing out of the
+    // ground like a horn and the rest of the animal under it. A turtle does
+    // not roll: it sinks into its shell where it stands. The ground is
+    // wherever the crater's ejecta has left it.
+    const turtle = place.kind === 'turtle'
+    const rest = turtle ? lift * 0.8 : flank * 0.82
     g.position.set(
       place.x,
-      ground + lift + Math.sin(t * 0.5 + index) * 0.05 - fall * (lift + place.size * 0.1),
+      ground + craterAt(place.x, place.z, FIRE.uCrater.value.w) + MathUtils.lerp(lift + Math.sin(t * 0.5 + index) * 0.05, rest, fall),
       place.z,
     )
     EULER.set(
-      fall * (0.5 + (index % 3) * 0.12),
-      place.yaw + Math.sin(t * 0.12 + index) * 0.08 + fall * 0.3,
-      -fall * (1.62 + (index % 2) * 0.1),
+      fall * (turtle ? 0.12 : 1.5 + (index % 2) * 0.06) * (index % 2 ? 1 : -1),
+      place.yaw + Math.sin(t * 0.12 + index) * 0.08 * (1 - fall) + fall * 0.12,
+      fall * 0.05 * ((index % 3) - 1),
+      'YXZ',
     )
     g.quaternion.copy(tilt).multiply(SPIN.setFromEuler(EULER))
     g.scale.setScalar(place.size)
@@ -624,7 +699,7 @@ function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
   if (!rig) return null
   return (
     <>
-      <Body rig={rig} species={place.kind} theme={theme} bump={bump} shadows={shadows} skin={skin} bodyRef={group} />
+      <Body rig={rig} species={place.kind} theme={theme} bump={bump} shadows={shadows} skin={skin} bodyRef={group} char={char} />
       <mesh
         ref={shade}
         position={[place.x, ground + 0.08, place.z]}
@@ -638,9 +713,9 @@ function Grazer({ spot, index, theme, bump, shadows, beat }: CastProps) {
   )
 }
 
-function Flyer({ spot, index, theme, bump, shadows, beat }: CastProps) {
+function Flyer({ spot, index, theme, quality, bump, shadows, beat }: CastProps) {
   const perch = spot as (typeof FLYERS)[number]
-  const rig = useCreature('pterosaur', VALLEY_DETAIL)
+  const rig = useCreature('pterosaur', castDetail('pterosaur', quality))
   const group = useRef<Group>(null)
   const cried = useRef(false)
 
@@ -688,6 +763,7 @@ function Body({
   shadows,
   skin,
   bodyRef,
+  char,
 }: {
   rig: Rig
   species: AnyCreatureKind
@@ -696,6 +772,8 @@ function Body({
   shadows: boolean
   skin: { texScale: number; halfHeight: number; plateMix?: number }
   bodyRef: RefObject<Group | null>
+  /** How burnt the hide is, for the herd on the ground. */
+  char?: { value: number }
 }) {
   const mesh = useRef<SkinnedMesh>(null)
   const { geometry, root, skeleton } = rig
@@ -716,6 +794,7 @@ function Body({
           bump={bump}
           halfHeight={skin.halfHeight}
           plateMix={skin.plateMix}
+          char={char}
         />
       </skinnedMesh>
       <primitive object={root} />
@@ -856,6 +935,7 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
   }, [gl, scene, camera, advance, onReady])
   const terrain = useMemo(() => buildTerrain(), [])
   // Cached and shared, like the creatures' geometry: never disposed.
+  const craterPatch = useMemo(() => buildCraterPatch(), [])
   const range = useMemo(() => buildRange(), [])
   const rangeMaterial = useMemo(() => makeRangeMaterial(), [])
   useEffect(() => () => rangeMaterial.dispose(), [rangeMaterial])
@@ -884,33 +964,36 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
   /** Where each spark came to rest, once it has: NaN while it is still flying. */
   const sparkFloor = useRef(new Float32Array(SPARK_MAX).fill(Number.NaN))
   /**
-   * Fires left burning across the floor: patches round ground zero, a few
-   * embers to a patch, each with its own heat and flicker. Placed once.
+   * The fire: every flame and every column of smoke in the valley, placed
+   * once (see `valleyFire.ts`) and run entirely on the card.
    */
-  const embers = useMemo(() => {
-    const count = Math.max(1, q.embers)
-    const g = spriteField(count, new Vector3(GROUND_ZERO[0], 10, GROUND_ZERO[1]), 110, true)
-    const pos = g.attributes.position as BufferAttribute
-    const look = new Float32Array(count * 4)
-    for (let i = 0; i < count; i++) {
-      const patch = i % 18
-      const a = hash2(patch, 301) * Math.PI * 2
-      const reach = 12 + hash2(patch, 302) * 62
-      const spread = 1 + hash2(i, 303) * 7
-      const b = hash2(i, 304) * Math.PI * 2
-      const x = GROUND_ZERO[0] + Math.cos(a) * reach + Math.cos(b) * spread
-      const z = GROUND_ZERO[1] + Math.sin(a) * reach * 0.7 + Math.sin(b) * spread
-      pos.setXYZ(i, x, groundAt(x, z) + 0.5, z)
-      look.set([0.22 + hash2(i, 305) * 0.33, 3 + hash2(i, 306) * 9, hash2(i, 307) * 6.28, 0.45 + hash2(i, 308) * 0.75], i * 4)
-    }
-    pos.needsUpdate = true
-    return { geometry: g, look }
-  }, [q.embers])
+  const flameField = useMemo(() => buildFlames(quality), [quality])
+  const fireSmokeField = useMemo(() => buildFireSmoke(quality), [quality])
+  const flameMaterial = useMemo(() => makeFlameMaterial(), [])
+  const fireSmokeMaterial = useMemo(() => makeFireSmokeMaterial(fleck), [fleck])
+  /** The ground in the glow: black, but for what burns on it and the melt in the crater. */
+  const glowGround = useMemo(() => ({ terrain: makeGroundGlowMaterial(false), patch: makeGroundGlowMaterial(true) }), [])
+  useEffect(
+    () => () => {
+      flameField.dispose()
+      fireSmokeField.dispose()
+      flameMaterial.dispose()
+      fireSmokeMaterial.dispose()
+      glowGround.terrain.dispose()
+      glowGround.patch.dispose()
+    },
+    [flameField, fireSmokeField, flameMaterial, fireSmokeMaterial, glowGround],
+  )
   const skyDefines = useMemo(() => (quality === 'high' || quality === 'ultra' ? { SKY_DETAIL: '' } : {}), [quality])
   const relief = quality !== 'low'
   const terrainShader = useMemo(() => terrainProgram(relief), [relief])
+  const patchShader = useMemo(() => terrainProgram(relief, true), [relief])
   const keys = useMemo(
-    () => ({ terrain: () => (relief ? 'valley-terrain-relief' : 'valley-terrain'), rock: () => 'valley-rock' }),
+    () => ({
+      terrain: () => (relief ? 'valley-terrain-relief' : 'valley-terrain'),
+      patch: () => (relief ? 'valley-terrain-relief-patch' : 'valley-terrain-patch'),
+      rock: () => 'valley-rock',
+    }),
     [relief],
   )
   /** The rock's heading, and the rotation that lays the trail along it. */
@@ -928,15 +1011,15 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
   // One call per species rather than a loop over VALLEY_SPECIES, because these
   // are hooks; keep the two lists in step.
   const ready = [
-    useCreatureGeometry('dino', VALLEY_DETAIL),
-    useCreatureGeometry('turtle', VALLEY_DETAIL),
-    useCreatureGeometry('pterosaur', VALLEY_DETAIL),
-    useCreatureGeometry('sauropod', VALLEY_DETAIL),
-    useCreatureGeometry('stegosaur', VALLEY_DETAIL),
+    useCreatureGeometry('dino', castDetail('dino', quality)),
+    useCreatureGeometry('turtle', castDetail('turtle', quality)),
+    useCreatureGeometry('pterosaur', castDetail('pterosaur', quality)),
+    useCreatureGeometry('sauropod', castDetail('sauropod', quality)),
+    useCreatureGeometry('stegosaur', castDetail('stegosaur', quality)),
   ].every(Boolean)
 
   const waited = useRef(0)
-  const beat = useRef<Beat>({ t: 0, act: 'open', u: 0, alarm: 0, dead: 0, blast: 0 })
+  const beat = useRef<Beat>({ t: 0, act: 'open', u: 0, alarm: 0, dead: 0, since: -100 })
   /**
    * Wall clock, not accumulated frame deltas.
    *
@@ -958,9 +1041,9 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
 
   const rock = useRef<Group>(null)
   const fragments = useRef<Group>(null)
-  const terrainMesh = useRef<Mesh>(null)
+  const patchMesh = useRef<Mesh>(null)
+  const glowPatch = useRef<Mesh>(null)
   const dustRing = useRef<Points>(null)
-  const carved = useRef(false)
   const rockLight = useRef<PointLight>(null)
   const blastLight = useRef<PointLight>(null)
   const trail = useRef<Mesh>(null)
@@ -975,7 +1058,6 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
   const ejecta = useRef<Group>(null)
   const ash = useRef<Points>(null)
   const sparks = useRef<Points>(null)
-  const emberPoints = useRef<Points>(null)
   const boltLight = useRef<PointLight>(null)
   const boltMeshes = useRef<(Mesh | null)[]>([])
   /** The next cue of the soundtrack still to fire. */
@@ -992,8 +1074,6 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
   useEffect(() => {
     resetSky()
     ROCK.uHeatDir.value.copy(travel)
-    ATMOS.uScorch.value.set(GROUND_ZERO[0], GROUND_ZERO[1], 44)
-    ATMOS.uScorchAmount.value = 0
   }, [travel])
 
   const ground = useMemo(() => groundAt(GROUND_ZERO[0], GROUND_ZERO[1]), [])
@@ -1166,9 +1246,37 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
       if (source) boltLamp.position.copy(source.middle)
     }
 
+    // --- the fire's clock -----------------------------------------------------
+    // Everything after the rock runs from the moment it lands.
+    const since = t >= AT.impact ? t - AT.impact : -100
+    FIRE.uSince.value = since
+    // The crater opens in the first part of a second, under the flash: a
+    // small bowl widening and deepening into the whole one.
+    const grow = since > 0 ? 1 - Math.pow(1 - MathUtils.clamp(since / 0.75, 0, 1), 3) : 0
+    FIRE.uCrater.value.w = grow
+    // Its floor is melt, glowing all over as it forms and then cooling to a
+    // black crust with the cracks in it glowing longest.
+    FIRE.uMelt.value = since > 0 ? Math.min(1, since * 4) * (0.22 + 0.78 * Math.exp(-Math.max(0, since - 0.8) / 4.5)) : 0
+    if (patchMesh.current) patchMesh.current.visible = grow > 0
+    if (glowPatch.current) glowPatch.current.visible = grow > 0
+    // How much of the light there is comes from the fire: none before it, all
+    // of it under the smoke, and less again as the morning comes.
+    const fireLit =
+      act === 'impact'
+        ? MathUtils.smoothstep(u, 0.3, 1) * 0.6
+        : act === 'die'
+          ? 0.6 + 0.4 * u
+          : act === 'dark'
+            ? 1 - u * 0.25
+            : act === 'return'
+              ? 0.75 * (1 - easeInOut(u))
+              : 0
+    FIRE.uGlow.value = fireLit
+
     // --- mood ----------------------------------------------------------------
-    // Daylight until the rock is most of the way down, then the burn, the ash,
-    // and the dark; morning comes back on the way out.
+    // Daylight until the rock is most of the way down, then the burn; the
+    // valley on fire as the smoke spreads over it; the smoke closing over and
+    // only the fire to see by; and a grey morning through the ash.
     let from: Mood = MOOD.day
     let to: Mood = MOOD.day
     let mix = 0
@@ -1182,16 +1290,16 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
       mix = MathUtils.lerp(0.55, 1, easeInOut(u))
     } else if (act === 'die') {
       from = MOOD.burn
-      to = MOOD.ash
+      to = MOOD.fire
       mix = easeInOut(u)
     } else if (act === 'dark') {
-      from = MOOD.ash
-      to = MOOD.night
-      mix = easeInOut(u)
+      from = MOOD.fire
+      to = MOOD.smoke
+      mix = easeInOut(Math.min(1, u * 1.4))
     } else if (act === 'return') {
-      from = MOOD.night
-      to = MOOD.day
-      mix = easeInOut(MathUtils.clamp(u * 1.25, 0, 1))
+      from = MOOD.smoke
+      to = MOOD.dawn
+      mix = easeInOut(MathUtils.clamp(u * 1.6, 0, 1))
     }
     blend(from.low, to.low, mix, SKY.uLow.value)
     blend(from.high, to.high, mix, SKY.uHigh.value)
@@ -1214,8 +1322,13 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
     if (key) key.intensity = light
     const rim = state.scene.getObjectByName('valley-rim') as { intensity: number } | undefined
     if (rim) rim.intensity = light * 0.55
-    const fill = state.scene.getObjectByName('valley-fill') as { intensity: number } | undefined
-    if (fill) fill.intensity = MathUtils.lerp(from.ambient, to.ambient, mix)
+    // The fire lights everything from below: the undersides of what is
+    // still standing, and the herd lying in it.
+    const fill = state.scene.getObjectByName('valley-fill') as HemisphereLight | undefined
+    if (fill) {
+      fill.intensity = MathUtils.lerp(from.ambient, to.ambient, mix) + fireLit * 0.3
+      fill.groundColor.lerpColors(GROUND_LIGHT.day, GROUND_LIGHT.fire, fireLit)
+    }
     // The environment is what the hide reflects. Left at full strength it kept
     // the whole valley lit through the dark, sky black over a sunlit floor.
     state.scene.environmentIntensity = MathUtils.lerp(from.env, to.env, mix)
@@ -1229,20 +1342,6 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
       if (act === 'open') ATMOS.uMistAmount.value = MathUtils.lerp(1.5, MOOD.day.mist, reveal)
     }
 
-    // The crater, cut into the ground on the frame the rock lands, and the
-    // char spreading out from it.
-    if (act === 'impact' || act === 'die' || act === 'dark' || act === 'return') {
-      const tm = terrainMesh.current
-      if (!carved.current && tm) {
-        carveCrater(tm.geometry, GROUND_ZERO[0], GROUND_ZERO[1], 26, 6.5)
-        regroundGrass(tm.geometry)
-        bakeGrass(state.gl)
-        GRASS.uCrater.value.set(GROUND_ZERO[0], GROUND_ZERO[1], 26, 1)
-        carved.current = true
-      }
-      ATMOS.uScorchAmount.value = act === 'impact' ? MathUtils.clamp(u * 2, 0, 1) : 1
-    }
-
     // --- what the animals know ------------------------------------------------
     beat.current.t = t
     beat.current.act = act
@@ -1250,14 +1349,7 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
     beat.current.alarm =
       act === 'streak' ? easeInOut(MathUtils.clamp((u - 0.3) / 0.7, 0, 1)) : act === 'impact' ? 1 : 0
     beat.current.dead = act === 'die' ? easeInOut(u) : act === 'dark' || act === 'return' ? 1 : 0
-    beat.current.blast =
-      act === 'impact'
-        ? MathUtils.clamp((u - 0.2) / 0.8, 0, 1) * 0.6
-        : act === 'die'
-          ? 0.6 + 0.4 * easeInOut(MathUtils.clamp(u * 1.6, 0, 1))
-          : act === 'dark' || act === 'return'
-            ? 1
-            : 0
+    beat.current.since = since
     // The wind: a breeze until the blast front, which flattens everything, and
     // a hard wind over the dead valley after it.
     ATMOS.uSway.value =
@@ -1278,8 +1370,8 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
     // --- the camera -----------------------------------------------------------
     // The blast front, reaching the camera: a second hit, from the air this
     // time, a couple of seconds after the first, when the dust wall arrives.
-    const front = 4 + beat.current.blast * 125
-    GRASS.uBlast.value.set(GROUND_ZERO[0], GROUND_ZERO[1], front, beat.current.blast > 0 ? 1 : 0)
+    const front = blastFront(since)
+    GRASS.uBlast.value.set(GROUND_ZERO[0], GROUND_ZERO[1], front, front > 0 ? 1 : 0)
     if (arrival.current < 0 && front >= CAMERA_REACH) {
       arrival.current = t
       cue({ kind: 'airBlast' })
@@ -1291,12 +1383,20 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
     // Held by hand, not on a tripod: never quite still.
     const handX = Math.sin(t * 0.73) * 0.05 + Math.sin(t * 1.31 + 1) * 0.03
     const handY = Math.sin(t * 0.91 + 2) * 0.04 + Math.sin(t * 1.77) * 0.02
+    // And once the blast has passed it climbs, out over the burning valley,
+    // until the crater is below it: from the ground the rim hid all but the
+    // far wall, and a crater seen from beside it is a ridge.
+    const crane = easeInOut(MathUtils.clamp((t - CRANE_AT) / CRANE_LEN, 0, 1))
     state.camera.position.set(
-      Math.sin(t * 0.09) * 1.8 + Math.sin(t * 31) * shake * 0.9 + handX,
-      9.5 + dolly * 4 + Math.sin(t * 27) * shake * 0.7 + handY,
-      16 + dolly * 14 - gust * 0.6,
+      MathUtils.lerp(Math.sin(t * 0.09) * 1.8, CRANE_TO.eye[0], crane) + Math.sin(t * 31) * shake * 0.9 + handX,
+      MathUtils.lerp(9.5 + dolly * 4, CRANE_TO.eye[1], crane) + Math.sin(t * 27) * shake * 0.7 + handY,
+      MathUtils.lerp(16 + dolly * 14, CRANE_TO.eye[2], crane) - gust * 0.6,
     )
-    state.camera.lookAt(handX * 2, 11 + Math.sin(t * 23) * shake * 0.6 + handY * 2, -70)
+    state.camera.lookAt(
+      MathUtils.lerp(0, CRANE_TO.at[0], crane) + handX * 2,
+      MathUtils.lerp(11, CRANE_TO.at[1], crane) + Math.sin(t * 23) * shake * 0.6 + handY * 2,
+      MathUtils.lerp(-70, CRANE_TO.at[2], crane),
+    )
 
     // --- the rock -------------------------------------------------------------
     const r = rock.current
@@ -1371,15 +1471,15 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
     // The wall of dust the blast front drives across the floor.
     const du = dustRing.current
     if (du) {
-      const blast = beat.current.blast
-      const on = (act === 'impact' || act === 'die') && blast > 0.01 && blast < 0.995
+      const on = since > 0.3 && since < 4.4
       du.visible = on
       if (on) {
         const pos = du.geometry.attributes.position as BufferAttribute
         const size = du.geometry.attributes.aSize as BufferAttribute
         const alpha = du.geometry.attributes.aAlpha as BufferAttribute
-        const front = 4 + blast * 125
-        const lit = MathUtils.smoothstep(blast, 0.03, 0.15) * (1 - MathUtils.smoothstep(blast, 0.7, 1))
+        // How far across the valley the front has got, 0 to 1.
+        const ran = front / 129
+        const lit = MathUtils.smoothstep(ran, 0.03, 0.15) * (1 - MathUtils.smoothstep(since, 3.4, 4.4))
         const thin = Math.sqrt(150 / q.dust)
         for (let i = 0; i < q.dust; i++) {
           const a = (i / q.dust) * Math.PI * 2 + (hash2(i, 601) - 0.5) * 0.1
@@ -1387,8 +1487,8 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
           const r = front * (0.92 + k * 0.12)
           const x = GROUND_ZERO[0] + Math.cos(a) * r
           const z = GROUND_ZERO[1] + Math.sin(a) * r
-          pos.setXYZ(i, x, groundAt(x, z) + 2.5 + k * 3 + blast * 5, z)
-          size.setX(i, 7 + blast * 26 + k * 5)
+          pos.setXYZ(i, x, groundAt(x, z) + craterAt(x, z) + 2.5 + k * 3 + ran * 5, z)
+          size.setX(i, 7 + ran * 26 + k * 5)
           alpha.setX(i, lit * 0.55 * (0.6 + k * 0.4) * thin)
         }
         pos.needsUpdate = true
@@ -1456,12 +1556,15 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
     // --- what it does when it lands -------------------------------------------
     const bl = blastLight.current
     if (bl) {
+      // The fireball, and then the melt in the crater, lighting its rim.
       bl.intensity =
         act === 'impact'
           ? 26000 * Math.pow(1 - u, 1.4) + 7000
           : act === 'die'
-            ? 7000 * (1 - easeInOut(u))
-            : 0
+            ? 7000 * (1 - easeInOut(u)) + 2200 * FIRE.uMelt.value
+            : act === 'dark' || act === 'return'
+              ? 2200 * FIRE.uMelt.value
+              : 0
     }
 
     const fb = fireball.current
@@ -1560,21 +1663,24 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
 
     const ej = ejecta.current
     if (ej) {
-      const life = act === 'impact' ? u * 0.45 : act === 'die' ? 0.45 + u * 0.55 : -1
-      ej.visible = life >= 0
-      if (life >= 0) {
+      ej.visible = since > 0
+      if (since > 0) {
         ej.children.forEach((c, i) => {
           const seed = EJECTA[i]
           if (!seed) return
-          // A plain ballistic arc, so the chunks slow at the top and come down.
-          const age = Math.max(0, life * 1.9 - seed.delay)
+          // A plain ballistic arc, a little slowed, so the blocks hang at the
+          // top and come down; then they lie where they land, and cool.
+          const age = Math.max(0, (since - seed.delay) * 0.8)
+          const flight = Math.min(age, seed.lands)
           c.position.set(
-            GROUND_ZERO[0] + seed.vx * age,
-            ground + 1 + seed.vy * age - 26 * age * age,
-            GROUND_ZERO[1] + seed.vz * age,
+            GROUND_ZERO[0] + seed.vx * (flight / seed.lands) * (seed.lands > 0 ? 1 : 0),
+            age < seed.lands ? seed.start + seed.vy * flight - 26 * flight * flight : seed.floor + seed.size * 0.3,
+            GROUND_ZERO[1] + seed.vz * (flight / seed.lands) * (seed.lands > 0 ? 1 : 0),
           )
-          c.rotation.set(age * seed.spin, age * seed.spin * 1.6, 0)
-          c.scale.setScalar(seed.size * MathUtils.clamp(1 - (life - 0.7) * 3, 0, 1))
+          c.rotation.set(flight * seed.spin, flight * seed.spin * 1.6, 0)
+          c.scale.setScalar(seed.size * MathUtils.smoothstep(age, 0, 0.08))
+          const hot = (c as Mesh).material as MeshStandardMaterial
+          hot.emissiveIntensity = 0.22 * Math.exp(-Math.max(0, age - seed.lands * 0.5) / 1.2)
         })
       }
     }
@@ -1620,7 +1726,7 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
           const floors = sparkFloor.current
           let floor = floors[i]!
           if (Number.isNaN(floor) && y < ground + 2) {
-            const under = groundAt(x, z) + 0.3
+            const under = groundAt(x, z) + craterAt(x, z) + 0.3
             if (y < under) floor = floors[i] = under
           }
           if (!Number.isNaN(floor)) y = floor
@@ -1632,31 +1738,6 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
           size.setX(i, (0.25 + hash2(i, 206) * 0.4) * (1 + (1 - cool) * 0.4))
         }
         pos.needsUpdate = true
-        size.needsUpdate = true
-        alpha.needsUpdate = true
-        heat.needsUpdate = true
-      }
-    }
-
-    // What is left burning, flickering, until morning.
-    const em = emberPoints.current
-    if (em && q.embers > 0) {
-      const on = act === 'impact' ? MathUtils.smoothstep(u, 0.4, 1) : act === 'die' || act === 'dark' ? 1 : act === 'return' ? 1 - MathUtils.smoothstep(u, 0, 0.45) : 0
-      em.visible = on > 0.01
-      if (em.visible) {
-        const size = em.geometry.attributes.aSize as BufferAttribute
-        const alpha = em.geometry.attributes.aAlpha as BufferAttribute
-        const heat = em.geometry.attributes.aHeat as BufferAttribute
-        const { look } = embers
-        for (let i = 0; i < q.embers; i++) {
-          const o = i * 4
-          const rate = look[o + 1]!
-          const phase = look[o + 2]!
-          const flicker = 0.55 + 0.45 * Math.sin(t * rate + phase) * Math.sin(t * rate * 0.37 + phase * 1.3)
-          alpha.setX(i, on * flicker * 0.55)
-          heat.setX(i, look[o]! * (0.8 + 0.2 * flicker))
-          size.setX(i, look[o + 3]! * (0.85 + flicker * 0.3))
-        }
         size.needsUpdate = true
         alpha.needsUpdate = true
         heat.needsUpdate = true
@@ -1678,8 +1759,13 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
       if (life > 0.01) {
         const grow = easeInOut(MathUtils.clamp(life, 0, 1))
         // A flash in the cloud lights the dust in front of the lens as well, and
-        // the blast front arriving throws more of it at the camera.
-        ;(d.material as MeshBasicMaterial).opacity = Math.min(0.92, grow * 0.82 * (1 - Math.min(1, lightning) * 0.55) + gust * 0.25)
+        // the blast front arriving throws more of it at the camera. Thin enough
+        // to see through: it used to close to black, and what the fire did to
+        // the valley was never seen at all.
+        ;(d.material as MeshBasicMaterial).opacity = Math.min(
+          0.8,
+          grow * 0.42 * (1 - Math.min(1, lightning) * 0.55) * (1 - crane * 0.45) + gust * 0.25,
+        )
         d.position.copy(state.camera.position)
         d.quaternion.copy(state.camera.quaternion)
         d.translateZ(-1.4)
@@ -1747,21 +1833,40 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
       {/* The ranges beyond the valley, past the end of the ground. */}
       <mesh geometry={range} material={rangeMaterial} />
 
-      {/* The ground again, black and only in the glow, so what burns behind a
-          ridge or down in the crater is hidden there too. Unfogged: fog would
-          turn it the colour of the haze and light the whole glow up. */}
+      {/* The ground again, only in the glow: black, so what burns behind a
+          ridge is hidden there too, but for the flames, the embers and the
+          melt in the crater, which bloom (see makeGroundGlowMaterial). */}
       {q.glow && (
-        <mesh geometry={terrain} layers={GLOW_LAYER}>
-          <meshBasicMaterial color="#000000" fog={false} toneMapped={false} />
-        </mesh>
+        <>
+          <mesh geometry={terrain} material={glowGround.terrain} layers={GLOW_LAYER} />
+          <mesh ref={glowPatch} geometry={craterPatch} material={glowGround.patch} layers={GLOW_LAYER} visible={false} renderOrder={-1} />
+        </>
       )}
-      <mesh ref={terrainMesh} geometry={terrain} receiveShadow={shadows}>
+      <mesh geometry={terrain} receiveShadow={shadows}>
         <meshStandardMaterial
           roughness={0.95}
           metalness={0}
           envMapIntensity={0.3}
           onBeforeCompile={terrainShader}
           customProgramCacheKey={keys.terrain}
+        />
+      </mesh>
+      {/* The crater, cut into finer ground than the rest (see buildCraterPatch),
+          shown from the moment the rock lands. Offset towards the lens so it
+          wins wherever it and the ground it replaces meet, and drawn before
+          the ground: the ground under it is lowered into a pit with sheer
+          walls, and drawn first those walls were shaded in full — rock, relief
+          and all — and then covered, three milliseconds a frame for nothing. */}
+      <mesh ref={patchMesh} geometry={craterPatch} receiveShadow={shadows} visible={false} renderOrder={-1}>
+        <meshStandardMaterial
+          roughness={0.95}
+          metalness={0}
+          envMapIntensity={0.3}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-2}
+          onBeforeCompile={patchShader}
+          customProgramCacheKey={keys.patch}
         />
       </mesh>
 
@@ -1776,13 +1881,13 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
       {/* The mountain is in the ground; this is what comes out of it. */}
       <points ref={vent} geometry={ventField} material={ventMaterial} />
 
-      <Flora tier={tier} shadows={shadows} groundZero={GROUND_ZERO} beat={beat} />
+      <Flora tier={tier} shadows={shadows} beat={beat} />
 
       {cast.map((spot, i) => (
-        <Grazer key={i} spot={spot} index={i} theme={theme} bump={bump} shadows={shadows} beat={beat} />
+        <Grazer key={i} spot={spot} index={i} theme={theme} quality={quality} bump={bump} shadows={shadows} beat={beat} />
       ))}
       {wings.map((spot, i) => (
-        <Flyer key={i} spot={spot} index={i} theme={theme} bump={bump} shadows={shadows} beat={beat} />
+        <Flyer key={i} spot={spot} index={i} theme={theme} quality={quality} bump={bump} shadows={shadows} beat={beat} />
       ))}
 
       <group ref={rock} scale={0.0001}>
@@ -1827,7 +1932,9 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
       <pointLight ref={blastLight} position={[GROUND_ZERO[0], ground + 6, GROUND_ZERO[1]]} color="#ff7a30" intensity={0} decay={2} />
       <points ref={fireball} geometry={fireField} material={fireMaterial} visible={false} onUpdate={glows} />
       {q.sparks > 0 && <points ref={sparks} geometry={sparkField} material={fireMaterial} visible={false} onUpdate={glows} />}
-      {q.embers > 0 && <points ref={emberPoints} geometry={embers.geometry} material={fireMaterial} visible={false} onUpdate={glows} />}
+      {/* The valley burning: flames, then the smoke off it (valleyFire.ts). */}
+      <points geometry={flameField} material={flameMaterial} frustumCulled={false} onUpdate={glows} />
+      <points geometry={fireSmokeField} material={fireSmokeMaterial} frustumCulled={false} />
       {bolts.map((b, i) => (
         <mesh
           key={i}
@@ -1848,13 +1955,12 @@ function Show({ theme, quality, onReady, onDpr }: ShowProps) {
         <ringGeometry args={[0.82, 1, 96]} />
         <meshBasicMaterial color="#e3cda6" transparent opacity={0} depthWrite={false} />
       </mesh>
-      {/* Thrown out of the crater and back down again. */}
+      {/* Thrown out of the crater, and lying round it where they came down. */}
       <group ref={ejecta} visible={false}>
         {EJECTA.map((_, i) => (
           // Hot rock, not light: in the glow they turned into a row of small suns.
-          <mesh key={i}>
-            <icosahedronGeometry args={[1, 0]} />
-            <meshStandardMaterial color="#4a3a2c" emissive="#ff7028" emissiveIntensity={2.2} roughness={0.9} flatShading />
+          <mesh key={i} geometry={rockShape} castShadow={shadows}>
+            <meshStandardMaterial color="#6a645e" vertexColors emissive="#ff6a24" emissiveIntensity={0.25} roughness={0.95} flatShading />
           </mesh>
         ))}
       </group>

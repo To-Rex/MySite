@@ -1,6 +1,7 @@
-import type { DeviceTier } from '@/hooks/useDeviceTier'
+import type { ValleyQuality } from '@/lib/valley'
+import type { CreatureDetail } from './creatures'
 import { prewarmCreatures } from './useCreature'
-import { VALLEY_DETAIL, VALLEY_SPECIES } from './valleyCast'
+import { VALLEY_SPECIES, castDetail } from './valleyCast'
 import { prepareLand } from './valleyLand'
 import { prepareFlora } from './valleyForest'
 import { buildRange } from './valleyMountains'
@@ -21,12 +22,18 @@ import { buildRange } from './valleyMountains'
  * mounted and parked; its shaders are the one thing left, and it compiles
  * those off the main thread on its own.
  */
-export function warmValley(tier: DeviceTier): Promise<void> {
+export function warmValley(quality: ValleyQuality): Promise<void> {
+  // The forest only knows three levels.
+  const tier = quality === 'ultra' ? 'high' : quality
   const chunk = import('./ValleyScene').then(
     () => undefined,
     () => undefined,
   )
-  const cast = prewarmCreatures(VALLEY_SPECIES, VALLEY_DETAIL)
+  // One species at a time, each at the detail it is shown at (see `castDetail`).
+  const cast = VALLEY_SPECIES.reduce<Promise<void>>(
+    (before, kind) => before.then(() => prewarmCreatures([kind], castDetail(kind, quality) satisfies CreatureDetail)),
+    Promise.resolve(),
+  )
   const ground = new Promise<void>((done) => {
     idle(() => {
       prepareLand()
