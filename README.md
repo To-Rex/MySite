@@ -472,15 +472,28 @@ What is load-bearing:
   (`--fg-3`) are the price: they start near 4 : 1 and 3 : 1 and can drop to a
   little over 2 : 1 for as long as one is directly over the disc. The moon's lit
   edge is the one bright thing in the sky; it is a few pixels wide.
-- **Everything in the sky is timed in one place and in one unit.** `SKY`,
-  `SUN` and `MOON` sit together in `lib/scroll.ts` and are all in time of day,
-  0 to 1, tuned against each other: the sun is low only while a glow is under
-  it and high for the whole of the clear sky; the moon is not drawn before the
-  stars. `DAY` maps the page onto that day and is a straight line today — the
-  top of the page is morning, the bottom night. A page that grows a section
-  with a sky of its own should not retune thirty numbers: it gives `DAY` two
-  knots with the same time, and the whole sky holds still across that stretch
-  (`curveKeyframes` adds a keyframe at each knot, so the hold is exact).
+- **The sky is timed by section, not by how far down the page a section is.**
+  `SKY`, `SUN` and `MOON` sit together in `lib/scroll.ts` and are all in one
+  unit, the time of day from 0 to 1, tuned against each other: the sun is low
+  only while a glow is under it and high for the whole of the clear sky; the
+  moon is not drawn before the stars. `HOURS` then says what time it is where:
+  the about section arrives at 0.057, the projects at 0.539 and let go at
+  0.775, and so on. `measureDay` turns that into a clock for the page as it is
+  laid out now, and `curveKeyframes` puts a keyframe at every hour, so the
+  browser still runs the whole sky itself. The first version read the page
+  straight through, top to bottom, and the same section sat at a different
+  hour on a phone than on a desktop — the GitHub section starts 76 % of the
+  way down one and 81 % down the other — so on one of them the setting sun
+  hung over the numbers for as long as anyone read them. Now the sun goes
+  down while the projects row is still pinned, behind its cards, on both.
+- **The clock is measured again whenever the page changes shape.** Sections
+  load late, the GitHub section grows when it answers, a phone is turned.
+  `animateThroughDay` watches the body's size and the window's, and re-ties the
+  curves only if an hour has actually moved. A section that is not on the page
+  is skipped; a new one between two hours takes its share of the time between
+  them, so a long scene after the hero is a long morning and nothing in the
+  table needs retuning. Two hours with the same time hold the sky still across
+  the stretch between them.
 - **The universe holds still while it can be pointed at.** The flight leaves
   the shot the section was composed around exactly as it was for the middle
   fifth of the stage's passage, which is when the whole stage is on screen.

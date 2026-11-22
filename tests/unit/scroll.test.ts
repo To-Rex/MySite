@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  DAY,
+  HOURS,
   MARQUEE,
   MOON,
   SKY,
@@ -15,12 +15,14 @@ import {
   createMarquee,
   curveAt,
   curveKeyframes,
+  dayClock,
   galleryHeight,
   galleryProgress,
   galleryScrollFor,
   marqueeCopies,
   nearestIndex,
   printsDown,
+  sameClock,
   starField,
   stepMarquee,
   trailCount,
@@ -30,6 +32,7 @@ import {
   type Stop,
 } from '@/lib/scroll'
 import { technologies } from '@/content/technologies'
+import { SECTION_IDS } from '@/config/sections'
 import {
   HOLD,
   UNIVERSE,
@@ -299,7 +302,6 @@ describe('the clock of the page', () => {
   ]
 
   it('reads the page straight through unless told otherwise', () => {
-    expect(DAY).toBe(STRAIGHT)
     for (const p of steps(50)) expect(clockAt(STRAIGHT, p)).toBeCloseTo(p, 12)
     for (const stops of [...Object.values(SKY), arcStops(SUN), arcStops(MOON)]) expect(curveKeyframes(stops, STRAIGHT)).toEqual(curveKeyframes(stops))
   })
@@ -355,6 +357,127 @@ describe('the clock of the page', () => {
       expect(at(0.5)?.transform).toBe(at(0.2)?.transform)
       expect(frames.some((frame) => (frame.offset as number) > 0.2 && (frame.offset as number) < 0.5)).toBe(false)
     }
+  })
+})
+
+describe('the hours of the page', () => {
+  const timeOf = (section: string, edge: 'top' | 'bottom') => HOURS.find((hour) => hour.section === section && hour.edge === edge)!.time
+  /** The page as it is on a desktop and on a phone, in page progress: where each section's top and the projects' end fall. */
+  const layouts = {
+    desktop: { about: 0.057, philosophy: 0.149, skills: 0.394, building: 0.469, projects: 0.539, projectsEnd: 0.751, github: 0.808, presence: 0.898, contact: 0.943 },
+    phone: { about: 0.046, philosophy: 0.179, skills: 0.376, building: 0.468, projects: 0.58, projectsEnd: 0.713, github: 0.758, presence: 0.878, contact: 0.943 },
+  }
+  const clockOf = (layout: (typeof layouts)[keyof typeof layouts]) =>
+    dayClock(HOURS.map(({ section, edge, time }) => ({ at: edge === 'bottom' ? layout.projectsEnd : layout[section as keyof typeof layout], time })))
+
+  it('names sections that exist, in the order they come, and never turns the day back', () => {
+    const order: string[] = Object.values(SECTION_IDS)
+    let last = 0
+    let place = -1
+    for (const hour of HOURS) {
+      expect(order, hour.section).toContain(hour.section)
+      expect(order.indexOf(hour.section)).toBeGreaterThanOrEqual(place)
+      place = order.indexOf(hour.section)
+      expect(hour.time).toBeGreaterThan(last)
+      expect(hour.time).toBeLessThan(1)
+      last = hour.time
+    }
+  })
+
+  it('has the sun down before the projects let go of the screen, and no moon until it is', () => {
+    const letGo = timeOf('projects', 'bottom')
+    expect(arcAt(SUN, letGo).up).toBe(false)
+    expect(arcAt(SUN, timeOf('projects', 'top')).height).toBeGreaterThan(0.9)
+    expect(arcAt(MOON, letGo).up).toBe(false)
+    expect(arcAt(MOON, timeOf('github', 'top')).up).toBe(true)
+    // By the contact section it is where it will stay, and it is night.
+    expect(arcAt(MOON, timeOf('contact', 'top')).height).toBeGreaterThan(0.97)
+    expect(curveAt(SKY.night, timeOf('contact', 'top')).opacity).toBeGreaterThan(0.95)
+    // Morning under the hero, a clear sky by the skills.
+    expect(curveAt(SKY.dawn, timeOf('about', 'top')).opacity).toBeGreaterThan(0.9)
+    expect(curveAt(SKY.noon, timeOf('skills', 'top')).opacity).toBe(1)
+  })
+
+  it('makes a clock that starts at first light, ends at night and only runs forwards', () => {
+    for (const layout of Object.values(layouts)) {
+      const clock = clockOf(layout)
+      expect(clock[0]).toEqual([0, 0])
+      expect(clock[clock.length - 1]).toEqual([1, 1])
+      expect(clock).toHaveLength(HOURS.length + 2)
+      for (let i = 1; i < clock.length; i++) {
+        expect(clock[i]![0]).toBeGreaterThan(clock[i - 1]![0])
+        expect(clock[i]![1]).toBeGreaterThanOrEqual(clock[i - 1]![1])
+      }
+    }
+  })
+
+  it('shows the same sky over the same section on a phone and on a desktop', () => {
+    const desktop = clockOf(layouts.desktop)
+    const phone = clockOf(layouts.phone)
+    for (const section of ['about', 'philosophy', 'skills', 'building', 'projects', 'github', 'presence', 'contact'] as const) {
+      expect(clockAt(phone, layouts.phone[section]), section).toBeCloseTo(clockAt(desktop, layouts.desktop[section]), 6)
+    }
+    // …which the page read straight through does not: the same section is at a different hour.
+    expect(Math.abs(layouts.phone.github - layouts.desktop.github)).toBeGreaterThan(0.03)
+  })
+
+  it('gives a new section its share of the hours it sits between, and holds the day where told to', () => {
+    // A long scene between the hero and the about section: the morning is longer, and the rest keeps its hours.
+    const longer = dayClock([
+      { at: 0.4, time: timeOf('about', 'top') },
+      { at: 0.7, time: timeOf('projects', 'top') },
+    ])
+    expect(clockAt(longer, 0.2)).toBeCloseTo(timeOf('about', 'top') / 2, 6)
+    expect(clockAt(longer, 0.7)).toBeCloseTo(timeOf('projects', 'top'), 6)
+    const held = dayClock([
+      { at: 0.1, time: 0.05 },
+      { at: 0.4, time: 0.05 },
+    ])
+    expect(clockAt(held, 0.25)).toBeCloseTo(0.05, 9)
+  })
+
+  it('takes the places in any order and leaves out any that make no sense', () => {
+    const marks = [
+      { at: 0.6, time: 0.5 },
+      { at: 0.2, time: 0.3 },
+      // Would turn the day back, is off the page, is not a number, is past night.
+      { at: 0.7, time: 0.4 },
+      { at: 1.2, time: 0.9 },
+      { at: -0.3, time: 0.1 },
+      { at: Number.NaN, time: 0.5 },
+      { at: 0.8, time: 1.4 },
+    ]
+    expect(dayClock(marks)).toEqual([
+      [0, 0],
+      [0.2, 0.3],
+      [0.6, 0.5],
+      [1, 1],
+    ])
+    expect(dayClock([])).toEqual(STRAIGHT)
+  })
+
+  it('lands every curve on itself through a measured clock too', () => {
+    const clock = clockOf(layouts.phone)
+    for (const stops of [...Object.values(SKY), arcStops(SUN), arcStops(MOON)]) {
+      const frames = curveKeyframes(stops, clock)
+      const offsets = frames.map((frame) => frame.offset as number)
+      expect(offsets[0]).toBe(0)
+      expect(offsets[offsets.length - 1]).toBe(1)
+      expect(new Set(offsets).size).toBe(offsets.length)
+      for (let i = 1; i < frames.length; i++) {
+        const middle = (offsets[i - 1]! + offsets[i]!) / 2
+        expect((Number(frames[i - 1]!.opacity) + Number(frames[i]!.opacity)) / 2).toBeCloseTo(curveAt(stops, clockAt(clock, middle)).opacity, 3)
+      }
+    }
+  })
+
+  it('knows when a page has moved enough to matter', () => {
+    const clock = clockOf(layouts.desktop)
+    expect(sameClock(clock, clockOf(layouts.desktop))).toBe(true)
+    expect(sameClock(clock, clockOf(layouts.phone))).toBe(false)
+    expect(sameClock(clock, clock.slice(1))).toBe(false)
+    const nudged = clock.map(([progress, time]) => [progress + 0.0002, time] as const)
+    expect(sameClock(clock, nudged)).toBe(true)
   })
 })
 

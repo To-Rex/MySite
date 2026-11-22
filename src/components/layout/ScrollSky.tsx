@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, type CSSProperties } from 'react'
-import { DAY, MOON, SKY, SUN, animateAlongPage, arcStillStops, arcStops, arcTintStops, starField, type Stop } from '@/lib/scroll'
+import { MOON, SKY, SUN, animateThroughDay, arcStillStops, arcStops, arcTintStops, starField, type Stop } from '@/lib/scroll'
 import { useIsMobile } from '@/hooks/useMediaQuery'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
 
 /**
- * The time of day behind the page, set by how far down it the reader is:
- * morning light low under the hero, a clear sky through the middle, an
- * evening glow over the work, and night with stars behind the contact and the
- * footer — the day the valley's cinematic ends, run the other way.
+ * The time of day behind the page, set by which part of it the reader has
+ * reached: morning light low under the hero, a clear sky through the middle,
+ * an evening glow over the work, and night with stars behind the contact and
+ * the footer — the day the valley's cinematic ends, run the other way.
  *
  * Four soft layers under everything, each only ever faded and slid, and over
  * them the two things that say what time it is: a sun that comes up as the
@@ -48,10 +48,7 @@ export function ScrollSky() {
       [sunLow.current, reduced ? hidden : arcTintStops(SUN, 'low')],
       [moon.current, reduced ? arcStillStops(MOON) : arcStops(MOON)],
     ]
-    return animateAlongPage(
-      curves.flatMap(([element, stops]) => (element ? [{ element, stops }] : [])),
-      DAY,
-    )
+    return animateThroughDay(curves.flatMap(([element, stops]) => (element ? [{ element, stops }] : [])))
   }, [reduced])
 
   return (

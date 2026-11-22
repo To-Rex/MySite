@@ -130,6 +130,45 @@ test('the sun comes up with the page, crosses the top of the screen and leaves t
   expect(problems).toEqual([])
 })
 
+test('the day keeps to the sections, not to the length of the page: the sun sets behind the projects and the moon rises over the code', async ({ page }) => {
+  const problems = await open(page, '/?lang=en&theme=dark')
+  // Let the page reach its full length first: the GitHub section has no numbers until it is nearly on screen.
+  await scrollTo(page, 'github')
+  await expect(page.locator('#github [data-stat]')).toHaveCount(5)
+  /** Where the page has to be for an edge of a section to sit on the same edge of the screen. */
+  const edge = (id: string, which: 'top' | 'bottom') =>
+    page.evaluate(
+      ([section, side]) => {
+        const box = document.getElementById(section!)!.getBoundingClientRect()
+        return side === 'top' ? box.top + window.scrollY : box.bottom + window.scrollY - window.innerHeight
+      },
+      [id, which],
+    )
+
+  // The projects arrive under a high sun…
+  await jump(page, await edge('projects', 'top'))
+  await expect.poll(async () => (await inTheSky(page, 'sun')).opacity).toBeGreaterThan(0.95)
+  expect((await inTheSky(page, 'sun')).y).toBeLessThan(0.25)
+  // …and it is down by the time they let go of the screen, with no moon yet. A step past the edge itself:
+  // the sun fades out in the last few pixels before it, and the clock is only re-measured for a move that would show.
+  await jump(page, (await edge('projects', 'bottom')) + 24)
+  await expect.poll(async () => (await inTheSky(page, 'sun')).opacity).toBeLessThan(0.05)
+  expect((await inTheSky(page, 'moon')).opacity).toBeLessThan(0.05)
+  // Over the GitHub section there is only the moon, on its way up the right-hand edge.
+  await jump(page, await edge('github', 'top'))
+  await expect.poll(async () => (await inTheSky(page, 'moon')).opacity).toBeGreaterThan(0.95)
+  const rising = await inTheSky(page, 'moon')
+  expect(rising.x).toBeGreaterThan(0.88)
+  expect(rising.y).toBeGreaterThan(0.3)
+  expect(rising.y).toBeLessThan(0.95)
+  expect((await inTheSky(page, 'sun')).opacity).toBeLessThan(0.05)
+  // By the contact section it is night and the moon is nearly where it stays.
+  await jump(page, await edge('contact', 'top'))
+  await expect.poll(async () => (await inTheSky(page, 'moon')).y).toBeLessThan(0.2)
+  expect(await page.locator('.scroll-sky__night').evaluate((el) => Number(getComputedStyle(el).opacity))).toBeGreaterThan(0.9)
+  expect(problems).toEqual([])
+})
+
 test('the light theme has the same sun and a pale moon in its dusk', async ({ page }) => {
   const problems = await open(page, '/?lang=en&theme=light')
   await followTheDay(page)

@@ -238,13 +238,18 @@ export function applyCurve(element: HTMLElement, stops: readonly Stop[], progres
 export type SkyLayer = 'dawn' | 'noon' | 'dusk' | 'night'
 
 /*
- * Everything in the sky is timed in the same terms: 0 is the top of the page
- * and 1 the bottom, unless `DAY` below says otherwise. The four lights, the
- * sun and the moon are tuned against each other — the sun is on the horizon
- * while the dawn glows, overhead through the clear stretch, down as the dusk
- * is at its fullest, and the moon is up by the time the stars are out — so
- * they are kept here together, and a page whose sections move should move
- * them together, or leave them alone and change `DAY`.
+ * Everything in the sky is timed in one unit, the time of day: 0 is first
+ * light and 1 the dead of night. The four lights, the sun and the moon are
+ * tuned against each other in it — the sun is on the horizon while the dawn
+ * glows, overhead through the clear stretch, down as the dusk is at its
+ * fullest, and the moon is up by the time the stars are out — so they are
+ * kept here together.
+ *
+ * What time it is at each place on the page is a separate question, and
+ * `HOURS` answers it by section, not by how far down the page a section
+ * happens to be. That distance is different on a phone, changes when the
+ * GitHub section loads, and moves for every section below a new one; the
+ * section a reader is looking at does not.
  */
 
 /**
@@ -298,8 +303,12 @@ export interface Arc {
   swell: number
 }
 
-/** The sun: on the horizon at the very top of the page, across the top of the screen all day, down with the dusk. */
-export const SUN: Arc = { rise: -0.004, set: 0.81, from: 21, to: 68, top: 11.5, horizon: 103, shoulder: 2.2, swell: 1.3 }
+/**
+ * The sun: on the horizon at the very top of the page, across the top of the
+ * screen all day, and down while the projects row is still pinned — behind
+ * its cards, not behind the GitHub section that comes after.
+ */
+export const SUN: Arc = { rise: -0.004, set: 0.775, from: 21, to: 68, top: 11.5, horizon: 103, shoulder: 2.2, swell: 1.3 }
 
 /**
  * The moon: a young one, so it is in the west where the sun went down. It
@@ -309,12 +318,109 @@ export const SUN: Arc = { rise: -0.004, set: 0.81, from: 21, to: 68, top: 11.5, 
  */
 export const MOON: Arc = { rise: 0.79, set: 1.36, from: 97, to: 70, top: 10.5, horizon: 107, shoulder: 3, swell: 1.16 }
 
+/** A moment of the day, pinned to a place on the page. */
+export interface Hour {
+  /** The id of a section. */
+  section: string
+  /**
+   * Which of its edges: the moment is when that edge reaches the same edge of
+   * the screen. `top` is a section arriving; `bottom` is one that has been
+   * read to its end — for a pinned one, the moment it lets go.
+   */
+  edge: 'top' | 'bottom'
+  time: number
+}
+
 /**
- * What time of day each part of the page shows. Straight through: the page is
- * one day. A stretch of the page that should not use up any of the day — a
- * pinned scene with a sky of its own, say — is two knots with the same time.
+ * What time it is where. Between two of these the day runs evenly; before the
+ * first it runs from first light, after the last to the dead of night. A
+ * section that is not on the page is skipped, and a new one placed between
+ * two of these simply takes its share of the hours between them — so a long
+ * scene after the hero is a long morning, and nothing here needs retuning.
  */
-export const DAY: Clock = STRAIGHT
+export const HOURS: readonly Hour[] = [
+  { section: 'about', edge: 'top', time: 0.057 },
+  { section: 'philosophy', edge: 'top', time: 0.149 },
+  { section: 'skills', edge: 'top', time: 0.394 },
+  { section: 'building', edge: 'top', time: 0.469 },
+  { section: 'projects', edge: 'top', time: 0.539 },
+  // The sun is down by the time the projects row lets go of the screen.
+  { section: 'projects', edge: 'bottom', time: 0.775 },
+  { section: 'github', edge: 'top', time: 0.82 },
+  { section: 'presence', edge: 'top', time: 0.9 },
+  { section: 'contact', edge: 'top', time: 0.945 },
+]
+
+/**
+ * A clock from the places on the page where the time is known: each `at` is a
+ * page progress. Whatever order they come in, the clock runs down the page;
+ * a place that would turn the day back, or that is not on the page, is left
+ * out; two places with the same time hold the day still between them.
+ */
+export function dayClock(marks: readonly { at: number; time: number }[]): Clock {
+  const knots: [number, number][] = [[0, 0]]
+  const placed = marks.filter((mark) => Number.isFinite(mark.at) && Number.isFinite(mark.time)).sort((a, b) => a.at - b.at)
+  for (const mark of placed) {
+    const [progress, time] = knots[knots.length - 1]!
+    if (mark.at <= progress + 1e-4 || mark.at >= 1 - 1e-4) continue
+    if (mark.time < time || mark.time > 1) continue
+    knots.push([mark.at, mark.time])
+  }
+  knots.push([1, 1])
+  return knots
+}
+
+/** The clock of the page as it is laid out now: `HOURS`, measured. */
+export function measureDay(hours: readonly Hour[] = HOURS): Clock {
+  const max = document.documentElement.scrollHeight - window.innerHeight
+  if (!(max > 0)) return STRAIGHT
+  return dayClock(
+    hours.flatMap(({ section, edge, time }) => {
+      const box = document.getElementById(section)?.getBoundingClientRect()
+      if (!box) return []
+      // Where the page has to be for that edge of the section to be on that edge of the screen.
+      const at = edge === 'top' ? box.top + window.scrollY : box.bottom + window.scrollY - window.innerHeight
+      return [{ at: at / max, time }]
+    }),
+  )
+}
+
+/** Whether two clocks would put anything in a visibly different place. */
+export function sameClock(a: Clock, b: Clock, tolerance = 5e-4): boolean {
+  return a.length === b.length && a.every(([progress, time], i) => Math.abs(progress - b[i]![0]) <= tolerance && Math.abs(time - b[i]![1]) <= tolerance)
+}
+
+/**
+ * `animateAlongPage`, by the page's own clock — and kept to it. The page is
+ * not laid out once: sections load, fonts arrive, the window is turned. Each
+ * time it changes the hours are measured again, and if any has moved the
+ * curves are re-tied to the page where it now is.
+ */
+export function animateThroughDay(links: readonly PageLink[], hours: readonly Hour[] = HOURS): () => void {
+  let clock = measureDay(hours)
+  let stop = animateAlongPage(links, clock)
+  let frame = 0
+  const check = () => {
+    frame = 0
+    const now = measureDay(hours)
+    if (sameClock(clock, now)) return
+    clock = now
+    stop()
+    stop = animateAlongPage(links, clock)
+  }
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(check)
+  }
+  window.addEventListener('resize', schedule)
+  const grows = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null
+  grows?.observe(document.body)
+  return () => {
+    cancelAnimationFrame(frame)
+    window.removeEventListener('resize', schedule)
+    grows?.disconnect()
+    stop()
+  }
+}
 
 export interface ArcPoint {
   /** Across and down the screen, in vw and vh. */
