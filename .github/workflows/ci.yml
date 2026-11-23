@@ -15,7 +15,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The browser tests alone are ten to thirteen minutes on a runner, which
+    # draws WebGL on its CPU; at fifteen for the whole job a green run was
+    # once thirty seconds short of being cancelled. A test still has its own
+    # minute (playwright.config.ts): this is only the backstop for a hang.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
