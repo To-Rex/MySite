@@ -162,6 +162,11 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
     }
 
     // The city's sets, one to an idle moment, each compiled as it comes.
+    // Where WebGL is drawn by the CPU, all of them now, as they always were
+    // there: nothing is compiled ahead on such a machine, so each set added
+    // later was another long wait for its programs in the middle of the
+    // reader's scroll, where one wait, once, at the first frame is what the
+    // walk has always cost there.
     const jobs = [...walk.later]
     let building = 0
     const buildNext = (): void => {
@@ -171,7 +176,8 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
       if (object && ahead) void compile(object)
       if (jobs.length > 0) building = later(buildNext)
     }
-    building = later(buildNext)
+    if (ahead) building = later(buildNext)
+    else for (const job of jobs.splice(0)) job()
 
     // Not shown until what is in shot is all there: the walk comes up whole,
     // out of the dark of the stage, rather than as a cave its people walk
