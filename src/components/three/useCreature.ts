@@ -5,11 +5,12 @@ import { createAnything, type AnyCreatureKind, type AnyKind } from './mascots'
 import type { CreatureRequest, CreatureResponse } from './creatures.worker'
 
 /**
- * Builds creature meshes in a worker and caches the results.
+ * Builds creature meshes in workers and caches the results.
  *
  * Generation is a few hundred milliseconds of arithmetic, so it must not run on
  * the main thread; the hero simply renders nothing until its geometry arrives,
- * which lands well inside the preloader's own runtime. If workers are
+ * which lands well inside the preloader's own runtime. There are a few workers
+ * and one queue, in order of how soon each mesh is wanted. If workers are
  * unavailable the same code runs synchronously rather than failing.
  */
 
@@ -44,76 +45,155 @@ function toGeometry(payload: CreaturePayload): CreatureGeometry {
   return { geometry, bones: payload.bones, eyeBone: payload.eyeBone, eyes: payload.eyes, teeth: payload.teeth, size: payload.size, coat: payload.coat, sweeps: payload.sweeps }
 }
 
-let worker: Worker | null = null
-let workerFailed = false
-let nextId = 1
-const inflight = new Map<number, (response: CreatureResponse) => void>()
-
-/** Longest a request may sit with the worker before the main thread takes it on. */
+/** Longest a mesh may take once a worker has started on it, before the main thread takes it on. */
 const PATIENCE = 4000
 
 /**
- * Gives up on the worker and hands every request still waiting on it back.
+ * How soon a mesh is wanted, lowest first. What the page shows first goes
+ * first: the hero's own creatures, then the start of the long walk, then the
+ * rest of it, and last whatever is being built for a showing nobody has asked
+ * for yet.
+ */
+export const PRIORITY = { now: 0, soon: 1, later: 2, someday: 3 } as const
+export type Priority = (typeof PRIORITY)[keyof typeof PRIORITY]
+
+export interface RequestOptions {
+  /**
+   * How long a worker is given once it has started on this one. Time spent
+   * waiting in the queue does not count: a mesh that is late only because
+   * others went first is not stuck, and taking it back onto the main thread
+   * would stop the page for nothing.
+   */
+  patience?: number
+  priority?: Priority
+}
+
+/**
+ * A few workers, not one. Meshing a creature is a second of arithmetic on
+ * one core, and the walk alone asks for four of them; one after another they
+ * were the first people of the walk arriving three seconds after its cave.
+ * As many as half the machine's cores, never fewer than two and never more
+ * than three: more than that and they take the cores the page is drawn with.
+ */
+const POOL = (() => {
+  const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2
+  return Math.min(3, Math.max(2, Math.floor(cores / 2)))
+})()
+
+interface Job {
+  id: number
+  key: string
+  kind: AnyKind
+  detail: CreatureDetail
+  priority: Priority
+  patience: number
+  /** The order it was asked in, so that among equals the first asked goes first. */
+  order: number
+  settle: (response: CreatureResponse) => void
+}
+
+const queue: Job[] = []
+const idle: Worker[] = []
+const busy = new Map<Worker, { job: Job; timer: ReturnType<typeof setTimeout> }>()
+let spawned = 0
+let workerFailed = false
+let nextId = 1
+
+/**
+ * Gives up on the workers and hands every request still waiting on them back.
  *
- * Marking the worker dead without settling what it was carrying is the bug this
- * exists for: those promises never resolve, so whatever was waiting on the
+ * Marking the workers dead without settling what they were carrying is the bug
+ * this exists for: those promises never resolve, so whatever was waiting on the
  * geometry — most visibly the scroll companion — simply never appears, with no
  * error anywhere to explain it.
  */
-function abandonWorker(): void {
+function abandonWorkers(): void {
   workerFailed = true
-  worker = null
-  for (const [id, settle] of inflight) settle({ id, ok: false, error: 'creature worker unavailable' })
-  inflight.clear()
+  for (const [worker, { job, timer }] of busy) {
+    clearTimeout(timer)
+    worker.terminate()
+    job.settle({ id: job.id, ok: false, error: 'creature worker unavailable' })
+  }
+  busy.clear()
+  for (const worker of idle.splice(0)) worker.terminate()
+  for (const job of queue.splice(0)) job.settle({ id: job.id, ok: false, error: 'creature worker unavailable' })
 }
 
-function getWorker(): Worker | null {
-  if (workerFailed) return null
-  if (worker) return worker
+function spawn(): Worker | null {
+  if (workerFailed || spawned >= POOL) return null
   try {
-    worker = new Worker(new URL('./creatures.worker.ts', import.meta.url), { type: 'module' })
+    const worker = new Worker(new URL('./creatures.worker.ts', import.meta.url), { type: 'module' })
+    spawned++
     worker.onmessage = (event: MessageEvent<CreatureResponse>) => {
-      inflight.get(event.data.id)?.(event.data)
-      inflight.delete(event.data.id)
+      const running = busy.get(worker)
+      if (!running || running.job.id !== event.data.id) return
+      clearTimeout(running.timer)
+      busy.delete(worker)
+      idle.push(worker)
+      running.job.settle(event.data)
+      pump()
     }
-    worker.onerror = abandonWorker
-    worker.onmessageerror = abandonWorker
+    worker.onerror = abandonWorkers
+    worker.onmessageerror = abandonWorkers
+    return worker
   } catch {
     workerFailed = true
-    worker = null
+    return null
   }
-  return worker
 }
 
-function request(kind: AnyKind, detail: CreatureDetail, patience = PATIENCE): Promise<CreatureGeometry> {
+/** Hands the most wanted jobs to whichever workers are free, making more up to the pool's size. */
+function pump(): void {
+  while (queue.length > 0) {
+    const worker = idle.pop() ?? spawn()
+    if (!worker) break
+    queue.sort((a, b) => a.priority - b.priority || a.order - b.order)
+    const job = queue.shift()!
+    // A reply that never comes at all — a worker wedged behind something, a
+    // message lost — is caught here rather than left to hang forever. That
+    // worker is let go; the rest of the queue goes to the others.
+    const timer = setTimeout(() => {
+      if (busy.get(worker)?.job !== job) return
+      busy.delete(worker)
+      worker.terminate()
+      spawned--
+      job.settle({ id: job.id, ok: false, error: 'creature worker took too long' })
+      pump()
+    }, job.patience)
+    busy.set(worker, { job, timer })
+    const message: CreatureRequest = { id: job.id, kind: job.kind, detail: job.detail }
+    worker.postMessage(message)
+  }
+  // No worker could be had at all: what is left is built here.
+  if (workerFailed && queue.length > 0) for (const job of queue.splice(0)) job.settle({ id: job.id, ok: false, error: 'creature worker unavailable' })
+}
+
+function request(kind: AnyKind, detail: CreatureDetail, options: RequestOptions = {}): Promise<CreatureGeometry> {
   const key = `${kind}:${detail}`
   const cached = cache.get(key)
   if (cached) return Promise.resolve(cached)
+  const priority = options.priority ?? PRIORITY.now
   const already = pending.get(key)
-  if (already) return already
+  if (already) {
+    // Asked again, and sooner: it moves up the queue if it has not started yet.
+    const waiting = queue.find((job) => job.key === key)
+    if (waiting && priority < waiting.priority) waiting.priority = priority
+    return already
+  }
 
   const promise = new Promise<CreatureGeometry>((resolve) => {
-    const active = getWorker()
-    if (!active) {
-      resolve(toGeometry(createAnything(kind, detail)))
-      return
-    }
-    const id = nextId++
-    // And a reply that never comes at all — a worker wedged behind something, a
-    // message lost — is caught here rather than left to hang forever.
-    const waiting = setTimeout(() => {
-      if (!inflight.delete(id)) return
-      resolve(toGeometry(createAnything(kind, detail)))
-    }, patience)
-    inflight.set(id, (response) => {
-      clearTimeout(waiting)
+    const settle = (response: CreatureResponse) => {
       if (response.ok) resolve(toGeometry(response))
       // A failed worker run falls back to generating on the main thread: a brief
       // stall is still better than a hero with no creature in it.
       else resolve(toGeometry(createAnything(kind, detail)))
-    })
-    const message: CreatureRequest = { id, kind, detail }
-    active.postMessage(message)
+    }
+    if (workerFailed) {
+      resolve(toGeometry(createAnything(kind, detail)))
+      return
+    }
+    queue.push({ id: nextId++, key, kind, detail, priority, patience: options.patience ?? PATIENCE, order: nextId, settle })
+    pump()
   }).then((result) => {
     cache.set(key, result)
     pending.delete(key)
@@ -128,29 +208,32 @@ function request(kind: AnyKind, detail: CreatureDetail, patience = PATIENCE): Pr
  * The shared geometry for anything the worker can build, as a promise: for a
  * scene that is put together by hand rather than out of components.
  *
- * `patience` is how long the worker is given before the page takes the job
- * back. The default suits a creature the page is waiting to show; something
- * that takes a second or two to mesh and is not on screen yet is better
- * waited for than built on the main thread in the middle of a scroll.
+ * `patience` is how long a worker is given once it has started on it; the
+ * default suits a creature the page is waiting to show, and something that
+ * takes a second or two to mesh is better waited for than built on the main
+ * thread in the middle of a scroll. `priority` is how soon it is wanted
+ * (`PRIORITY`): asked for again sooner, it moves up.
  */
-export const requestCreature = (kind: AnyKind, detail: CreatureDetail, patience?: number): Promise<CreatureGeometry> => request(kind, detail, patience)
+export const requestCreature = (kind: AnyKind, detail: CreatureDetail, options?: RequestOptions): Promise<CreatureGeometry> => request(kind, detail, options)
 
 /**
  * Meshes a list of creatures ahead of time, one after another.
  *
- * Sequential on purpose: there is one worker, and a caller that queues five
- * species at once would sit in front of whatever the page actually needs on
- * screen right now. Failures are the cache's problem, not the caller's — this
- * is a warm-up, and everything it warms is requested properly later anyway.
+ * Sequential, and at the lowest priority unless told otherwise: a caller that
+ * queues five species at once would sit in front of whatever the page actually
+ * needs on screen right now. Failures are the cache's problem, not the
+ * caller's — this is a warm-up, and everything it warms is requested properly
+ * later anyway.
  */
 export async function prewarmCreatures(
   kinds: readonly AnyKind[],
   detail: CreatureDetail,
   gap = 400,
+  priority: Priority = PRIORITY.someday,
 ): Promise<void> {
   for (const kind of kinds) {
     try {
-      await request(kind, detail)
+      await request(kind, detail, { priority })
     } catch {
       /* the real request will fall back on the main thread */
     }

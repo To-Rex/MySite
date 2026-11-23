@@ -43,7 +43,7 @@ import {
 } from './evoRig'
 import { CAST, ELDER, HERD, HUNTERS, SPEAR_LANDS, herdAt, hunterAt, type Beast, type Walker } from './evoScript'
 import type { Beat, Part } from './evoWalk'
-import { requestCreature } from './useCreature'
+import { PRIORITY, requestCreature, type Priority } from './useCreature'
 
 /**
  * The people and animals of the long walk, on stage.
@@ -67,19 +67,6 @@ const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 const ramp = (a: number, b: number, x: number) => {
   const t = clamp01((x - a) / (b - a))
   return t * t * (3 - 2 * t)
-}
-
-/**
- * One request to the meshing worker at a time. There is one worker, and a
- * request that sits in its queue for more than a few seconds is taken back and
- * built on the main thread — which, with four figures asked for at once, is
- * the last of them stalling the page for a second.
- */
-let queue: Promise<unknown> = Promise.resolve()
-function inTurn<T>(ask: () => Promise<T>): Promise<T> {
-  const next = queue.then(ask, ask)
-  queue = next.catch(() => undefined)
-  return next
 }
 
 /**
@@ -207,8 +194,17 @@ export interface FigureOptions {
   coat?: number
 }
 
-/** How long the worker is given to mesh a figure. They are built ahead of being seen, so: as long as it takes. */
+/** How long a worker is given to mesh a figure. They are built ahead of being seen, so: as long as it takes. */
 const PATIENCE = 30000
+
+/**
+ * How soon each kind of figure is wanted. The people of the cave are the
+ * first thing the walk shows; the herd is a screen or two later, and the
+ * people of the city are at its far end. (Asked for in the wrong order, the
+ * one at the desk at the very end of the walk was meshed before the people by
+ * the fire at its start, and they came into the cave three seconds after it.)
+ */
+const WANTED: Record<FigureKind, Priority> = { early: PRIORITY.soon, crag: PRIORITY.soon, mammoth: PRIORITY.later, modern: PRIORITY.later }
 
 export class Figure {
   /** Stands on the ground at its origin and faces +x until it is turned. */
@@ -227,7 +223,7 @@ export class Figure {
     this.uniforms = createFigureUniforms(FIGURE_LOOKS[options.look], options.bump)
     this.group.add(this.inner)
     this.group.visible = false
-    void inTurn(() => requestCreature(kind, options.detail, PATIENCE)).then((creature) => {
+    void requestCreature(kind, options.detail, { patience: PATIENCE, priority: WANTED[kind] }).then((creature) => {
       if (this.gone) return
       const size = (creature.size ?? 1) * (options.scale ?? 1)
       this.uniforms.uSize.value = creature.size ?? 1
@@ -302,9 +298,14 @@ export class Figure {
       // The mesh is centred on its middle; its feet are half its height below.
       this.inner.position.y = -(creature.geometry.boundingBox?.min.y ?? -0.5) * size
       this.tall = ((creature.geometry.boundingBox?.max.y ?? 0.5) - (creature.geometry.boundingBox?.min.y ?? -0.5)) * size
-      this.byName = byName
-      this.frame = measure(creature.bones, size)
-      air.arrived?.(this.group)
+      // Not ready — not drawn — until its programs are built: drawn with a
+      // program that is still being built, it would be waited for, on the main
+      // thread, in the middle of somebody's scroll.
+      void Promise.resolve(air.arrived?.(this.group)).then(() => {
+        if (this.gone) return
+        this.byName = byName
+        this.frame = measure(creature.bones, size)
+      })
     })
   }
 
@@ -641,6 +642,9 @@ export function createCast(air: Air & Arrivals, detail: { people: CreatureDetail
   return {
     object: root,
     update,
+    // By the fire, everyone in the cave; on the steppe, the hunters and the
+    // herd; and after that none of them is to be seen.
+    ready: (p) => (p < 0.27 ? hunters.every((h) => h.figure.ready) && elder.ready : p < 0.5 ? hunters.every((h) => h.figure.ready) && herd.every((h) => h.figure.ready) : true),
     dispose: () => {
       for (const dispose of disposers) dispose()
     },

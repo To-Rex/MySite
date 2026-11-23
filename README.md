@@ -57,7 +57,7 @@ src/
                   creatureRig.ts / creatureFittings.tsx — shared skeleton, eyes, teeth
                   skinMaterial.tsx — procedural reptile hide + baked AO
                   sdf.ts / creatures.ts — procedural creature meshing (three-free)
-                  creatures.worker.ts — runs that meshing off the main thread
+                  creatures.worker.ts — runs that meshing off the main thread (a few at once: useCreature.ts)
     cursor/       custom cursor (desktop only)
     loader/       cinematic preloader
     seo/          localized meta / OG / hreflang / JSON-LD
@@ -292,7 +292,12 @@ Those promises never resolved, so whatever was waiting on that geometry — most
 visibly the companion, which asks for its turtle last — simply never appeared,
 with nothing in the console to explain it. A worker that dies now hands its queue
 back to the main thread, and every request carries a four-second patience for the
-other failure mode: a reply that never comes.
+other failure mode: a reply that never comes — counted from when a worker starts
+on it, not from when it was asked for, since a mesh that is only waiting its
+turn is not stuck. There are two or three workers (half the cores, `POOL`) and
+one queue, in order of how soon each mesh is wanted (`PRIORITY`): the hero's
+own creatures, then the start of the long walk, then the rest of it, and last
+the extinction cinematic's warm-up.
 
 Its cubemap is baked at 64px against the hero's 128–256: baking one is a visible
 main-thread stall, and at this size it feeds reflections a few pixels wide. Night
@@ -675,9 +680,14 @@ Things there that each cost a round:
   thread** (`PATIENCE` in `useCreature.ts`), which is right for a creature the
   page is waiting to show and wrong for these: the crag the cave is cut into
   was first meshed finely enough to take eight seconds, and the page stopped
-  dead while it was built a second time. It is coarse now on purpose, the cast
-  asks for one mesh at a time (`inTurn`), and it tells the worker to take as
-  long as it needs — the walk is built before it is looked at.
+  dead while it was built a second time. It is coarse now on purpose, and the
+  walk tells the workers to take as long as they need — it is built before it
+  is looked at. (The cast used to ask for one mesh at a time, to keep a single
+  worker's queue short; asked in the order the figures were made, the person at
+  the desk at the very end of the walk was meshed before the people by the fire
+  at its start, and they came into the cave three seconds after it. Now there
+  are several workers, the queue is in order of what is seen first, and the
+  patience counts only once a worker has started.)
 - **Half-covered is a screen door.** A coat is not blended: it is written to
   the depth buffer like anything solid, with how much of a pixel is hair handed
   to the multisampler as coverage, so it needs no sorting. But a lock whose
@@ -1028,11 +1038,29 @@ is nearly every blade in the window, and when each was still grown in full,
 wind and all, only to be folded away under the ground, the first look down the
 avenue was where a Retina screen gave up its resolution.
 
-It is built ahead of being seen — the chunk is fetched and the scene mounted,
-parked, three seconds after the intro, or as soon as a reader has been near it
-for a quarter of a second; a jump straight past it builds nothing. Where WebGL
-is drawn by the CPU it waits six seconds for someone who has plainly stopped to
-look. It draws only while the stage is on screen and the extinction cinematic
+It is built ahead of being seen, in three steps after the intro.
+`evoPrefetch.ts` asks the workers for its meshes the moment the intro is over:
+the rock of the cave and its people first, then the herd and the people of the
+city. They are a few seconds of arithmetic, off the main thread, and they are in
+before anyone has scrolled to them. Asked for only when the scene was built,
+the people came into the cave three seconds after a reader who scrolled straight
+down — who saw the stage dark for a second, then a cave with nobody in it. The
+chunk is fetched 0.4 s after the intro. The scene is mounted, parked, at 2.6 s —
+when the hero's last words are in — or as soon as a reader has been near it for
+a quarter of a second; a jump straight past it builds nothing. Building it is a
+tenth of a second now: the city's sets, minutes of scrolling away, are built
+afterwards (`walk.later`), one to an idle moment. Where WebGL is drawn by the CPU
+none of this is done ahead: the scene waits six seconds for someone who has
+plainly stopped to look.
+
+And it is not shown until what is in shot is all there (`walk.readyAt`): meshed,
+built and its programs compiled. It comes up out of the dark of the stage whole,
+over six tenths of a second, rather than as a cave its people walk into a moment
+later. With nobody looking, that is once its sets have been drawn out of sight
+by the warm-up below; with a reader already looking, the frame loop draws it out
+of sight until what is in shot has been drawn whole three frames running, and
+then shows it. After four seconds it is shown whatever is in, for a machine that
+is slow to mesh is still better looked at than not. It draws only while the stage is on screen and the extinction cinematic
 is not. The scroll companion and its
 cameos step aside for as long as it is. With reduced motion, or without WebGL,
 there is no walk at all: the page goes from the hero to About.
@@ -1048,12 +1076,17 @@ frame that needs it:
 - **Programs are compiled for every lighting** (`walk.rehearse`). A program is
   built for a number of lights. The walk has three — the fire in the cave, the
   sky alone, the lamp in the studio — and a program compiled while the fire was
-  the only lamp lit was built again on the first frame out of the cave.
+  the only lamp lit was built again on the first frame out of the cave. Nothing
+  is drawn until the lighting it is drawn in is built (`walk.lightingNow`): a
+  frame drawn sooner waits for every program it uses, on the main thread — with
+  a reader already looking, that was the page stopped for a quarter of a second.
+  Whatever comes in later — a mesh, one of the city's sets — is hidden until its
+  own programs are built.
 - **Every set is drawn once before it is seen** (`walk.warmups`). A compiled
   program is still made ready a second time, by the driver, on the first frame
   something is drawn with it. So each set is drawn once in each lighting into
   an eight-pixel corner of the frame, one small job at a time when the page is
-  idle, and again whenever a mesh arrives from the worker.
+  idle; and whatever comes in later, only that, not everything again.
 - **Whatever casts a shadow and is instanced or skinned has a shadow material
   of its own** (`ownShadow`). three casts every shadow with one material and
   gives it a new program each time the kind of thing being drawn changes, filed
@@ -1083,10 +1116,11 @@ Nothing in it is meshed on demand. `Valley.tsx` dynamically imports a warm-up
 nine seconds after load, which builds all five species into the shared creature
 cache while the visitor is reading; on the first click that work used to happen
 with the camera already pointed at an empty valley, and the opening held for the
-better part of twenty seconds. Nine seconds, and a gap between each species,
-because there is one creature worker: queued back to back at four seconds the
-warm-up sat in front of the cameos, and the slowest case for the companion
-appearing went from nine seconds to fifteen. There is also a six-second backstop
+better part of twenty seconds. Nine seconds, a gap between each species, and the
+lowest priority in the workers' queue: queued back to back at four seconds, when
+there was one worker and no priorities, the warm-up sat in front of the cameos,
+and the slowest case for the companion appearing went from nine seconds to
+fifteen. There is also a six-second backstop
 on the wait, so a slow machine gets the cinematic late rather than not at all.
 
 It gets its own full-bleed `<Canvas>` rather than borrowing the hero's, which is

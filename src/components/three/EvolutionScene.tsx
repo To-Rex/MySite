@@ -45,6 +45,9 @@ interface StageProps extends Pick<EvolutionSceneProps, 'quality' | 'theme' | 'wr
   onSlow: () => void
 }
 
+/** How long the walk waits for what is in shot before it is shown anyway, in milliseconds. */
+const REVEAL_ANYWAY = 4000
+
 function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
   const gl = useThree((state) => state.gl)
   const scene = useThree((state) => state.scene)
@@ -54,13 +57,19 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
   const walkRef = useRef<Walk | null>(null)
   const postRef = useRef<Post | null>(null)
   const judge = useRef({ seen: 0, slow: 0, awake: 0 })
+  /**
+   * Whether the programs the walk started with are built, whether the walk is
+   * on show yet, and for how many frames in a row what is in shot has been
+   * all there.
+   */
+  const show = useRef({ compiled: false, revealed: false, readyFrames: 0, reveal: () => {} })
 
   useEffect(() => {
     const post = WALK_QUALITY[quality].glow ? createPost(4) : null
     const walk = createWalk(quality)
     let gone = false
     let pending = 0
-    let queue: (() => void)[] = []
+    const queue: (() => void)[] = []
     let turn = 0
     const later = (job: () => void): number =>
       typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(job, { timeout: 400 }) : window.setTimeout(job, 60)
@@ -88,27 +97,36 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
       queue.shift()?.()
       if (queue.length > 0) turn = later(next)
     }
-    const warm = (): void => {
+    // Everything at first; after that, only what has come in since — not
+    // everything again each time something does.
+    const warm = (only?: Object3D): void => {
       if (gone) return
-      queue = walk.warmups(corner)
+      queue.push(...walk.warmups(corner, only))
       if (turn === 0) turn = later(next)
     }
     // A program is built for what it is drawn into, and the glow draws the
     // scene into a frame of its own: compiled for the screen it would only be
     // compiled again, on the frame it was first needed.
-    const compile = (object: Object3D) => {
+    const build = (object: Object3D) => {
       gl.setRenderTarget(post?.target ?? null)
       // Once for each way the walk is lit, or the first frame out of the cave
       // would be spent building everything again for a sky with no fire in it.
       const built: Promise<unknown>[] = []
-      walk.rehearse(() => built.push(gl.compileAsync(object, camera, scene).catch(() => undefined)))
+      walk.rehearse((lighting) => {
+        built[lighting] = gl.compileAsync(object, camera, scene).catch(() => undefined)
+      })
       gl.setRenderTarget(null)
       pending++
-      return Promise.all(built).then(() => {
-        // Not until the last of them is in: drawing with a program that is
-        // still being built is waiting for it, on the main thread.
-        if (--pending === 0) warm()
+      const all = Promise.all(built).then(() => {
+        pending--
       })
+      return { built, all }
+    }
+    // Something that has come in: built, then drawn once out of sight, and
+    // only then let into shot (its promise is done when it is built).
+    const compile = (object: Object3D) => {
+      const { all } = build(object)
+      return all.then(() => warm(object))
     }
     // None of that where WebGL is drawn by the CPU. There a program is seconds
     // of the whole machine, and building every one of them ahead — for every
@@ -121,11 +139,75 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
     walkRef.current = walk
     postRef.current = post
     scene.add(walk.root)
+    const shown = show.current
+    shown.revealed = false
+    shown.readyFrames = 0
     // Everything that exists already, while it is all still switched on:
-    // from the first frame the walk hides whatever is out of shot.
-    if (ahead) compile(scene)
+    // from the first frame the walk hides whatever is out of shot. Nothing is
+    // drawn until it is built — a frame drawn sooner waits for each program
+    // it uses, on the main thread: with a reader already looking, that was
+    // the page stopped for a quarter of a second.
+    // The first frame waits only for the lighting it is drawn in — the fire,
+    // at the start of the walk — and the other two are built behind it.
+    shown.compiled = !ahead
+    if (ahead) {
+      const rect = wrapperRef.current?.getBoundingClientRect()
+      const viewport = gl.domElement.clientHeight || window.innerHeight
+      walk.frame(gl, camera as PerspectiveCamera, rect ? walkProgress(rect.top, rect.height, viewport) : 0, 0)
+      const { built, all } = build(scene)
+      void (built[walk.lightingNow()] ?? all).then(() => {
+        shown.compiled = true
+      })
+      void all.then(() => warm())
+    }
+
+    // The city's sets, one to an idle moment, each compiled as it comes.
+    const jobs = [...walk.later]
+    let building = 0
+    const buildNext = (): void => {
+      building = 0
+      if (gone) return
+      const object = jobs.shift()?.()
+      if (object && ahead) void compile(object)
+      if (jobs.length > 0) building = later(buildNext)
+    }
+    building = later(buildNext)
+
+    // Not shown until what is in shot is all there: the walk comes up whole,
+    // out of the dark of the stage, rather than as a cave its people walk
+    // into a moment later. With nobody looking, that is once it is in, built,
+    // and drawn once out of sight by the warm-up; with somebody already
+    // looking, the frame loop decides (below). And shown after a few seconds
+    // whatever is in, for a machine that is slow to mesh is still better
+    // looked at than not.
+    const host = gl.domElement.closest<HTMLElement>('.evolution-scene')
+    shown.reveal = () => {
+      if (shown.revealed) return
+      shown.revealed = true
+      if (host) host.dataset.ready = ''
+    }
+    const since = performance.now()
+    let watching = 0
+    const watch = (): void => {
+      watching = 0
+      if (gone || shown.revealed) return
+      const wrapper = wrapperRef.current
+      const rect = wrapper?.getBoundingClientRect()
+      const viewport = gl.domElement.clientHeight || window.innerHeight
+      const p = rect ? walkProgress(rect.top, rect.height, viewport) : 0
+      const warmed = shown.compiled && pending === 0 && queue.length === 0 && turn === 0
+      if ((warmed && walk.readyAt(p)) || performance.now() - since > REVEAL_ANYWAY) shown.reveal()
+      else watching = window.setTimeout(watch, 100)
+    }
+    watch()
     return () => {
       gone = true
+      window.clearTimeout(watching)
+      if (building) {
+        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(building)
+        window.clearTimeout(building)
+      }
+      if (host) delete host.dataset.ready
       walk.arrivals.arrived = undefined
       scene.remove(walk.root)
       walk.dispose()
@@ -133,7 +215,7 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
       walkRef.current = null
       postRef.current = null
     }
-  }, [gl, scene, camera, quality])
+  }, [gl, scene, camera, quality, wrapperRef])
 
   useEffect(() => {
     postRef.current?.resize(size.width * dpr, size.height * dpr)
@@ -149,7 +231,8 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
   useFrame((state, delta) => {
     const walk = walkRef.current
     const wrapper = wrapperRef.current
-    if (!walk || !wrapper) return
+    const shown = show.current
+    if (!walk || !wrapper || !shown.compiled) return
     const rect = wrapper.getBoundingClientRect()
     // The stage is as tall as the canvas, which is what the wrapper travels past.
     const viewport = state.gl.domElement.clientHeight || window.innerHeight
@@ -158,8 +241,19 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
     if (post) post.render(state.gl, state.scene, state.camera, 1)
     else state.gl.render(state.scene, state.camera)
 
-    // A frame after a gap is the canvas waking, not the scene being slow.
+    // Drawn out of sight until what is in shot has been drawn whole a few
+    // frames running: the driver makes each program ready on the first frame
+    // it is drawn in, and that frame is better spent where nobody sees it.
+    // Nor is the scene judged slow on frames nobody saw.
     const j = judge.current
+    if (!shown.revealed) {
+      shown.readyFrames = walk.readyAt(walk.beat.p) ? shown.readyFrames + 1 : 0
+      if (shown.readyFrames >= 3) shown.reveal()
+      j.awake = 0
+      return
+    }
+
+    // A frame after a gap is the canvas waking, not the scene being slow.
     if (delta > 0.2) {
       j.seen = 0
       j.slow = 0

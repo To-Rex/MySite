@@ -19,7 +19,7 @@ import { EVO_NOISE, type Air, type Arrivals } from './evoAir'
 import { PLACE, groundAt, hash2 } from './evoLand'
 import { makeRockMaterial } from './evoMaterials'
 import type { Beat, Part } from './evoWalk'
-import { requestCreature } from './useCreature'
+import { PRIORITY, requestCreature } from './useCreature'
 
 /**
  * The cave the walk begins in: the crag it is cut into, and the hearth.
@@ -110,9 +110,11 @@ export function createCave(air: Air & Arrivals, detail: CreatureDetail, bump: nu
   // ---- the crag ------------------------------------------------------------
   const rock = makeRockMaterial(air, bump)
   disposers.push(() => rock.dispose())
-  // As long as the worker needs: the walk is built before it is looked at, and
-  // a hill meshed on the main thread is the page stopped for a second.
-  void requestCreature('crag', detail, 30000).then((creature) => {
+  // As long as a worker needs: the walk is built before it is looked at, and
+  // a hill meshed on the main thread is the page stopped for a second. It is
+  // the first thing the walk shows, so it is among the first things asked for.
+  let crag = false
+  void requestCreature('crag', detail, { patience: 30000, priority: PRIORITY.soon }).then((creature) => {
     if (gone) return
     const mesh = new Mesh(creature.geometry, rock)
     const size = creature.size ?? 1
@@ -125,8 +127,14 @@ export function createCave(air: Air & Arrivals, detail: CreatureDetail, bump: nu
     mesh.receiveShadow = shadows
     mesh.updateMatrix()
     mesh.matrixAutoUpdate = false
+    // Hidden until its program is built, like everything that arrives late.
+    mesh.visible = false
     root.add(mesh)
-    air.arrived?.(mesh)
+    void Promise.resolve(air.arrived?.(mesh)).then(() => {
+      if (gone) return
+      mesh.visible = true
+      crag = true
+    })
   })
 
   // ---- the hearth ----------------------------------------------------------
@@ -256,6 +264,8 @@ export function createCave(air: Air & Arrivals, detail: CreatureDetail, bump: nu
   return {
     object: root,
     update,
+    // The rock is the cave: until it is in, there is no cave to be in.
+    ready: (p) => p > 0.3 || crag,
     dispose: () => {
       gone = true
       for (const dispose of disposers) dispose()

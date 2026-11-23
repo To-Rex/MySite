@@ -226,6 +226,8 @@ export function createStudio(air: Air & Arrivals, detail: CreatureDetail, bump: 
 
   return {
     object: root,
+    // The one at the desk is the end of the walk.
+    ready: (p) => p < 0.86 || person.ready,
     setPaper(sheet, ink, accent) {
       drawEditor(paper, sheet, ink, accent)
       drawEditor(lapPaper, sheet, ink, accent)

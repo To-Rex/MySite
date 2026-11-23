@@ -948,6 +948,13 @@
 .evolution-scene {
   position: absolute;
   inset: 0;
+  /* Up out of the dark once what is in shot is all there (EvolutionScene). */
+  opacity: 0;
+  transition: opacity 0.6s ease-out;
+}
+
+.evolution-scene[data-ready] {
+  opacity: 1;
 }
 
 /* Both ends of the walk are handed over rather than cut: the page's colour

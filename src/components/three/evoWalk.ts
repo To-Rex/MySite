@@ -20,6 +20,7 @@ import { createCity } from './evoCity'
 import { createPassers, createPond, createVillage } from './evoDressing'
 import { createGrass } from './evoGrass'
 import { createStudio } from './evoStudio'
+import { WALK_DETAIL } from './evoDetail'
 import { createTashkent } from './evoTashkent'
 import { createTrees } from './evoTrees'
 import { createFurniture } from './evoFurniture'
@@ -57,10 +58,10 @@ export interface WalkQuality {
 }
 
 export const WALK_QUALITY: Record<ValleyQuality, WalkQuality> = {
-  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, people: 'low', beasts: 'low', coat: 0.55, cars: 10, leaves: 0.4 },
-  medium: { dpr: 1, shadowMap: 1024, bump: 0.025, glow: false, people: 'low', beasts: 'low', coat: 1, cars: 20, leaves: 0.65 },
-  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.035, glow: true, people: 'medium', beasts: 'medium', coat: 1, cars: 32, leaves: 1 },
-  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.035, glow: true, people: 'high', beasts: 'high', coat: 1, cars: 44, leaves: 1 },
+  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, ...WALK_DETAIL.low, coat: 0.55, cars: 10, leaves: 0.4 },
+  medium: { dpr: 1, shadowMap: 1024, bump: 0.025, glow: false, ...WALK_DETAIL.medium, coat: 1, cars: 20, leaves: 0.65 },
+  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.035, glow: true, ...WALK_DETAIL.high, coat: 1, cars: 32, leaves: 1 },
+  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.035, glow: true, ...WALK_DETAIL.ultra, coat: 1, cars: 44, leaves: 1 },
 }
 
 /** Everything the scene tells its parts, once a frame. */
@@ -89,6 +90,11 @@ export interface Beat {
 export interface Part {
   object?: Object3D
   update(beat: Beat): void
+  /**
+   * Whether what this part shows at a point of the walk is in: meshed, and
+   * its programs built. Left out, it always is.
+   */
+  ready?(p: number): boolean
   dispose(): void
 }
 
@@ -106,9 +112,12 @@ export interface Walk {
    * a number of lights, so one built while the fire is the only lamp lit has
    * to be built again on the frame the fire is left behind — a stall of a
    * tenth of a second or three in the middle of somebody's scroll. Compiling
-   * inside this builds all of them beforehand.
+   * inside this builds all of them beforehand. `run` is told which lighting
+   * it is in: 0 for none of the lamps, then each lamp in turn.
    */
-  rehearse(run: () => void): void
+  rehearse(run: (lighting: number) => void): void
+  /** Which lighting the walk is in now, as `rehearse` numbers them: what the next frame is drawn with. */
+  lightingNow(): number
   /**
    * The same idea, for the graphics card rather than the compiler. A program
    * that has been built is still made ready a second time, by the driver, on
@@ -116,9 +125,26 @@ export interface Walk {
    * first drawn in the middle of a scroll, as it comes into shot. This is a
    * list of small jobs, each of which draws one set once, in one lighting,
    * whether or not it is in shot; done one at a time while nobody is looking,
-   * they leave nothing to be made ready later.
+   * they leave nothing to be made ready later. Given `only`, just that: one
+   * thing that has come in since, rather than everything again.
    */
-  warmups(draw: () => void): (() => void)[]
+  warmups(draw: () => void, only?: Object3D): (() => void)[]
+  /**
+   * The sets that are built after the rest, in the order they are wanted:
+   * each job builds one, adds it to the walk, and hands back what it added,
+   * to be compiled. The city is minutes of scrolling from the cave, and built
+   * with everything else it was most of a quarter of a second in which the
+   * page stood still — so it is built afterwards, a set at a time, when the
+   * page has nothing else to do.
+   */
+  later: (() => Object3D | undefined)[]
+  /**
+   * Whether what is in shot at a point of the walk is all there: meshed,
+   * built and its programs compiled. Until it is, the walk is not shown —
+   * a cave whose people come into it a moment later is not a cave they
+   * were sitting in.
+   */
+  readyAt(p: number): boolean
   add(part: Part): void
   /** The page's own colours, for the screen the walk ends in. */
   setPaper(paper: string, ink: string, accent: string): void
@@ -221,25 +247,37 @@ export function createWalk(quality: ValleyQuality): Walk {
   }
 
   const grass = createGrass(air, quality, { a: land.uMeadowA, b: land.uMeadowB })
+  // The studio is built now, small as it is: its lamp is one of the ways the
+  // walk is lit, and every program is compiled for every one of those.
   const studio = createStudio(air, q.people, q.bump, q.coat)
   const shadows = q.shadowMap > 0
+  const add = (part: Part): Part => {
+    parts.push(part)
+    if (part.object) root.add(part.object)
+    return part
+  }
   for (const part of [
     createCave(air, q.people, q.bump, shadows),
     grass,
     createCast(air, { people: q.people, beasts: q.beasts, coat: q.coat }, q.bump, shadows, grass.tread),
     createPond(air),
     createVillage(air, shadows),
-    createCity(air, { bump: q.bump, shadows }),
-    createTashkent(air),
-    createTrees(air, { leaves: q.leaves }),
-    createFurniture(air, { shadows }),
-    createCars(air, { shadows, cars: q.cars }),
     createPassers(air, q.people, q.bump, shadows, q.coat),
     studio,
   ]) {
-    parts.push(part)
-    if (part.object) root.add(part.object)
+    add(part)
   }
+  // The city's sets, later (see `Walk.later`). None of them has a lamp of its own.
+  const city: (() => Part)[] = [
+    () => createCity(air, { bump: q.bump, shadows }),
+    () => createTashkent(air),
+    () => createTrees(air, { leaves: q.leaves }),
+    () => createFurniture(air, { shadows }),
+    () => createCars(air, { shadows, cars: q.cars }),
+  ]
+  let built = 0
+  /** Where the city begins to be in shot: its first blocks go up as the fields are being ploughed. */
+  const CITY_IN_SHOT = 0.47
 
   let started = false
   const look = new Vector3()
@@ -382,30 +420,47 @@ export function createWalk(quality: ValleyQuality): Walk {
         lit.forEach((object, index) => {
           object.visible = index === only
         })
-        run()
+        run(only + 1)
       }
       lit.forEach((object, index) => {
         object.visible = were[index]!
       })
     },
-    warmups(draw) {
+    lightingNow() {
+      return lamps().findIndex((object) => object.visible) + 1
+    },
+    warmups(draw, only) {
       const lit = lamps()
       const sets: Object3D[] = [dome, ground, range, ...parts.flatMap((part) => (part.object ? [part.object] : []))]
+      // The set a thing is in: what it hangs from, just under the walk's root.
+      const setOf = (thing: Object3D): Object3D | undefined => {
+        let at: Object3D | null = thing
+        while (at && at.parent !== root) at = at.parent
+        return at && sets.includes(at) ? at : undefined
+      }
+      const targets = only ? [only] : sets
       const jobs: (() => void)[] = []
-      for (let only = -1; only < lit.length; only++) {
-        for (const set of sets) {
+      for (let lamp = -1; lamp < lit.length; lamp++) {
+        for (const target of targets) {
+          const set = setOf(target)
+          if (!set) continue
           // A set with a lamp of its own is only ever drawn by that lamp.
-          const lamp = lit.indexOf(set)
-          if (lamp >= 0 && lamp !== only) continue
+          const own = lit.indexOf(set)
+          if (own >= 0 && own !== lamp) continue
           jobs.push(() => {
             const shown = sets.map((object) => object.visible)
             // Only this set, by the one lamp that is lit.
             sets.forEach((object) => {
-              object.visible = object === set || (only >= 0 && object === lit[only])
+              object.visible = object === set || (lamp >= 0 && object === lit[lamp])
             })
-            // Everything in the set, wherever it is and whether or not it has come on yet.
+            // Everything in it, wherever it is and whether or not it has come
+            // on yet — and the way down to it from its set.
             const inside: [Object3D, boolean, boolean][] = []
-            set.traverse((object) => {
+            for (let up = target.parent; up && up !== set; up = up.parent) {
+              inside.push([up, up.visible, up.frustumCulled])
+              up.visible = true
+            }
+            target.traverse((object) => {
               inside.push([object, object.visible, object.frustumCulled])
               object.visible = true
               object.frustumCulled = false
@@ -423,9 +478,18 @@ export function createWalk(quality: ValleyQuality): Walk {
       }
       return jobs
     },
+    later: city.map((make) => () => {
+      const part = add(make())
+      built++
+      return part.object
+    }),
+    readyAt(p) {
+      const at = Math.min(1, Math.max(0, finite(p)))
+      if (at >= CITY_IN_SHOT && built < city.length) return false
+      return parts.every((part) => part.ready?.(at) ?? true)
+    },
     add(part) {
-      parts.push(part)
-      if (part.object) root.add(part.object)
+      add(part)
     },
     setPaper: studio.setPaper,
     dispose() {

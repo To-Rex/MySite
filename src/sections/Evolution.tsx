@@ -47,10 +47,21 @@ const DWELL_UNAIDED = 6000
 /**
  * And built anyway this long after the intro, even if nobody has scrolled: the
  * stage is the very next thing on the page, and a reader who flicks the wheel
- * would otherwise arrive at an empty one. Not where WebGL is drawn by the CPU,
- * where building it is the whole machine for several seconds.
+ * would otherwise arrive at an empty one. As soon as the hero's last words are
+ * in, which is two and a half seconds; building the scene is then a tenth of a
+ * second, the city being built afterwards a set at a time. Not where WebGL is
+ * drawn by the CPU, where building it is the whole machine for several seconds.
  */
-const PREBUILD = 3200
+const PREBUILD = 2600
+
+/**
+ * The scene's code is fetched sooner than that, and its people and animals are
+ * asked for sooner still: the moment the intro is over, the workers start on
+ * the cave and the people by its fire (`evoPrefetch.ts`). They are seconds of
+ * arithmetic, off the main thread; asked for only when the scene was built,
+ * they came into the cave seconds after the reader did.
+ */
+const FETCH = 400
 
 export function Evolution() {
   const { t } = useI18n()
@@ -120,17 +131,22 @@ export function Evolution() {
     }
   }, [usable, narrow])
 
-  // Fetch the chunk, then build the scene, once the intro is out of the way
-  // and the hero has had the main thread to itself for a moment.
+  // Once the intro is out of the way: the meshes, then the chunk, then the
+  // scene, once the hero has had the main thread to itself for a moment.
   useEffect(() => {
     if (!usable || !introDone || gpuClass() === 'software') return
-    const fetching = window.setTimeout(() => void load(), PREBUILD * 0.5)
+    const prefetch = () => void import('@/components/three/evoPrefetch').then((m) => m.prefetchWalk(quality), () => undefined)
+    const idle = typeof window.requestIdleCallback === 'function'
+    const meshing = idle ? window.requestIdleCallback(prefetch, { timeout: 600 }) : window.setTimeout(prefetch, 200)
+    const fetching = window.setTimeout(() => void load(), FETCH)
     const building = window.setTimeout(() => setEvolution({ near: true }), PREBUILD)
     return () => {
+      if (idle) window.cancelIdleCallback(meshing)
+      else window.clearTimeout(meshing)
       window.clearTimeout(fetching)
       window.clearTimeout(building)
     }
-  }, [usable, introDone])
+  }, [usable, introDone, quality])
 
   // A scene that moves the whole view with the scroll is exactly what the
   // reduced-motion preference asks us to leave out, and without WebGL there is
