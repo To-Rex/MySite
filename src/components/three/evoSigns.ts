@@ -5,8 +5,9 @@ import { CanvasTexture, LinearFilter, SRGBColorSpace } from 'three'
  *
  * No image files, like everything else here: a canvas, the page's own type,
  * and the words a street in Tashkent has over its doors — bread, tea, books,
- * a pharmacy — in Uzbek, as they are written there. They are the kinds of
- * shop there are, not anybody's shop: no names and no brands.
+ * a pharmacy — in Uzbek, as they are written there, and some in Cyrillic, as
+ * many still are. They are the kinds of shop there are, not anybody's shop: no
+ * names and no brands.
  */
 
 /** [what it says, the board's colour, the lettering's colour] */
@@ -43,10 +44,24 @@ const SIGNS: readonly (readonly [string, string, string])[] = [
   ['SOATLAR', '#16181c', '#cfd6de'],
   ['SHARBATLAR', '#f08a24', '#fffbe9'],
   ['NONVOYXONA', '#7a4a1e', '#fbe6bf'],
+  // And in Cyrillic, as a good many still are: in Russian, and in Uzbek as it
+  // was written until the nineties.
+  ['АПТЕКА', '#ffffff', '#0a8a4a'],
+  ['ПРОДУКТЫ', '#1d3f8f', '#ffffff'],
+  ['ХОЗТОВАРЫ', '#e8d4a0', '#5a2e0c'],
+  ['КАНЦТОВАРЫ', '#2a7ab8', '#ffffff'],
+  ['ЦВЕТЫ', '#f6dde8', '#9a1d4d'],
+  ['РЕМОНТ ОБУВИ', '#3a3a3a', '#f2c94c'],
+  ['ШАУРМА', '#c8261d', '#fff4d6'],
+  ['ЧАЙХАНА', '#0e5e4a', '#f7e7b4'],
+  ['ДОРИХОНА', '#0b6e4f', '#ffffff'],
+  ['ОШХОНА', '#8a2b0e', '#ffe9b8'],
+  ['КИЙИМ-КЕЧАК', '#24242a', '#e9e3d6'],
+  ['ТЕЛЕФОН ТАЪМИРИ', '#ffd400', '#1b1b1b'],
 ]
 
 /** How the picture is divided: so many signs across, so many down. */
-export const SIGN_GRID = { columns: 4, rows: 8 } as const
+export const SIGN_GRID = { columns: 4, rows: 11 } as const
 const CELL = { width: 512, height: 80 } as const
 
 export function drawSigns(canvas: HTMLCanvasElement): void {

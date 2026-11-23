@@ -402,12 +402,15 @@ describe('the walk through it', () => {
 })
 
 describe('the words on it', () => {
-  it('names the shops for what they sell, each once, and the hotel for the country', () => {
+  it('names the shops for what they sell, each once, in both alphabets, and the hotel for the country', () => {
     expect(SIGN_WORDS).toHaveLength(SIGN_GRID.columns * SIGN_GRID.rows)
     expect(new Set(SIGN_WORDS).size).toBe(SIGN_WORDS.length)
+    expect(SIGN_WORDS.some((word) => /[А-Я]/u.test(word))).toBe(true)
+    expect(SIGN_WORDS.filter((word) => /[A-Z]/u.test(word)).length).toBeGreaterThan(SIGN_WORDS.length / 2)
     for (const word of SIGN_WORDS) {
       expect(word).toBe(word.toUpperCase())
-      expect(word).toMatch(/^[A-ZʻʼʻA-Z -]+$/u)
+      // Latin or Cyrillic capitals, and nothing that would be a name: no digits, no marks of a brand.
+      expect(word).toMatch(/^[A-ZʻʼА-ЯЁЎҚҒҲ -]+$/u)
     }
     expect(HOTEL_NAME).toBe('OʻZBEKISTON')
     // It is on the end of the roof the walk comes towards, and faces down the street at it.

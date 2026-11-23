@@ -742,13 +742,37 @@ the eye is carried on through it (`evoInto`) to whichever inside face it meets
 walking past a lit front, what is inside slides behind the frames the way it
 does. By day the glass shows the sky and at the right moment the sun. Ground
 floors on the street are shops, and their signs are words drawn into a canvas
-(`evoSigns.ts`): what each one sells, in Uzbek, and never a name. The street is
+(`evoSigns.ts`): what each one sells, in Uzbek and here and there in Cyrillic,
+and never a name. The walls have their years on them — each panel cast a shade
+of its own, rain down from the sills, a dark tongue down the wall under every
+cooler, dust at the foot — steel grilles with a sun in them over the two lowest
+floors' windows, a shop here and there with its shutter down, and after dark
+in some rooms only the blue of a television. The street is
 a shader too: asphalt and its paint, a zebra crossing where the walk goes over,
 setts with a red band along the kerb, a square of earth round every tree, and
 lamp pools — and what a wet patch throws back of them — worked out from where
 the lamps are, with no lights in the scene. `evoStreet.ts` is where the kerbs,
 the lanes, the lamps, the crossing and the square are written down once,
 three-free, for the city, the traffic, the trees and the tests to agree about.
+
+**What stands out from the walls** (`evoFacade.ts`, `evoRelief.ts`) is what
+stops a block being a box with a picture of a building on each side, which is
+what it looks like the moment the sun is low or the eye is close: the coolers
+on their brackets, the yellow gas pipe along every older front over its shops
+and up to the kitchens, the meters where the gas comes out of the ground, the
+shops' boards as boxes of light, striped awnings over some of their windows,
+the brick blocks' stone balconies down the middle of the front,
+sills, the brick blocks' cornices, and on
+every roof a parapet, the lifts' machine rooms, vents and old aerial masts. They
+are put where the wall the shader draws has room for them, and that is only
+possible because both work it out from the same numbers: `evoFacade.ts` holds
+the grids — how wide a bay, how high a floor, where the shops are — and the
+GLSL is written from them, and it works out what is in each bay of each floor
+with `hash2`, which is the shader's `evoHash`. So a cooler hangs under a window
+the shader has put a cooler's shape under, never across the screen of a stair.
+It is some 1 200 pieces, three instanced draws and one program, and every piece
+goes up with its block: anything on a wall comes into being as the roof goes
+past it, anything on the roof is carried up on it, its shadow included.
 
 **What makes it Tashkent** (`evoTashkent.ts`) stands on that square and over
 it: a white mosque with a turquoise dome and two minarets, after the one on the

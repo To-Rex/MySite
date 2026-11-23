@@ -41,6 +41,8 @@ import {
   TV_TOWER,
 } from './evoStreet'
 import { BUMP, LIN } from './evoMaterials'
+import { BRICK, PANEL, RENDER, SHOP, STYLE, type Tower } from './evoFacade'
+import { createRelief } from './evoRelief'
 import { SIGN_GRID, makeSigns } from './evoSigns'
 import type { Beat, Part } from './evoWalk'
 
@@ -62,42 +64,7 @@ import type { Beat, Part } from './evoWalk'
 
 const CITY = PLACE.city
 
-/** What a building is faced with: the shader has a wall for each. */
-export const STYLE = {
-  /** Concrete panels, with loggias and cast screens: most of what was built after the earthquake. */
-  panel: 0,
-  /** Yellow brick, four or five floors, arched at the top: the 1950s. */
-  brick: 1,
-  /** A curtain of glass. */
-  glass: 2,
-  /** Painted render and big windows: what has gone up since. */
-  render: 3,
-  /** Glass, with its top drawn in: the tallest of the towers at the end of the avenue. */
-  crown: 4,
-  /** A deep lattice of concrete over every window: the hotel. */
-  lattice: 5,
-} as const
-
-export interface Tower {
-  x: number
-  z: number
-  w: number
-  d: number
-  h: number
-  seed: number
-  /** One of `STYLE`. */
-  style: number
-  /** When in the building of the city this one starts to go up, 0 to 1. */
-  delay: number
-  /** Metres its base is lifted off the ground: the studio's building has no ground floor of its own. */
-  base: number
-  /** Turned about its own middle, radians. Only the hotel's wings are. */
-  yaw: number
-  /** Whether its ground floor is shops: the fronts on the street. */
-  shops: boolean
-  /** What it is part of, for the few that are one thing made of several boxes. */
-  part?: 'hotel'
-}
+export { STYLE, type Tower } from './evoFacade'
 
 const inCrossing = (x: number) => CROSSINGS.some((c) => Math.abs(x - c) < 7)
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -367,6 +334,13 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     return mix(tint, vec3(1.0, 0.86, 0.66), step(0.55, fract(pick * 4.3)));
   }
 
+  // And in some rooms the only light is the television: blue, and never still.
+  vec3 evoTelly(vec2 id, vec3 bulb) {
+    float tv = step(evoHash(id + 23.0), 0.13);
+    float flicker = 0.62 + 0.38 * (0.5 + 0.5 * sin(uTime * 7.3 + id.x * 13.0)) * (0.55 + 0.45 * sin(uTime * 2.1 + id.y * 7.0));
+    return mix(bulb, vec3(0.42, 0.6, 1.0) * flicker * 0.75, tv);
+  }
+
   // The colour a block's balconies are painted: every block its own, out of a
   // handful the city uses.
   vec3 evoAccent(float seed) {
@@ -383,6 +357,28 @@ const BUILDING_FRAG_PARS = /* glsl */ `
       ? min(abs(q.x + q.y - 0.5), abs(max(q.x, q.y) - 0.2)) - 0.055
       : min(abs(max(q.x, q.y) - 0.33), abs((q.x + q.y) * 0.7071 - 0.33)) - 0.05;
     return 1.0 - smoothstep(-aa, aa, d);
+  }
+
+  // How much of a thin bar is at 'x', for bars 'period' apart and 'width' thick:
+  // from far off, the share of the window they cover and no sparkle.
+  float evoBar(float x, float period, float width, float aa) {
+    float d = abs(fract(x / period) - 0.5) * period;
+    float near = 1.0 - smoothstep(width * 0.5 - aa, width * 0.5 + aa, d);
+    return mix(near, width / period, smoothstep(width * 0.5, period * 0.5, aa));
+  }
+
+  // The steel grilles over the windows of the lowest floors, all over
+  // Tashkent: uprights, two rails, and a sun of bars rising from the sill.
+  // 'p' is in metres from the window's bottom left, 'size' its size.
+  float evoGrille(vec2 p, vec2 size, float aa) {
+    float bars = evoBar(p.x, 0.13, 0.016, aa);
+    bars = max(bars, evoBar(p.y - size.y * 0.33, size.y * 2.0, 0.03, aa));
+    bars = max(bars, evoBar(p.y - size.y * 0.97, size.y * 2.0, 0.03, aa));
+    vec2 c = p - vec2(size.x * 0.5, 0.0);
+    float r = length(c);
+    float arc = evoBar(r - min(size.x * 0.3, size.y * 0.3), 9.0, 0.025, aa);
+    float rays = evoBar(atan(c.y, c.x) * 2.2, 0.62, 0.035, aa / max(r, 0.2)) * step(r, min(size.x * 0.3, size.y * 0.3));
+    return max(bars, max(arc, rays));
   }
 
   // A wall of small tiles: the mosaics on the ends of the blocks. 'p' is in
@@ -417,7 +413,7 @@ const BUILDING_FRAG_PARS = /* glsl */ `
 
   // A shop front: a board over a door and two windows, and the shop behind the glass.
   vec3 evoShop(EvoFace f, vec3 wall) {
-    const float WIDE = 6.4;
+    const float WIDE = ${SHOP.wide.toFixed(2)};
     float su = f.u / WIDE;
     float shop = floor(su);
     float sx = fract(su);
@@ -425,9 +421,23 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     evoWallGlow = evoWash(wall, f.v);
     // The pier between one shop and the next, and the step under the glass.
     if (sx < 0.035 || sx > 0.965 || f.v < 0.32) return wall * 0.85;
-    if (f.v > 3.28) {
-      // The board, lit from inside once it is dusk.
-      vec2 suv = vec2((sx - 0.06) / 0.88, (f.v - 3.36) / 0.84);
+    // Some have their shutter down, day and night: ribbed steel, a little rust, a lock at the foot.
+    if (evoHash(vec2(shop, 13.0) + f.seed * 23.0) < 0.2 && f.v < ${(SHOP.board.from - 0.1).toFixed(2)}) {
+      float rib = fract(f.v / 0.075);
+      float ribs = mix(0.82 + 0.3 * smoothstep(0.0, 0.5, rib) * smoothstep(1.0, 0.5, rib), 0.95, smoothstep(0.02, 0.06, f.aa));
+      vec3 steel = evoLin(vec3(0.56, 0.57, 0.57)) * ribs * (0.85 + 0.25 * evoNoise(vec2(f.u * 2.3, f.v * 0.8) + pick * 40.0));
+      // Rust where the rain splashes up, at the foot.
+      steel = mix(steel, evoLin(vec3(0.42, 0.27, 0.17)), smoothstep(0.66, 0.84, evoNoise(vec2(f.u * 6.0, f.v * 9.0) + pick * 9.0)) * 0.4 * (1.0 - smoothstep(0.35, 1.3, f.v)));
+      if (abs(sx - 0.5) < 0.02 && f.v < 0.6) steel *= 0.3;
+      evoWallGlow = evoWash(steel, f.v);
+      evoWallRough = 0.55;
+      return steel;
+    }
+    if (f.v > ${(SHOP.board.from - 0.08).toFixed(2)}) {
+      // The board, lit from inside once it is dusk. (\`evoRelief.ts\` stands a box of
+      // light in front of it on the street; this is it from the side, and a board
+      // that is not a whole shop wide.)
+      vec2 suv = vec2((sx - ${SHOP.board.side.toFixed(2)}) / ${(1 - 2 * SHOP.board.side).toFixed(2)}, (f.v - ${SHOP.board.from.toFixed(2)}) / ${(SHOP.board.to - SHOP.board.from).toFixed(2)});
       if (suv.x > 0.0 && suv.x < 1.0 && suv.y > 0.0 && suv.y < 1.0) {
         if (f.flip) suv.x = 1.0 - suv.x;
         float which = floor(pick * uSignGrid.x * uSignGrid.y);
@@ -488,15 +498,15 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     vec3 room = evoRoom(at, f.dir, extent, pick + f.seed, lamp);
     // Curtains part of the way across some of them.
     float drawn = 0.45 + 0.55 * step(fract(pick * 6.7) * 0.8, abs(at.x - 0.5) * 2.0 + 0.25 * step(0.5, fract(pick * 2.3)));
-    evoWallGlow = room * evoBulb(pick) * lamp * (1.3 + 1.3 * fract(pick * 3.7)) * drawn * evoLit(id, share);
+    evoWallGlow = room * evoTelly(id, evoBulb(pick)) * lamp * (1.3 + 1.3 * fract(pick * 3.7)) * drawn * evoLit(id, share);
     return evoGlass(f, room * 0.05 * (0.4 + 0.6 * dot(uHorizon, vec3(0.33))));
   }
 
   // ---- concrete panels: what most of the city was rebuilt in ----------------
   vec3 evoPanel(EvoFace f) {
-    const float BAY = 3.2;
-    const float STOREY = 2.9;
-    const float GROUND = 4.4;
+    const float BAY = ${PANEL.bay.toFixed(2)};
+    const float STOREY = ${PANEL.storey.toFixed(2)};
+    const float GROUND = ${PANEL.ground.toFixed(2)};
     vec3 concrete = mix(evoLin(vec3(0.6, 0.58, 0.54)), evoLin(vec3(0.74, 0.7, 0.62)), fract(f.seed * 5.7));
     concrete *= (0.9 + 0.2 * evoNoise(f.world.xy * 0.6 + f.world.z * 0.6)) * (0.82 + 0.18 * evoNoise(vec2(f.u * 0.9 + f.seed * 9.0, f.v * 0.12)));
     bool shops = f.street && vMore.y > 0.5 && vLook.w < 0.5;
@@ -510,12 +520,33 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     float column = floor(bu);
     float level = floor(fv);
     bool grid = bu >= 0.0 && bu < bays && fv >= 0.0 && f.v < f.top - 1.1;
-    // Panels: a joint every bay and every floor.
+    // Panels: a joint every bay and every floor, each panel cast a shade of its own.
     float joint = min(1.0, max(step(0.985, cell.x) + step(cell.x, 0.015), step(0.975, cell.y)));
     vec3 wall = concrete * (1.0 - 0.3 * joint);
+    if (grid) wall *= 0.95 + 0.1 * evoHash(vec2(column, level) + f.seed * 71.0);
+    // Forty summers on it: darker at the foot, where the dust is thrown up,
+    // and along the top, where the roof's water runs over.
+    wall *= 1.0 - 0.18 * (1.0 - smoothstep(foot, foot + 2.2, f.v)) - 0.14 * smoothstep(f.top - 3.5, f.top, f.v) * (0.6 + 0.4 * evoNoise(vec2(f.u * 1.7, 3.0)));
     evoWallHeight = 1.0 - joint;
     evoWallGlow = evoWash(wall, f.v);
     if (!grid) return wall;
+    {
+      // Rain down from every sill, and from under every cooler the water it
+      // drips, a dark tongue over the floor below.
+      float kindHere = evoHash(vec2(column, 3.0) + f.seed * 41.0);
+      float streaks = 0.5 + 0.5 * evoNoise(vec2(f.u * 9.0, f.seed * 40.0));
+      if (kindHere >= 0.64) {
+        float under = clamp((0.2 - cell.y) * STOREY, 0.0, 2.0);
+        float sill = step(0.2, cell.x) * step(cell.x, 0.8) * step(cell.y, 0.2);
+        wall *= 1.0 - 0.16 * sill * exp(-under * 1.6) * streaks;
+        vec2 above = vec2(column, level + 1.0) + f.seed * 57.0;
+        float drips = step(evoHash(above + 9.0), 0.32) * step(level + 1.0, floor((f.top - 1.1 - foot) / STOREY) - 0.5);
+        float tongue = (1.0 - smoothstep(0.03, 0.09, abs(cell.x - 0.7 + 0.02 * sin(f.v * 3.0)))) * smoothstep(0.35, 1.0, cell.y);
+        float here = step(evoHash(vec2(column, level) + f.seed * 57.0 + 9.0), 0.32) * (1.0 - smoothstep(0.03, 0.09, abs(cell.x - 0.7))) * step(cell.y, 0.05);
+        wall *= 1.0 - 0.38 * max(drips * tongue, here) * (0.6 + 0.4 * streaks);
+      }
+      evoWallGlow = evoWash(wall, f.v);
+    }
 
     if (f.end) {
       // The end of a block has no flats looking out of it. On some of them
@@ -567,6 +598,13 @@ const BUILDING_FRAG_PARS = /* glsl */ `
         return front;
       }
       vec2 open = vec2(at.x, (at.y - RAIL) / (1.0 - RAIL));
+      vec2 opening = vec2(BAY * 0.9, STOREY * 0.865 * (1.0 - RAIL));
+      if (level < 1.5 && evoHash(id + 31.0) < 0.5 && evoGrille(open * opening, opening, f.aa) > 0.5) {
+        vec3 steel = evoLin(vec3(0.16, 0.17, 0.18));
+        evoWallGlow = evoWash(steel, f.v);
+        evoWallRough = 0.45;
+        return steel;
+      }
       float lit = evoLit(id, 0.62);
       vec3 bulb = evoBulb(pick);
       if (evoHash(id + 5.0) < 0.36) {
@@ -612,14 +650,21 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     }
     vec2 at = (cell - vec2(0.2, 0.2)) / vec2(0.6, 0.58);
     if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) return wall;
+    // The two lowest floors have grilles over most of their windows.
+    if (level < 1.5 && evoHash(id + 31.0) < 0.6 && evoGrille(at * vec2(BAY * 0.6, STOREY * 0.58), vec2(BAY * 0.6, STOREY * 0.58), f.aa) > 0.5) {
+      vec3 steel = evoLin(vec3(0.16, 0.17, 0.18));
+      evoWallGlow = evoWash(steel, f.v);
+      evoWallRough = 0.45;
+      return steel;
+    }
     return evoWindow(f, at, vec3(BAY * 0.3, STOREY * 0.29, 3.2), id, 0.66, evoLin(vec3(0.8, 0.78, 0.74)) * 0.8);
   }
 
   // ---- yellow brick: four or five floors, and an arch to every top window ----
   vec3 evoBrick(EvoFace f) {
-    const float BAY = 2.9;
-    const float STOREY = 3.5;
-    const float GROUND = 4.6;
+    const float BAY = ${BRICK.bay.toFixed(2)};
+    const float STOREY = ${BRICK.storey.toFixed(2)};
+    const float GROUND = ${BRICK.ground.toFixed(2)};
     vec2 b = vec2(f.u * 4.2 + floor(f.v * 13.0) * 0.5, f.v * 13.0);
     float mortar = max(step(0.93, fract(b.x)), step(0.86, fract(b.y))) * (1.0 - smoothstep(0.02, 0.07, f.aa));
     vec3 clay = mix(evoLin(vec3(0.7, 0.58, 0.36)), evoLin(vec3(0.8, 0.68, 0.45)), evoHash(floor(b) + f.seed * 31.0));
@@ -674,14 +719,20 @@ const BUILDING_FRAG_PARS = /* glsl */ `
       evoWallHeight = 0.0;
       return stone;
     }
-    return evoWindow(f, at, vec3(BAY * 0.23, STOREY * 0.36, 3.4), vec2(floor(bu), floor(fv)) + f.seed * 57.0, 0.6, evoLin(vec3(0.85, 0.83, 0.78)) * 0.8);
+    vec2 bid = vec2(floor(bu), floor(fv)) + f.seed * 57.0;
+    if (floor(fv) < 0.5 && evoHash(bid + 31.0) < 0.6 && evoGrille(at * vec2(BAY * 0.46, STOREY * 0.71), vec2(BAY * 0.46, STOREY * 0.71), f.aa) > 0.5) {
+      vec3 steel = evoLin(vec3(0.16, 0.17, 0.18));
+      evoWallGlow = evoWash(steel, f.v);
+      return steel;
+    }
+    return evoWindow(f, at, vec3(BAY * 0.23, STOREY * 0.36, 3.4), bid, 0.6, evoLin(vec3(0.85, 0.83, 0.78)) * 0.8);
   }
 
   // ---- painted render and glass balconies: what has gone up since -----------
   vec3 evoRender(EvoFace f) {
-    const float BAY = 3.4;
-    const float STOREY = 3.0;
-    const float GROUND = 4.4;
+    const float BAY = ${RENDER.bay.toFixed(2)};
+    const float STOREY = ${RENDER.storey.toFixed(2)};
+    const float GROUND = ${RENDER.ground.toFixed(2)};
     vec3 paint = mix(evoLin(vec3(0.86, 0.84, 0.78)), evoLin(vec3(0.78, 0.76, 0.72)), fract(f.seed * 6.1)) * (0.92 + 0.12 * evoNoise(f.world.xy * 0.3 + f.world.z * 0.3));
     vec3 other = mix(evoAccent(f.seed), evoLin(vec3(0.2, 0.21, 0.23)), step(0.5, fract(f.seed * 4.7)));
     bool shops = f.street && vMore.y > 0.5;
@@ -1138,6 +1189,10 @@ export function createCity(air: Air, options: CityOptions): Part {
     () => box.dispose(),
     () => wall.dispose(),
   )
+  // What stands out from the walls and off the roofs.
+  const relief = createRelief(blocks, shared, air, { shadows: options.shadows, signs, signGrid: new Vector2(SIGN_GRID.columns, SIGN_GRID.rows) })
+  root.add(relief.object)
+  disposers.push(relief.dispose)
 
   // ---- the street ----------------------------------------------------------
   const length = STREET_LENGTH
