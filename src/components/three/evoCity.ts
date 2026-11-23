@@ -18,7 +18,7 @@ import {
   ShaderMaterial,
   SphereGeometry,
 } from 'three'
-import { AIR_PARS, EVO_NOISE, PARS_HERE, inAir, type Air } from './evoAir'
+import { AIR_PARS, EVO_NOISE, PARS_HERE, inAir, ownShadow, type Air } from './evoAir'
 import { PLACE, hash2 } from './evoLand'
 import { BUMP, LIN } from './evoMaterials'
 import type { Beat, Part } from './evoWalk'
@@ -435,6 +435,7 @@ export function createCity(air: Air, options: CityOptions): Part {
   buildings.instanceMatrix.needsUpdate = true
   buildings.frustumCulled = false
   buildings.castShadow = options.shadows
+  if (options.shadows) disposers.push(ownShadow(buildings))
   buildings.receiveShadow = options.shadows
   root.add(buildings)
   disposers.push(
@@ -583,6 +584,7 @@ export function createCity(air: Air, options: CityOptions): Part {
   headlights.count = CARS * 2
   taillights.count = CARS * 2
   bodies.castShadow = options.shadows
+  if (options.shadows) disposers.push(ownShadow(bodies))
   beams.renderOrder = 4
   const PAINTS = ['#b9bcc2', '#1a1c20', '#e9e7e2', '#7a1c18', '#1f3a5c', '#4a4d52', '#c7a23a', '#2e4a3a']
   const tint = new Color()

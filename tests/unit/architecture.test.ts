@@ -131,7 +131,7 @@ describe('lazy 3D', () => {
     const { files, packages } = closure(join(THREE_DIR, 'creatures.worker.ts'))
     // A worker is its own bundle: anything it imports is shipped a second time.
     expect([...packages.keys()]).toEqual([])
-    expect([...files.keys()].map((file) => relative(THREE_DIR, file)).sort()).toEqual(['creatures.ts', 'creatures.worker.ts', 'evoFigures.ts', 'mascots.ts', 'sdf.ts'])
+    expect([...files.keys()].map((file) => relative(THREE_DIR, file)).sort()).toEqual(['creatures.ts', 'creatures.worker.ts', 'evoCoat.ts', 'evoFigures.ts', 'mascots.ts', 'sdf.ts'])
   })
 })
 

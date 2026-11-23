@@ -1,5 +1,6 @@
 import { blob, cut, mirrored, toPrimitives, tube, type BoneSpec, type CreatureDetail, type CreaturePayload, type Part } from './creatures'
-import { meshSdf, nearestField, type Vec3 } from './sdf'
+import { growCoat, type Coat, type Grower } from './evoCoat'
+import { meshSdf, nearestField, nearestFields, type Vec3 } from './sdf'
 
 /**
  * The people and the animals of the long walk, sculpted the way the site's
@@ -15,9 +16,14 @@ import { meshSdf, nearestField, type Vec3 } from './sdf'
  *   the payload carries how tall it came out (`size`) for the scene to stand it
  *   at that height.
  * - **A figure is more than one material.** Every shape belongs to a region —
- *   skin, hair, clothing, trim — and after meshing each vertex is given its
- *   share of the four, from which region's shapes it lies nearest. The surface
- *   is still one mesh with no seams; the shader colours it by those weights.
+ *   skin, scalp, pelt, leather, cloth, horn — and after meshing each vertex is
+ *   given its share of each, from which region's shapes it lies nearest. The
+ *   surface is still one mesh with no seams; the shader colours it by those
+ *   weights, and the fur and hair (`evoCoat.ts`) grow where they say.
+ * - **A figure is finer where it is looked at.** A face and a hand are meshed
+ *   several times as finely as a thigh, and every vertex is put on the field's
+ *   own surface (`meshSdf`'s `exact` and `refine`), so an eyelid a few
+ *   millimetres deep is still there when the mesh comes out.
  * - **Limbs are skinned by reach, not by distance.** Distance alone gives the
  *   ribs to the upper arm, which hangs closer to them than the spine does, and
  *   the inside of each thigh partly to the other leg. Here every bone has a
@@ -32,12 +38,27 @@ export type FigureKind = 'early' | 'modern' | 'mammoth' | 'crag'
 export const FIGURE_KINDS: readonly FigureKind[] = ['early', 'modern', 'mammoth', 'crag']
 export const isFigureKind = (kind: string): kind is FigureKind => (FIGURE_KINDS as readonly string[]).includes(kind)
 
-/** What a shape is made of. The shader has four colours and four finishes to match. */
+/**
+ * What a shape is made of. The shader (`evoMaterials.ts`) has a colour and a
+ * finish for each, and the numbers are the order it has them in.
+ */
+export const REGIONS = 8
 const SKIN = 0
+/** Where the hair of a head or a beard grows: the scalp under it, as dark as its roots. */
 const HAIR = 1
-const CLOTH = 2
-const TRIM = 3
-type Region = typeof SKIN | typeof HAIR | typeof CLOTH | typeof TRIM
+/** Fur, worn or grown: what a coat's cards stand on. */
+const PELT = 2
+/** Leather: a belt, a strap, leggings, the upper of a shoe. */
+const HIDE = 3
+/** Something knitted. */
+const CLOTH = 4
+/** Something woven and heavier. */
+const DENIM = 5
+/** Ivory and nail. */
+const HORN = 6
+/** The sole of a shoe. */
+const SOLE = 7
+type Region = typeof SKIN | typeof HAIR | typeof PELT | typeof HIDE | typeof CLOTH | typeof DENIM | typeof HORN | typeof SOLE
 
 interface Piece {
   part: Part
@@ -49,6 +70,18 @@ export interface FigureBone extends BoneSpec {
   girth: number
   /** +1 for the +z side only, -1 for the -z side only. Left out for the middle. */
   side?: 1 | -1
+}
+
+/**
+ * A mark on the surface, in metres: an ellipsoid of it, and how strong it is
+ * at the middle. Four kinds, which the shader reads as a flush of blood under
+ * skin, as shade, as the hair of a brow, and as a lip.
+ */
+interface Paint {
+  kind: 0 | 1 | 2 | 3
+  at: Vec3
+  size: Vec3
+  amount: number
 }
 
 interface Figure {
@@ -67,6 +100,15 @@ interface Figure {
    */
   soft: number
   margin: number
+  /** How many times finer than `spacing` to mesh round a point, in metres: see `meshSdf`. Given, the mesh is exact. */
+  refine?: (x: number, y: number, z: number) => number
+  /** What grows on it. */
+  coat?: Grower
+  paints?: Paint[]
+  /** Eyeballs, in metres: where each is and how big. */
+  eyes?: { at: Vec3; radius: number }[]
+  /** Tusks, in metres: see `CreatureSweep`. */
+  sweeps?: { bone: string; path: Vec3[]; radii: number[] }[]
 }
 
 // ------------------------------------------------------------------ builder
@@ -128,50 +170,91 @@ function skin(positions: Float32Array, bones: FigureBone[], softness: number, ed
   return { skinIndices, skinWeights }
 }
 
-/** Each vertex's share of the four regions, from which region's shapes it lies nearest. */
-function regionsOf(positions: Float32Array, pieces: Piece[], unit: number): Float32Array {
-  const fields = [SKIN, HAIR, CLOTH, TRIM].map((region) => {
-    const parts = pieces.filter((piece) => piece.region === region && !piece.part.negative).map((piece) => piece.part)
-    return parts.length ? nearestField(toPrimitives(parts)) : null
-  })
+/**
+ * What is worn lies over what wears it. Where a sleeve and the arm inside it
+ * are both at the surface the sleeve has it, by this much, in metres.
+ */
+const OVER = [0, 0.012, 0.016, 0.014, 0.016, 0.014, 0.004, 0.008]
+
+/** Each vertex's share of the eight regions, from which region's shapes it lies nearest. */
+function regionsOf(positions: Float32Array, pieces: Piece[], unit: number, blend: number): Float32Array {
+  const sets = OVER.map((_, region) => toPrimitives(pieces.filter((piece) => piece.region === region && !piece.part.negative).map((piece) => piece.part)))
+  // A vertex is on the surface, so whatever it belongs to is within a fillet
+  // of it, and nothing further off than that and a border's width has a say.
+  const nearest = nearestFields(sets, 0.06 * unit + blend)
   const count = positions.length / 3
-  const out = new Float32Array(count * 4)
+  const out = new Float32Array(count * REGIONS)
   // The width of the border between two regions on the surface.
   const soft = 0.0045 * unit
-  // What is worn lies over what wears it. Where a sleeve and the arm inside it
-  // are both at the surface the sleeve has it, by this much.
-  const over = [0, 0.012 * unit, 0.016 * unit, 0.014 * unit]
-  const d = [0, 0, 0, 0]
+  const d = new Float64Array(REGIONS)
   for (let v = 0; v < count; v++) {
-    const x = positions[v * 3]!
-    const y = positions[v * 3 + 1]!
-    const z = positions[v * 3 + 2]!
+    nearest(positions[v * 3]!, positions[v * 3 + 1]!, positions[v * 3 + 2]!, d)
     let least = Infinity
-    for (let r = 0; r < 4; r++) {
-      d[r] = fields[r] ? fields[r]!(x, y, z) - over[r]! : Infinity
+    for (let r = 0; r < REGIONS; r++) {
+      d[r] = d[r]! - OVER[r]! * unit
       if (d[r]! < least) least = d[r]!
     }
+    if (least === Infinity) {
+      out[v * REGIONS] = 1
+      continue
+    }
     let total = 0
-    for (let r = 0; r < 4; r++) {
+    for (let r = 0; r < REGIONS; r++) {
       const w = d[r] === Infinity ? 0 : Math.exp(-(d[r]! - least) / soft)
-      out[v * 4 + r] = w
+      out[v * REGIONS + r] = w
       total += w
     }
-    for (let r = 0; r < 4; r++) out[v * 4 + r] = out[v * 4 + r]! / (total || 1)
+    for (let r = 0; r < REGIONS; r++) out[v * REGIONS + r] = out[v * REGIONS + r]! / (total || 1)
   }
   return out
+}
+
+/** The four kinds of mark at each vertex: the strongest of each that reaches it. */
+function paintOf(positions: Float32Array, paints: Paint[], unit: number): Float32Array {
+  const count = positions.length / 3
+  const out = new Float32Array(count * 4)
+  for (let v = 0; v < count; v++) {
+    const x = positions[v * 3]! / unit
+    const y = positions[v * 3 + 1]! / unit
+    const z = positions[v * 3 + 2]! / unit
+    for (const paint of paints) {
+      const q = Math.hypot((x - paint.at[0]) / paint.size[0], (y - paint.at[1]) / paint.size[1], (z - paint.at[2]) / paint.size[2])
+      if (q >= 1) continue
+      // Full strength over the middle third, and gone by the edge.
+      const t = q < 0.35 ? 1 : 1 - (q - 0.35) / 0.65
+      const w = paint.amount * t * t * (3 - 2 * t)
+      if (w > out[v * 4 + paint.kind]!) out[v * 4 + paint.kind] = w
+    }
+  }
+  return out
+}
+
+/** How much of the full coat each detail grows, and how much wider its cards are to cover for the rest. */
+const COAT_SHARE: Record<CreatureDetail, { share: number; widen: number }> = {
+  low: { share: 0.3, widen: 1.8 },
+  medium: { share: 0.58, widen: 1.32 },
+  high: { share: 1, widen: 1 },
 }
 
 function buildFigure(figure: Figure, detail: CreatureDetail): CreaturePayload {
   const unit = figure.scale
   const spacing = figure.spacing[detail] * unit
   const blend = spacing * figure.blend
-  const { positions, normals, indices, ao } = meshSdf(toPrimitives(figure.pieces.map((piece) => piece.part)), { spacing, blend, carve: blend * 0.45 })
-
+  const refine = figure.refine
+  const primitives = toPrimitives(figure.pieces.map((piece) => piece.part))
+  const { positions, normals, indices, ao } = meshSdf(primitives, {
+    spacing,
+    blend,
+    carve: blend * 0.45,
+    exact: refine !== undefined,
+    refine: refine ? (x, y, z) => refine(x / unit, y / unit, z / unit) : undefined,
+  })
   // Regions and skin weights are worked out where the anatomy was written,
   // before the mesh is moved and scaled.
-  const regions = regionsOf(positions, figure.pieces, unit)
-  const { skinIndices, skinWeights } = skin(positions, figure.bones, figure.soft * unit, figure.margin * unit)
+  const all = regionsOf(positions, figure.pieces, unit, blend)
+  const weigh = (points: Float32Array) => skin(points, figure.bones, figure.soft * unit, figure.margin * unit)
+  const { skinIndices, skinWeights } = weigh(positions)
+  const paint = figure.paints ? paintOf(positions, figure.paints, unit) : undefined
 
   let minX = Infinity
   let minY = Infinity
@@ -195,6 +278,18 @@ function buildFigure(figure: Figure, detail: CreatureDetail): CreaturePayload {
   const cz = (minZ + maxZ) / 2
   const longest = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
   const k = longest > 0 ? 1 / longest : 1
+
+  // The coat grows on the mesh as it was sculpted, and is moved with it.
+  let coat: Coat | undefined
+  if (figure.coat) {
+    coat = growCoat({ positions, normals, indices, ao, regions: all, unit }, figure.coat, {
+      ...COAT_SHARE[detail],
+      weigh,
+      centre: [cx, cy, cz],
+      scale: k,
+      field: nearestField(primitives),
+    })
+  }
   for (let i = 0; i < positions.length; i += 3) {
     positions[i] = (positions[i]! - cx) * k
     positions[i + 1] = (positions[i + 1]! - cy) * k
@@ -207,6 +302,18 @@ function buildFigure(figure: Figure, detail: CreatureDetail): CreaturePayload {
     head: map(bone.head),
     tip: bone.tip ? map(bone.tip) : undefined,
   }))
+  const eyeBone = bones.find((bone) => bone.name === 'head') ?? bones[0]!
+
+  // Two attributes of four, which is what a vertex shader is handed.
+  const count = positions.length / 3
+  const regions = new Float32Array(count * 4)
+  const regions2 = new Float32Array(count * 4)
+  for (let v = 0; v < count; v++) {
+    for (let r = 0; r < 4; r++) {
+      regions[v * 4 + r] = all[v * REGIONS + r]!
+      regions2[v * 4 + r] = all[v * REGIONS + 4 + r]!
+    }
+  }
 
   return {
     positions,
@@ -216,10 +323,27 @@ function buildFigure(figure: Figure, detail: CreatureDetail): CreaturePayload {
     skinIndices,
     skinWeights,
     bones,
-    eyeBone: bones.some((bone) => bone.name === 'head') ? 'head' : bones[0]!.name,
-    eyes: [],
+    eyeBone: eyeBone.name,
+    eyes: (figure.eyes ?? []).map((eye) => {
+      const at = map([eye.at[0] * unit, eye.at[1] * unit, eye.at[2] * unit])
+      return { offset: [at[0] - eyeBone.head[0], at[1] - eyeBone.head[1], at[2] - eyeBone.head[2]], radius: eye.radius * unit * k }
+    }),
     teeth: [],
     regions,
+    regions2,
+    paint,
+    coat,
+    sweeps: (figure.sweeps ?? []).map((sweep) => {
+      const from = bones.find((bone) => bone.name === sweep.bone) ?? bones[0]!
+      return {
+        bone: from.name,
+        path: sweep.path.map((point) => {
+          const at = map([point[0] * unit, point[1] * unit, point[2] * unit])
+          return [at[0] - from.head[0], at[1] - from.head[1], at[2] - from.head[2]] as Vec3
+        }),
+        radii: sweep.radii.map((radius) => radius * unit * k),
+      }
+    }),
     size: longest / unit,
   }
 }
@@ -231,33 +355,43 @@ const HUMAN_SCALE = 2
 
 const at = (unit: number, [x, y, z]: Vec3): Vec3 => [x * unit, y * unit, z * unit]
 
-/** Helpers that take metres and tag the shape with what it is made of. */
+/**
+ * Helpers that take metres and tag the shape with what it is made of. `fillet`,
+ * where one is given, is the shape's own in metres: small ones belong only
+ * where the mesh is refined enough to show them.
+ */
 function kit(unit: number) {
   // Every tube is one shape: its capsules are joined plainly, and only the
   // whole limb is filleted into the body.
   let groups = 0
-  const mass = (region: Region, p: Vec3, size: Vec3, yaw?: number, pitch?: number): Piece => ({ part: blob(at(unit, p), at(unit, size), yaw, pitch), region })
-  const limb = (region: Region, path: Vec3[], radii: number[]): Piece => ({
+  const own = (fillet?: number) => (fillet === undefined ? undefined : fillet * unit)
+  const mass = (region: Region, p: Vec3, size: Vec3, yaw?: number, pitch?: number, fillet?: number): Piece => ({
+    part: { ...blob(at(unit, p), at(unit, size), yaw, pitch), blend: own(fillet) },
+    region,
+  })
+  const limb = (region: Region, path: Vec3[], radii: number[], fillet?: number): Piece => ({
     part: {
       ...tube(
         path.map((p) => at(unit, p)),
         radii.map((r) => r * unit),
       ),
       group: groups++,
+      blend: own(fillet),
     },
     region,
   })
-  const carve = (p: Vec3, size: Vec3, yaw?: number, pitch?: number): Piece => ({ part: cut(at(unit, p), at(unit, size), yaw, pitch), region: SKIN })
+  const carve = (p: Vec3, size: Vec3, yaw?: number, pitch?: number, fillet?: number): Piece => ({
+    part: { ...cut(at(unit, p), at(unit, size), yaw, pitch), blend: own(fillet) },
+    region: SKIN,
+  })
   const both = (piece: Piece): Piece[] => mirrored(piece.part).map((part) => ({ part, region: piece.region }))
-  /** A closed band round the body at a height: a belt, a collar, a hem. */
-  const ring = (region: Region, y: number, front: number, back: number, half: number, radius: number, slant = 0): Piece[] => {
+  /** A closed band round a point: a belt, a collar, the tie of a boot. `slant` tips it forward. */
+  const hoop = (region: Region, centre: Vec3, rx: number, rz: number, radius: number, slant = 0): Piece[] => {
     const steps = 10
     const points: Vec3[] = []
     for (let i = 0; i <= steps; i++) {
       const a = (i / steps) * Math.PI * 2
-      const cx = (front - back) / 2
-      const rx = (front + back) / 2
-      points.push([cx + Math.cos(a) * rx, y + Math.cos(a) * slant, Math.sin(a) * half])
+      points.push([centre[0] + Math.cos(a) * rx, centre[1] + Math.cos(a) * slant, centre[2] + Math.sin(a) * rz])
     }
     const group = groups++
     const out: Piece[] = []
@@ -274,10 +408,17 @@ function kit(unit: number) {
     girth: girth * unit,
     side,
   })
-  return { mass, limb, carve, both, ring, bone }
+  return { mass, limb, carve, both, hoop, bone }
 }
 
 const add = (a: Vec3, b: Vec3, k: number): Vec3 => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k]
+const flipZ = ([x, y, z]: Vec3): Vec3 => [x, y, -z]
+/** 0 at `a`, 1 at `b`, eased; `a` may be the greater. */
+const ramp = (a: number, b: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
+const pair = (paint: Paint): Paint[] => [paint, { ...paint, at: flipZ(paint.at) }]
 
 /**
  * The joints of a person a metre seventy-six tall, facing +x, standing with
@@ -308,6 +449,9 @@ export const HUMAN = (() => {
     knee: [0.012, 0.5, 0.1] as Vec3,
     ankle: [-0.012, 0.085, 0.105] as Vec3,
     toe: [0.17, 0.025, 0.116] as Vec3,
+    /** Where an eye is, and the middle of the palm a spear lies across. */
+    eye: [0.0745, 1.656, 0.031] as Vec3,
+    grip: 0.07,
   }
 })()
 
@@ -326,51 +470,112 @@ interface HumanLook {
   brow: number
   /** Thicker neck, shoulders and limbs: 1 is a modern build. */
   build: number
-  /** Whether the chest is bare. Under a top its muscle is left out, or it shows through the cloth. */
-  bare: boolean
+  /** A broader nose and a heavier jaw, 0 to 1. */
+  broad: number
 }
 
-/** The body under whatever it wears: the same for everyone, give or take a brow. */
+/**
+ * The body under whatever it wears: the same for everyone, give or take a
+ * brow. What will be seen of it is sculpted — a head, a neck, the arms, the
+ * hands — and what will be under clothing is only there to hold the clothing
+ * out to the right shape.
+ */
 function body(look: HumanLook): Piece[] {
   const { mass, limb, carve, both } = kit(HUMAN_SCALE)
   const g = look.build
+  const w = look.broad
   const H = HUMAN
-  const mid = (a: Vec3, b: Vec3, bulge: Vec3 = [0, 0, 0]): Vec3 => [(a[0] + b[0]) / 2 + bulge[0], (a[1] + b[1]) / 2 + bulge[1], (a[2] + b[2]) / 2 + bulge[2]]
+  const d = H.armDir
+  // Down the arm, and from it: `fwd` is the thumb's side (forward, as it
+  // hangs), `out` is the back of the hand's side, away from the body.
+  const arm = (base: Vec3, a: number, fwd = 0, out = 0): Vec3 => [base[0] + fwd, base[1] + d[1] * a + d[2] * out, base[2] + d[2] * a - d[1] * out]
+  const S = H.shoulder
+  const E = H.elbow
+  const W = H.wrist
+
+  // The hand: four bones of a palm side by side, a finger curled off the end
+  // of each as a hand at rest holds them, and a thumb across the front.
+  const KNUCKLE = 0.088
+  const curl = [0.45, 1.15, 1.7]
+  const hand: Piece[] = []
+  for (const [fwd, length, radius] of [
+    [0.0285, 0.072, 0.0098],
+    [0.0095, 0.08, 0.0102],
+    [-0.0095, 0.074, 0.0096],
+    [-0.0275, 0.058, 0.0086],
+  ] as const) {
+    hand.push(...both(limb(SKIN, [arm(W, 0.006, fwd * 0.72), arm(W, KNUCKLE, fwd)], [0.0125, 0.0118])))
+    const points: Vec3[] = [arm(W, KNUCKLE, fwd)]
+    let along = KNUCKLE
+    let inward = 0
+    ;[0.45, 0.3, 0.25].forEach((share, i) => {
+      along += Math.cos(curl[i]!) * length * share
+      inward += Math.sin(curl[i]!) * length * share
+      points.push(arm(W, along, fwd, -inward))
+    })
+    hand.push(...both(limb(SKIN, points, [radius, radius * 0.94, radius * 0.86, radius * 0.76], 0.003)))
+  }
+  hand.push(
+    ...both(limb(SKIN, [arm(W, 0.02, 0.026, -0.006), arm(W, 0.052, 0.046, -0.016), arm(W, 0.08, 0.05, -0.03), arm(W, 0.096, 0.042, -0.042)], [0.0135, 0.012, 0.0105, 0.009], 0.006)),
+    ...both(mass(SKIN, arm(W, 0.04, 0.02, -0.012), [0.016, 0.02, 0.016], undefined, undefined, 0.008)),
+  )
+
   return [
-    // --- Trunk: hips, a belly, a ribcage, the muscle over them ---------------
+    // --- Trunk: only what holds clothing out -------------------------------
     mass(SKIN, [-0.005, 0.955, 0], [0.1, 0.105, 0.156]),
     mass(SKIN, [0.012, 1.09, 0], [0.097 * g, 0.12, 0.134 * g]),
     mass(SKIN, [-0.005, 1.29, 0], [0.117 * g, 0.165, 0.16 * g]),
-    ...(look.bare ? both(mass(SKIN, [0.084, 1.345, 0.085], [0.022 * g, 0.05, 0.08])) : []),
-    mass(SKIN, [-0.04, 1.4, 0], [0.084 * g, 0.094, 0.206]),
-    ...both(limb(SKIN, [[-0.02, 1.515, 0.035], [-0.015, 1.488, 0.12]], [0.045 * g, 0.045 * g])),
-    ...both(mass(SKIN, [-0.006, 1.45, 0.207], [0.063 * g, 0.07, 0.063 * g])),
+    mass(SKIN, [-0.04, 1.4, 0], [0.084 * g, 0.094, 0.2]),
     ...both(mass(SKIN, [-0.066, 0.925, 0.082], [0.074, 0.084, 0.08])),
 
-    // --- Neck and head ---------------------------------------------------------
-    limb(SKIN, [[-0.018, 1.47, 0], [-0.008, 1.53, 0], [0, 1.585, 0]], [0.057 * g, 0.05 * g, 0.049 * g]),
-    mass(SKIN, [-0.012, 1.672, 0], [0.097, 0.093, 0.077]),
-    mass(SKIN, [0.034, 1.612, 0], [0.069, 0.088, 0.064]),
-    mass(SKIN, [0.035, 1.565, 0], [0.058, 0.043, 0.056]),
-    mass(SKIN, [0.068, 1.548, 0], [0.026, 0.026, 0.03]),
-    mass(SKIN, [0.08, 1.678, 0], [0.02 + 0.006 * look.brow, 0.012 + 0.005 * look.brow, 0.056]),
-    limb(SKIN, [[0.086, 1.668, 0], [0.108, 1.63, 0], [0.111, 1.614, 0]], [0.01, 0.012, 0.0145]),
-    mass(SKIN, [0.092, 1.582, 0], [0.016, 0.016, 0.026]),
-    ...both(mass(SKIN, [0.07, 1.628, 0.044], [0.024, 0.021, 0.021])),
-    ...both(mass(SKIN, [-0.005, 1.635, 0.078], [0.016, 0.03, 0.011])),
-    ...both(carve([0.098, 1.655, 0.031], [0.009, 0.007, 0.014])),
-    carve([0.108, 1.579, 0], [0.01, 0.0026, 0.022]),
+    // --- Neck: its column, the two cords down the front of it, and the slope to the shoulders
+    limb(SKIN, [[-0.02, 1.47, 0], [-0.01, 1.53, 0], [-0.002, 1.59, 0]], [0.058 * g, 0.051 * g, 0.05 * g]),
+    ...both(limb(SKIN, [[-0.032, 1.6, 0.05], [0.004, 1.535, 0.04], [0.04, 1.475, 0.02]], [0.013, 0.013, 0.011], 0.012)),
+    mass(SKIN, [0.046, 1.537, 0], [0.012, 0.015, 0.013], undefined, undefined, 0.01),
+    ...both(limb(SKIN, [[-0.035, 1.53, 0.03], [-0.026, 1.494, 0.11], [-0.012, 1.468, 0.172]], [0.04 * g, 0.04 * g, 0.034 * g])),
+    ...both(limb(SKIN, [[0.058, 1.476, 0.02], [0.03, 1.474, 0.1], [0.008, 1.47, 0.172]], [0.011, 0.011, 0.011], 0.01)),
 
-    // --- Arms: held out, so they meet the body at the shoulder and nowhere else
-    ...both(limb(SKIN, [H.shoulder, mid(H.shoulder, H.elbow, [0.008, 0, 0]), H.elbow], [0.05 * g, 0.049 * g, 0.038 * g])),
-    ...both(limb(SKIN, [H.elbow, mid(H.elbow, H.wrist, [0.004, 0, 0]), H.wrist], [0.039 * g, 0.042 * g, 0.027])),
-    // The hand: three tubes side by side make a palm, which is wider than it is thick.
-    ...[-0.021, 0, 0.021].flatMap((dx) =>
-      both(limb(SKIN, [add(H.wrist, [dx * 0.6, 0, 0], 1), add(mid(H.wrist, H.tip), [dx, 0, 0], 1), add(H.tip, [dx * 0.8, 0, 0], 1)], [0.019, 0.021, 0.014])),
-    ),
-    ...both(limb(SKIN, [add(H.wrist, [0.022, -0.02, 0.012], 1), add(H.wrist, [0.052, -0.075, 0.03], 1)], [0.016, 0.012])),
+    // --- Head: a cranium, a face in front of it and a jaw under that --------
+    mass(SKIN, [-0.012, 1.672, 0], [0.098, 0.092, 0.0765]),
+    mass(SKIN, [0.03, 1.615, 0], [0.068, 0.085, 0.062]),
+    mass(SKIN, [0.03, 1.568, 0], [0.062, 0.04, 0.054 + 0.004 * w]),
+    mass(SKIN, [0.072, 1.552, 0], [0.022, 0.022, 0.026 + 0.004 * w], undefined, undefined, 0.012),
+    // The brow, and the bones of the cheek.
+    mass(SKIN, [0.08, 1.681, 0], [0.018 + 0.006 * look.brow, 0.011 + 0.004 * look.brow, 0.046], undefined, undefined, 0.016),
+    ...both(mass(SKIN, [0.068, 1.632, 0.046], [0.024, 0.02, 0.02], undefined, undefined, 0.012)),
+    // The nose: its bridge, its tip, a wing each side and a nostril under each.
+    limb(SKIN, [[0.09, 1.666, 0], [0.104, 1.638, 0], [0.112, 1.616, 0]], [0.008, 0.009 + 0.002 * w, 0.0105 + 0.002 * w], 0.006),
+    mass(SKIN, [0.1125, 1.6125, 0], [0.0108, 0.0098, 0.011 + 0.003 * w], undefined, undefined, 0.005),
+    ...both(mass(SKIN, [0.102, 1.6075, 0.013 + 0.003 * w], [0.0076, 0.007, 0.0072 + 0.002 * w], undefined, undefined, 0.004)),
+    // The mound the mouth is on, and the lips.
+    mass(SKIN, [0.084, 1.582, 0], [0.021, 0.022, 0.031], undefined, undefined, 0.01),
+    mass(SKIN, [0.1025, 1.5838, 0], [0.0075, 0.0052, 0.021], undefined, undefined, 0.004),
+    mass(SKIN, [0.1, 1.5742, 0], [0.008, 0.006, 0.019], undefined, undefined, 0.004),
+    // Ears.
+    ...both(mass(SKIN, [-0.008, 1.638, 0.0795], [0.014, 0.03, 0.008], 0.32, undefined, 0.005)),
+    // The lid of each eye, over where the ball is.
+    ...both(mass(SKIN, H.eye, [0.0132, 0.0132, 0.0132], undefined, undefined, 0.006)),
 
-    // --- Legs ------------------------------------------------------------------
+    // What is cut out of all that: the slot between the lids of each eye, the
+    // nostrils, the line of the mouth, the bowl of an ear.
+    ...both(carve([H.eye[0] + 0.0132, H.eye[1], H.eye[2]], [0.0066, 0.0042, 0.0118], undefined, undefined, 0.0014)),
+    ...both(carve([0.1065, 1.6005, 0.0066 + 0.002 * w], [0.0042, 0.0032, 0.0034], undefined, undefined, 0.002)),
+    carve([0.1085, 1.5792, 0], [0.009, 0.0016, 0.024], undefined, undefined, 0.0012),
+    ...both(carve([-0.002, 1.638, 0.0885], [0.007, 0.016, 0.005], 0.32, undefined, 0.003)),
+
+    // --- Arms: held out, so they meet the body at the shoulder and nowhere else.
+    // The cap of the shoulder, the upper arm with a muscle before and behind
+    // it, the point of the elbow, and a forearm that is thickest just below it.
+    ...both(limb(SKIN, [arm(S, -0.025, 0, 0.018), arm(S, 0.05, 0.002, 0.02), arm(S, 0.12, 0.004, 0.008)], [0.05 * g, 0.052 * g, 0.04 * g])),
+    ...both(limb(SKIN, [S, arm(S, 0.15, 0.006), E], [0.046 * g, 0.045 * g, 0.036 * g])),
+    ...both(limb(SKIN, [arm(S, 0.08, 0.018), arm(S, 0.16, 0.022), arm(S, 0.25, 0.014)], [0.027 * g, 0.033 * g, 0.024 * g], 0.012)),
+    ...both(limb(SKIN, [arm(S, 0.06, -0.02), arm(S, 0.15, -0.024), arm(S, 0.24, -0.016)], [0.027 * g, 0.031 * g, 0.024 * g], 0.012)),
+    ...both(mass(SKIN, arm(E, 0, -0.026), [0.02, 0.022, 0.02], undefined, undefined, 0.01)),
+    ...both(limb(SKIN, [E, arm(E, 0.08, 0.004), arm(E, 0.18, 0.002), W], [0.038 * g, 0.041 * g, 0.033 * g, 0.0255])),
+    ...both(limb(SKIN, [arm(E, -0.02, 0.014, 0.004), arm(E, 0.07, 0.018, 0.006), arm(E, 0.15, 0.012, 0.002)], [0.024 * g, 0.028 * g, 0.018 * g], 0.012)),
+    ...hand,
+
+    // --- Legs: again, only what holds clothing out ----------------------------
     ...both(limb(SKIN, [H.hip, [0.02, 0.72, 0.098], H.knee], [0.086 * g, 0.079 * g, 0.054 * g])),
     ...both(mass(SKIN, [0.024, 0.5, 0.1], [0.05, 0.055, 0.05])),
     ...both(limb(SKIN, [[0.008, 0.47, 0.1], [-0.02, 0.34, 0.104], H.ankle], [0.05 * g, 0.057 * g, 0.033])),
@@ -378,12 +583,36 @@ function body(look: HumanLook): Piece[] {
   ]
 }
 
+/** The marks every face has: blood near the surface, shade round the eyes, brows, lips. */
+function facePaint(brow: number): Paint[] {
+  return [
+    { kind: 0, at: [0.11, 1.614, 0], size: [0.022, 0.02, 0.022], amount: 0.4 },
+    ...pair({ kind: 0, at: [0.078, 1.62, 0.046], size: [0.03, 0.026, 0.03], amount: 0.3 }),
+    ...pair({ kind: 0, at: [-0.008, 1.638, 0.082], size: [0.03, 0.04, 0.02], amount: 0.45 }),
+    ...pair({ kind: 1, at: [0.088, 1.658, 0.031], size: [0.022, 0.015, 0.024], amount: 0.6 }),
+    ...pair({ kind: 1, at: [0.1065, 1.6, 0.0075], size: [0.007, 0.005, 0.006], amount: 0.7 }),
+    ...pair({ kind: 2, at: [0.094, 1.6775, 0.03], size: [0.014, 0.0062 + 0.002 * brow, 0.022], amount: 0.95 }),
+    { kind: 3, at: [0.103, 1.579, 0], size: [0.012, 0.0105, 0.023], amount: 0.85 },
+  ]
+}
+
+/** Blood at the knuckles and the elbows, and the grime of a hand that is used. */
+function armPaint(): Paint[] {
+  const H = HUMAN
+  const d = H.armDir
+  const along = (base: Vec3, a: number): Vec3 => [base[0], base[1] + d[1] * a, base[2] + d[2] * a]
+  return [
+    ...pair({ kind: 0, at: along(H.wrist, 0.09), size: [0.05, 0.03, 0.03], amount: 0.5 }),
+    ...pair({ kind: 0, at: add(H.elbow, [-0.02, 0, 0], 1), size: [0.035, 0.035, 0.035], amount: 0.45 }),
+    ...pair({ kind: 1, at: along(H.wrist, 0.11), size: [0.07, 0.09, 0.09], amount: 0.3 }),
+  ]
+}
+
 function skeleton(): FigureBone[] {
   const { bone } = kit(HUMAN_SCALE)
   const H = HUMAN
-  const flip = ([x, y, z]: Vec3): Vec3 => [x, y, -z]
   const side = (suffix: 'L' | 'R', s: 1 | -1): FigureBone[] => {
-    const m = (p: Vec3) => (s === 1 ? p : flip(p))
+    const m = (p: Vec3) => (s === 1 ? p : flipZ(p))
     return [
       bone(`upperArm${suffix}`, 'chest', m(H.shoulder), 0.046, undefined, s),
       bone(`foreArm${suffix}`, `upperArm${suffix}`, m(H.elbow), 0.038, undefined, s),
@@ -404,14 +633,42 @@ function skeleton(): FigureBone[] {
   ]
 }
 
-const HUMAN_SPACING: Record<CreatureDetail, number> = { low: 0.019, medium: 0.013, high: 0.0095 }
+const HUMAN_SPACING: Record<CreatureDetail, number> = { low: 0.02, medium: 0.015, high: 0.011 }
 
 /**
- * Someone from the cave: heavy-browed and thick-set, long hair and a beard, a
- * hide wrapped over one shoulder and belted at the waist, bare legs and feet.
+ * Where a person is meshed finer than a thigh needs: the front of the head
+ * twice as fine, the face four times, the eyes, nose and mouth eight; a hand
+ * twice, and its fingers four.
+ */
+function humanRefine(x: number, y: number, z: number): number {
+  const az = Math.abs(z)
+  if (y > 1.515) {
+    if (x > 0.068 && ((az > 0.006 && az < 0.058 && y > 1.636 && y < 1.678) || (az < 0.032 && y > 1.562 && y < 1.622))) return 3
+    if (Math.hypot((x - 0.07) / 0.066, (y - 1.62) / 0.08, z / 0.064) < 1) return 2
+    if (az > 0.058 && Math.abs(y - 1.638) < 0.045 && Math.abs(x + 0.004) < 0.034) return 2
+    // Behind the ears there is only hair, and that is drawn over.
+    return x > -0.04 ? 1 : 0
+  }
+  const W = HUMAN.wrist
+  const d = HUMAN.armDir
+  const along = (y - W[1]) * d[1] + (az - W[2]) * d[2]
+  const t = Math.min(0.13, Math.max(-0.02, along))
+  const from = Math.hypot(x - W[0], y - W[1] - d[1] * t, az - W[2] - d[2] * t)
+  if (from < 0.06 && along > 0.066) return 2
+  return from < 0.085 ? 1 : 0
+}
+
+/**
+ * Someone from the cave, dressed for the cold the mammoths lived in: long
+ * hair and a beard, a sleeveless tunic of fur to the middle of the thigh with
+ * a thong round the waist and a strap across the chest, a ruff of longer fur
+ * at the neck, leggings of hide and boots of fur tied at the ankle.
  */
 function early(): Figure {
-  const { mass, limb, both, ring } = kit(HUMAN_SCALE)
+  const { mass, limb, carve, both, hoop } = kit(HUMAN_SCALE)
+  const H = HUMAN
+  const d = H.armDir
+  const along = (base: Vec3, a: number): Vec3 => [base[0], base[1] + d[1] * a, base[2] + d[2] * a]
   return {
     scale: HUMAN_SCALE,
     spacing: HUMAN_SPACING,
@@ -419,35 +676,91 @@ function early(): Figure {
     soft: 0.014,
     margin: 0.022,
     bones: skeleton(),
+    refine: humanRefine,
+    coat: earlyCoat,
+    paints: [...facePaint(0.6), ...armPaint()],
+    eyes: [{ at: H.eye, radius: 0.0118 }, { at: flipZ(H.eye), radius: 0.0118 }],
     pieces: [
-      ...body({ brow: 1, build: 1.07, bare: true }),
-      // Hair: a shaggy mass, down the neck to the shoulders, and a beard.
-      mass(HAIR, [-0.03, 1.7, 0], [0.105, 0.086, 0.09]),
-      limb(HAIR, [[-0.085, 1.66, 0], [-0.097, 1.56, 0], [-0.088, 1.47, 0]], [0.066, 0.07, 0.055]),
-      ...both(limb(HAIR, [[-0.012, 1.67, 0.07], [-0.03, 1.57, 0.086], [-0.046, 1.485, 0.088]], [0.035, 0.036, 0.026])),
-      mass(HAIR, [0.058, 1.536, 0], [0.04, 0.046, 0.052]),
-      // The hide: a kilt to mid-thigh, and a band of it up over the left shoulder.
-      mass(CLOTH, [-0.005, 0.975, 0], [0.128, 0.11, 0.184]),
-      mass(CLOTH, [-0.002, 0.84, 0], [0.15, 0.125, 0.202]),
-      limb(CLOTH, [[0, 1.5, 0.13], [0.09, 1.36, 0.05], [0.104, 1.2, -0.06], [0.06, 1.07, -0.15]], [0.05, 0.055, 0.055, 0.05]),
-      limb(CLOTH, [[-0.03, 1.5, 0.13], [-0.118, 1.36, 0.05], [-0.112, 1.2, -0.06], [-0.062, 1.07, -0.15]], [0.05, 0.055, 0.055, 0.05]),
-      mass(CLOTH, [-0.012, 1.485, 0.165], [0.082, 0.058, 0.088]),
-      // A thong round the waist.
-      ...ring(TRIM, 1.068, 0.128, 0.132, 0.178, 0.02),
+      ...body({ brow: 0.5, build: 1.07, broad: 0.5 }),
+      // Hair: over the skull, down the neck to the shoulders, and a beard.
+      mass(HAIR, [-0.03, 1.705, 0], [0.1, 0.078, 0.087]),
+      limb(HAIR, [[-0.085, 1.66, 0], [-0.1, 1.56, 0], [-0.092, 1.48, 0]], [0.062, 0.066, 0.05]),
+      ...both(limb(HAIR, [[-0.02, 1.67, 0.072], [-0.035, 1.58, 0.088], [-0.05, 1.5, 0.09]], [0.03, 0.032, 0.024])),
+      mass(HAIR, [0.06, 1.546, 0], [0.04, 0.046, 0.05]),
+      ...both(mass(HAIR, [0.04, 1.585, 0.05], [0.03, 0.035, 0.016])),
+      mass(HAIR, [0.099, 1.5925, 0], [0.01, 0.0058, 0.026], undefined, undefined, 0.004),
+      // The tunic: over the ribs and the belly, a yoke over the shoulders that
+      // stops short of the arms, and a skirt of it to the middle of the thigh.
+      mass(PELT, [-0.004, 1.3, 0], [0.13, 0.172, 0.174]),
+      mass(PELT, [0.012, 1.1, 0], [0.118, 0.13, 0.152]),
+      mass(PELT, [-0.032, 1.4, 0], [0.094, 0.084, 0.188]),
+      ...both(limb(PELT, [[-0.022, 1.5, 0.07], [-0.02, 1.474, 0.15]], [0.05, 0.046])),
+      mass(PELT, [-0.005, 0.96, 0], [0.128, 0.115, 0.18]),
+      mass(PELT, [-0.004, 0.83, 0], [0.142, 0.11, 0.196]),
+      // The ruff.
+      ...hoop(PELT, [-0.012, 1.482, 0], 0.092, 0.104, 0.03, 0.02),
+      // A thong round the waist with a pouch on it, and a strap from one
+      // shoulder to the other hip.
+      ...hoop(HIDE, [-0.002, 1.068, 0], 0.13, 0.166, 0.015),
+      mass(HIDE, [0.05, 1.0, 0.165], [0.04, 0.052, 0.028]),
+      limb(HIDE, [[-0.022, 1.505, 0.12], [0.106, 1.37, 0.044], [0.12, 1.22, -0.05], [0.07, 1.086, -0.152]], [0.0125, 0.0125, 0.0125, 0.0125]),
+      limb(HIDE, [[-0.022, 1.505, 0.12], [-0.128, 1.37, 0.044], [-0.124, 1.22, -0.05], [-0.06, 1.086, -0.152]], [0.0125, 0.0125, 0.0125, 0.0125]),
+      // A wrap of hide at each wrist.
+      ...both(limb(HIDE, [along(H.elbow, 0.17), along(H.elbow, 0.244)], [0.0345, 0.031])),
+      // Leggings.
+      ...both(limb(HIDE, [H.hip, [0.02, 0.72, 0.098], [0.014, 0.5, 0.1]], [0.092, 0.084, 0.063])),
+      ...both(limb(HIDE, [[0.014, 0.5, 0.1], [-0.016, 0.34, 0.104], [-0.012, 0.2, 0.105]], [0.061, 0.063, 0.05])),
+      // Boots, tied below the knee and at the ankle.
+      ...both(limb(PELT, [[-0.014, 0.34, 0.104], [-0.014, 0.2, 0.105], [-0.012, 0.09, 0.105]], [0.064, 0.06, 0.054])),
+      ...both(limb(PELT, [[-0.06, 0.052, 0.105], [0.05, 0.054, 0.11], [0.166, 0.042, 0.117]], [0.047, 0.051, 0.041])),
+      ...hoop(HIDE, [-0.014, 0.3, 0.104], 0.062, 0.062, 0.008),
+      ...hoop(HIDE, [-0.014, 0.3, -0.104], 0.062, 0.062, 0.008),
+      ...hoop(HIDE, [-0.012, 0.125, 0.105], 0.054, 0.054, 0.008),
+      ...hoop(HIDE, [-0.012, 0.125, -0.105], 0.054, 0.054, 0.008),
+      // The ground: what is under a foot is flat.
+      ...both(carve([0.05, -0.292, 0.11], [0.32, 0.3, 0.13])),
     ],
   }
+}
+
+/** What grows on someone from the cave: hair, a beard, and the fur of what they wear. */
+const earlyCoat: Grower = (x, y, z, n, r) => {
+  const side = z >= 0 ? 1 : -1
+  if (r[HAIR]! > 0.5) {
+    // The beard, under the mouth and along the jaw: longest at the chin.
+    if (y < 1.612 && x > 0.004) {
+      const chin = ramp(1.6, 1.53, y)
+      return { density: 15000, length: 0.045 + 0.075 * chin, width: 0.014, comb: [0.3, -1, side * 0.12], lift: 0.34, droop: 0.55, tint: 0, tone: 0.45, strands: 7 }
+    }
+    // Over the forehead it is short and pushed back; on top it lies back along
+    // the skull; from the sides and the back it hangs.
+    if (n[0] > 0.3 && y > 1.66) return { density: 13000, length: 0.06, width: 0.016, comb: [-0.5, 0.7, side * 0.5], lift: 0.25, droop: 0.12, tint: 0, tone: 0.5, strands: 8 }
+    if (n[1] > 0.45) return { density: 13000, length: 0.11, width: 0.018, comb: [-0.8, -0.3, side * 0.5], lift: 0.05, droop: 0.4, tint: 0, tone: 0.55, strands: 8 }
+    const back = ramp(0.02, -0.08, x)
+    return { density: 12000, length: 0.16 + 0.13 * back, width: 0.019, comb: [-0.12, -1, side * 0.05], lift: 0.1, droop: 1, tint: 0, tone: 0.4, strands: 8 }
+  }
+  if (r[PELT]! > 0.5) {
+    // The ruff at the neck is long; a boot's fur is short and lies down.
+    if (y > 1.44) return { density: 5200, length: 0.085, width: 0.024, comb: [0, -0.5, side * 0.5], lift: 0.6, droop: 0.5, tint: 1, tone: 0.7, strands: 7 }
+    if (y < 0.4) return { density: 5200, length: 0.034, width: 0.02, comb: [0, -1, 0], lift: 0.3, droop: 0.3, tint: 1, tone: 0.45, strands: 7 }
+    // The hem is the ragged edge of the hide, and hangs.
+    const hem = ramp(0.82, 0.74, y)
+    return { density: 4300, length: 0.045 + 0.04 * hem, width: 0.023, comb: [0, -1, 0], lift: 0.32 - 0.12 * hem, droop: 0.45 + 0.4 * hem, tint: 1, tone: 0.5, strands: 7 }
+  }
+  return null
 }
 
 /**
  * Someone from now: short hair, a hooded top with the hood down, trousers and
  * shoes. The clothes are the body's own shapes made a little thicker, plus the
- * things that give clothing its outline — a hem, a hood, the break of a
- * trouser leg over a shoe.
+ * things that give clothing its outline — a hem, a cuff, a hood, the break of
+ * a trouser leg over a shoe, a sole.
  */
 function modern(): Figure {
-  const { mass, limb, both, ring } = kit(HUMAN_SCALE)
+  const { mass, limb, carve, both, hoop } = kit(HUMAN_SCALE)
   const H = HUMAN
   const mid = (a: Vec3, b: Vec3): Vec3 => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
+  const cuff = add(H.wrist, H.armDir, -0.012)
   return {
     scale: HUMAN_SCALE,
     spacing: HUMAN_SPACING,
@@ -455,30 +768,50 @@ function modern(): Figure {
     soft: 0.014,
     margin: 0.022,
     bones: skeleton(),
+    refine: humanRefine,
+    coat: modernCoat,
+    paints: [...facePaint(0.3), ...armPaint()],
+    eyes: [{ at: H.eye, radius: 0.0118 }, { at: flipZ(H.eye), radius: 0.0118 }],
     pieces: [
-      ...body({ brow: 0, build: 1, bare: false }),
+      ...body({ brow: 0, build: 1, broad: 0 }),
       // Short hair.
       mass(HAIR, [-0.022, 1.698, 0], [0.101, 0.079, 0.084]),
       mass(HAIR, [-0.06, 1.64, 0], [0.062, 0.06, 0.076]),
       // The top. Its body is two tubes side by side — wider than it is deep,
-      // as a chest is — then the yoke over the shoulders, sleeves to the wrist,
-      // and the hood lying on the back.
+      // as a chest is — then the yoke over the shoulders, sleeves to the wrist
+      // with a cuff on each, a band at the hem, and the hood lying on the back.
       ...both(limb(CLOTH, [[-0.002, 0.985, 0.058], [0.004, 1.12, 0.056], [-0.004, 1.3, 0.064], [-0.012, 1.44, 0.06]], [0.115, 0.108, 0.122, 0.094])),
-      mass(CLOTH, [-0.04, 1.405, 0], [0.09, 0.094, 0.212]),
-      ...both(mass(CLOTH, [-0.006, 1.45, 0.207], [0.072, 0.076, 0.072])),
-      ...both(limb(CLOTH, [H.shoulder, mid(H.shoulder, H.elbow), H.elbow], [0.063, 0.06, 0.05])),
-      ...both(limb(CLOTH, [H.elbow, mid(H.elbow, H.wrist), add(H.wrist, H.armDir, -0.015)], [0.05, 0.049, 0.04])),
-      mass(CLOTH, [-0.098, 1.475, 0], [0.05, 0.075, 0.12]),
-      ...ring(CLOTH, 1.5, 0.068, 0.084, 0.086, 0.021, 0.022),
-      // Trousers, and the shoes they break over.
-      mass(TRIM, [-0.005, 0.94, 0], [0.112, 0.108, 0.166]),
-      ...both(mass(TRIM, [-0.066, 0.925, 0.082], [0.082, 0.09, 0.086])),
-      ...both(limb(TRIM, [H.hip, [0.02, 0.72, 0.098], [0.016, 0.5, 0.1]], [0.096, 0.088, 0.07])),
-      ...both(limb(TRIM, [[0.016, 0.5, 0.1], [-0.012, 0.32, 0.104], [-0.012, 0.11, 0.105]], [0.07, 0.066, 0.054])),
-      ...both(limb(HAIR, [[-0.066, 0.042, 0.105], [0.05, 0.05, 0.11], [0.172, 0.034, 0.117]], [0.044, 0.047, 0.034])),
-      ...both(mass(HAIR, [-0.012, 0.075, 0.105], [0.046, 0.04, 0.044])),
+      mass(CLOTH, [-0.004, 1.3, 0], [0.127, 0.17, 0.168]),
+      mass(CLOTH, [0.012, 1.1, 0], [0.112, 0.128, 0.146]),
+      mass(CLOTH, [-0.04, 1.405, 0], [0.092, 0.096, 0.214]),
+      ...both(limb(CLOTH, [[-0.035, 1.535, 0.03], [-0.026, 1.5, 0.11], [-0.012, 1.474, 0.172]], [0.044, 0.045, 0.04])),
+      ...both(mass(CLOTH, [-0.006, 1.444, 0.214], [0.08, 0.084, 0.08])),
+      ...both(limb(CLOTH, [H.shoulder, mid(H.shoulder, H.elbow), H.elbow], [0.068, 0.063, 0.052])),
+      ...both(limb(CLOTH, [H.elbow, mid(H.elbow, H.wrist), cuff], [0.05, 0.049, 0.04])),
+      ...both(limb(CLOTH, [add(cuff, H.armDir, -0.03), cuff], [0.0385, 0.037], 0.004)),
+      ...hoop(CLOTH, [-0.002, 0.975, 0], 0.118, 0.172, 0.022),
+      mass(CLOTH, [-0.092, 1.47, 0], [0.04, 0.058, 0.1]),
+      ...hoop(CLOTH, [-0.008, 1.5, 0], 0.076, 0.086, 0.021, 0.022),
+      // Trousers, breaking over the shoes.
+      mass(DENIM, [-0.005, 0.94, 0], [0.112, 0.108, 0.166]),
+      ...both(mass(DENIM, [-0.066, 0.925, 0.082], [0.082, 0.09, 0.086])),
+      ...both(limb(DENIM, [H.hip, [0.02, 0.72, 0.098], [0.016, 0.5, 0.1]], [0.096, 0.088, 0.07])),
+      ...both(limb(DENIM, [[0.016, 0.5, 0.1], [-0.012, 0.32, 0.104], [-0.012, 0.11, 0.105]], [0.07, 0.066, 0.056])),
+      // Shoes: an upper, and a sole a little wider than it.
+      ...both(limb(HIDE, [[-0.064, 0.056, 0.105], [0.05, 0.062, 0.11], [0.17, 0.046, 0.117]], [0.042, 0.045, 0.033])),
+      ...both(mass(HIDE, [-0.012, 0.082, 0.105], [0.046, 0.04, 0.043])),
+      ...both(limb(SOLE, [[-0.074, 0.02, 0.105], [0.05, 0.02, 0.11], [0.178, 0.02, 0.117]], [0.04, 0.046, 0.036], 0.004)),
+      ...both(carve([0.05, -0.296, 0.11], [0.34, 0.3, 0.14])),
     ],
   }
+}
+
+/** Short hair: forward over the top of the head, down at the sides and the back. */
+const modernCoat: Grower = (x, _y, z, n, r) => {
+  if (r[HAIR]! < 0.5) return null
+  const side = z >= 0 ? 1 : -1
+  if (n[1] > 0.4) return { density: 15000, length: 0.048, width: 0.014, comb: [0.8, -0.2, side * 0.45], lift: 0.1, droop: 0.3, tint: 0, tone: 0.5, strands: 8 }
+  return { density: 15000, length: 0.032 + 0.012 * ramp(0, -0.08, x), width: 0.013, comb: [-0.1, -1, 0], lift: 0.2, droop: 0.25, tint: 0, tone: 0.4, strands: 8 }
 }
 
 /**
@@ -501,19 +834,21 @@ export const MAMMOTH = {
   knee: [-0.93, 1.2, 0.5] as Vec3,
   ankle: [-1.05, 0.32, 0.5] as Vec3,
   trunk: [[2.08, 2.42, 0], [2.36, 1.8, 0], [2.4, 1.2, 0], [2.32, 0.72, 0], [2.46, 0.32, 0]] as Vec3[],
+  eye: [2.012, 2.77, 0.328] as Vec3,
+  tusk: [[1.86, 2.5, 0.2], [2.0, 2.16, 0.28], [2.4, 1.4, 0.52], [3.02, 0.94, 0.72], [3.7, 1.04, 0.68], [4.12, 1.56, 0.46], [4.16, 2.1, 0.2]] as Vec3[],
 } as const
 
 /**
- * A woolly mammoth: a high domed head and a hump over the shoulders, a back
- * that falls away behind it, a coat that hangs to the knees, small ears, a
- * trunk, and tusks that go out, round and back in.
+ * A woolly mammoth: a high domed head with a knob on top of it and a hump over
+ * the shoulders, a back that falls away behind, small ears, a trunk, tusks
+ * that go out, round and back in — and a body that is only the animal under
+ * its coat, which is grown on it afterwards and is most of what is seen.
  */
 function mammoth(): Figure {
   const { mass, limb, carve, both, bone } = kit(1)
   const M = MAMMOTH
-  const flip = ([x, y, z]: Vec3): Vec3 => [x, y, -z]
   const side = (suffix: 'L' | 'R', s: 1 | -1): FigureBone[] => {
-    const m = (p: Vec3) => (s === 1 ? p : flip(p))
+    const m = (p: Vec3) => (s === 1 ? p : flipZ(p))
     return [
       bone(`arm${suffix}`, 'chest', m(M.shoulder), 0.16, undefined, s),
       bone(`fore${suffix}`, `arm${suffix}`, m(M.elbow), 0.27, undefined, s),
@@ -522,18 +857,37 @@ function mammoth(): Figure {
       bone(`shin${suffix}`, `thigh${suffix}`, m(M.knee), 0.27, undefined, s),
       bone(`foot${suffix}`, `shin${suffix}`, m(M.ankle), 0.26, m([-0.92, 0.04, 0.5]), s),
       bone(`ear${suffix}`, 'head', m([1.2, 2.95, 0.4]), 0.1, m([1.22, 2.66, 0.66]), s),
-      // The tusks have bones only so that they keep to the head: the trunk
-      // hangs between them, and without these its bones would have them.
-      bone(`tusk${suffix}`, 'head', m([1.95, 2.15, 0.28]), 0.13, undefined, s),
-      bone(`tuskTip${suffix}`, `tusk${suffix}`, m([3.0, 1.15, 0.62]), 0.1, m([3.75, 2.05, 0.2]), s),
     ]
   }
+  // Nails round the front of each foot.
+  const nails = (x: number, spread: number[]): Piece[] =>
+    spread.flatMap((a) => both(mass(HORN, [x + 0.275 * Math.cos(a), 0.085, 0.5 + 0.27 * Math.sin(a)], [0.046, 0.075, 0.056], -a, undefined, 0.012)))
   return {
     scale: 1,
-    spacing: { low: 0.075, medium: 0.052, high: 0.038 },
-    blend: 1.9,
+    // Coarse, for what it is: nearly all of it is under a coat. What is not —
+    // the tusks, the end of the trunk, the feet, the eyes — is refined below.
+    spacing: { low: 0.09, medium: 0.066, high: 0.05 },
+    blend: 1.5,
     soft: 0.11,
     margin: 0.1,
+    refine: (x, y, z) => {
+      const eye = Math.hypot(x - M.eye[0], y - M.eye[1], Math.abs(z) - M.eye[2])
+      if (eye < 0.1) return 3
+      if (eye < 0.2) return 2
+      if (x > 1.75 || y < 0.44) return 1
+      return 0
+    },
+    coat: mammothCoat,
+    paints: [
+      // Tusks are stained where they leave the head, and worn pale at the tip.
+      ...pair({ kind: 1, at: [2.05, 2.05, 0.3], size: [0.5, 0.75, 0.4], amount: 0.75 }),
+      // The bare end of the trunk, and round each eye.
+      { kind: 1, at: [2.44, 0.36, 0], size: [0.3, 0.34, 0.3], amount: 0.2 },
+      ...pair({ kind: 1, at: [M.eye[0] + 0.02, M.eye[1], M.eye[2] + 0.03], size: [0.12, 0.09, 0.1], amount: 0.7 }),
+    ],
+    eyes: [{ at: M.eye, radius: 0.04 }, { at: flipZ(M.eye), radius: 0.04 }],
+    // Out of the head beside the trunk, down and apart, then forward, in and up.
+    sweeps: [M.tusk, M.tusk.map(flipZ)].map((path) => ({ bone: 'head', path, radii: [0.14, 0.145, 0.135, 0.118, 0.094, 0.064, 0.022] })),
     bones: [
       bone('hips', null, M.hips, 0.78),
       bone('spine', 'hips', M.spine, 0.9),
@@ -549,34 +903,90 @@ function mammoth(): Figure {
       ...side('R', -1),
     ],
     pieces: [
-      // --- The barrel, under its coat ----------------------------------------
-      mass(CLOTH, [0.55, 2.02, 0], [0.98, 0.98, 0.8]),
-      mass(CLOTH, [-0.2, 1.8, 0], [1.08, 0.9, 0.84]),
-      mass(CLOTH, [-0.98, 1.9, 0], [0.82, 0.86, 0.74]),
-      mass(CLOTH, [0.5, 2.82, 0], [0.6, 0.5, 0.48]),
-      limb(CLOTH, [[0.62, 2.95, 0], [-0.2, 2.72, 0], [-1.1, 2.42, 0], [-1.58, 2.0, 0]], [0.42, 0.46, 0.42, 0.3]),
-      // The coat hanging off the flanks and the belly.
-      mass(CLOTH, [-0.15, 1.3, 0], [1.25, 0.55, 0.74]),
-      ...both(mass(CLOTH, [0.9, 1.5, 0.5], [0.48, 0.62, 0.36])),
-      ...both(mass(CLOTH, [-1.02, 1.45, 0.48], [0.5, 0.62, 0.36])),
+      // --- The barrel: ribs, belly, quarters, and the line of the back -------
+      mass(PELT, [0.3, 2.12, 0], [1.2, 0.86, 0.74]),
+      mass(PELT, [-0.95, 1.98, 0], [0.86, 0.8, 0.7]),
+      mass(PELT, [-0.25, 1.68, 0], [1.15, 0.5, 0.66]),
+      mass(PELT, [0.72, 2.84, 0], [0.56, 0.5, 0.44]),
+      limb(PELT, [[0.76, 3.0, 0], [-0.2, 2.74, 0], [-1.15, 2.4, 0], [-1.72, 1.98, 0]], [0.36, 0.42, 0.4, 0.27]),
+      // The muscle each leg hangs from.
+      ...both(mass(PELT, [0.92, 1.95, 0.48], [0.5, 0.78, 0.36])),
+      ...both(mass(PELT, [-1.02, 1.8, 0.46], [0.56, 0.8, 0.36])),
 
       // --- Neck and head -----------------------------------------------------
-      mass(CLOTH, [1.02, 2.5, 0], [0.62, 0.74, 0.6]),
-      mass(CLOTH, [1.52, 2.95, 0], [0.52, 0.62, 0.48]),
-      mass(CLOTH, [1.44, 3.42, 0], [0.32, 0.27, 0.31]),
-      mass(SKIN, [1.86, 2.52, 0], [0.42, 0.6, 0.4]),
-      ...both(mass(CLOTH, [1.2, 2.84, 0.5], [0.13, 0.3, 0.17], 0.5)),
-      ...both(carve([2.1, 2.78, 0.33], [0.05, 0.04, 0.05])),
-      limb(SKIN, M.trunk, [0.31, 0.25, 0.19, 0.15, 0.11]),
-      ...both(limb(TRIM, [[1.95, 2.15, 0.28], [2.4, 1.45, 0.5], [3.0, 1.15, 0.62], [3.5, 1.45, 0.47], [3.68, 1.92, 0.26]], [0.13, 0.12, 0.105, 0.085, 0.055])),
+      mass(PELT, [1.12, 2.55, 0], [0.6, 0.72, 0.56]),
+      mass(PELT, [1.62, 3.0, 0], [0.5, 0.58, 0.46]),
+      mass(PELT, [1.52, 3.44, 0], [0.31, 0.25, 0.3]),
+      mass(PELT, [1.98, 2.62, 0], [0.38, 0.6, 0.36]),
+      mass(PELT, [1.68, 2.3, 0], [0.42, 0.42, 0.37]),
+      mass(SKIN, [1.97, 1.98, 0], [0.2, 0.13, 0.13]),
+      // What each tusk grows out of, and the ears.
+      ...both(mass(PELT, [2.03, 2.22, 0.27], [0.2, 0.3, 0.165])),
+      ...both(mass(PELT, [1.22, 2.84, 0.5], [0.1, 0.27, 0.16], 0.5)),
+      // The lid of each eye, the hollow it is in and the slot between its lids.
+      ...both(mass(SKIN, M.eye, [0.046, 0.046, 0.046], undefined, undefined, 0.02)),
+      ...both(carve([M.eye[0] + 0.05, M.eye[1], M.eye[2] + 0.07], [0.075, 0.06, 0.06], undefined, undefined, 0.03)),
+      ...both(carve([M.eye[0] + 0.022, M.eye[1], M.eye[2] + 0.043], [0.034, 0.017, 0.034], undefined, undefined, 0.005)),
+      // The trunk, bare at its end. (The tusks are not in here: see `sweeps`.)
+      limb(PELT, [...M.trunk.slice(0, 4), [2.39, 0.52, 0]], [0.31, 0.25, 0.19, 0.15, 0.13]),
+      limb(SKIN, [[2.39, 0.52, 0], [2.43, 0.41, 0], M.trunk[4]!], [0.128, 0.118, 0.098], 0.03),
 
-      // --- Legs: columns, with a pad of a foot ---------------------------------
-      ...both(limb(SKIN, [[0.95, 1.85, 0.5], M.elbow, M.wrist], [0.42, 0.31, 0.26])),
-      ...both(mass(SKIN, [1.03, 0.15, 0.5], [0.31, 0.16, 0.3])),
-      ...both(limb(SKIN, [[-1.05, 1.72, 0.48], M.knee, M.ankle], [0.45, 0.32, 0.25])),
-      ...both(mass(SKIN, [-1.0, 0.15, 0.5], [0.3, 0.16, 0.29])),
-      limb(CLOTH, [[-1.7, 2.02, 0], [-1.95, 1.5, 0], [-1.9, 1.08, 0]], [0.13, 0.085, 0.07]),
+      // --- Legs: columns, a little waisted above a pad of a foot ---------------
+      ...both(limb(PELT, [[0.95, 1.85, 0.5], M.elbow, [0.99, 0.62, 0.5], [0.99, 0.26, 0.5]], [0.42, 0.3, 0.235, 0.265])),
+      ...both(mass(PELT, [1.02, 0.17, 0.5], [0.3, 0.17, 0.29])),
+      ...nails(1.02, [-0.95, -0.32, 0.32, 0.95]),
+      ...both(limb(PELT, [[-1.05, 1.72, 0.48], M.knee, [-1.04, 0.62, 0.5], [-1.05, 0.26, 0.5]], [0.45, 0.31, 0.23, 0.26])),
+      ...both(mass(PELT, [-1.0, 0.17, 0.5], [0.29, 0.17, 0.28])),
+      ...nails(-1.0, [-0.6, 0, 0.6]),
+      limb(PELT, [[-1.7, 2.02, 0], [-1.95, 1.5, 0], [-1.9, 1.08, 0]], [0.13, 0.085, 0.07]),
+      // The ground under each foot.
+      ...both(carve([1.02, -0.47, 0.5], [0.6, 0.5, 0.6])),
+      ...both(carve([-1.0, -0.47, 0.5], [0.6, 0.5, 0.6])),
     ],
+  }
+}
+
+/**
+ * A mammoth's coat: a mane along the back and over the hump, hair that gets
+ * longer down the flanks to a skirt under the belly, shorter on the head and
+ * shorter still down the trunk and the legs, and none on the feet.
+ */
+const mammothCoat: Grower = (x, y, z, n, r) => {
+  if (r[PELT]! < 0.55 || y < 0.2) return null
+  const side = z >= 0 ? 1 : -1
+  // The trunk, to its bare end.
+  if (x > 1.95 && y < 2.25) {
+    const down = ramp(2.2, 0.7, y)
+    return { density: 420, length: 0.2 - 0.12 * down, width: 0.07, comb: [0.1, -1, side * 0.15], lift: 0.25, droop: 0.5, tint: 1, tone: 0.3, strands: 8 }
+  }
+  // The legs, below the skirt.
+  if (y < 1.25) {
+    const down = ramp(1.25, 0.3, y)
+    return { density: 400, length: 0.42 - 0.3 * down, width: 0.075, comb: [-0.08, -1, side * 0.05], lift: 0.2, droop: 0.6, tint: 1, tone: 0.2 + 0.1 * down, strands: 8 }
+  }
+  // The head: a knot of it on top, shorter over the face, and none round the eyes.
+  if (x > 1.25) {
+    const eye = Math.hypot(x - MAMMOTH.eye[0], y - MAMMOTH.eye[1], Math.abs(z) - MAMMOTH.eye[2])
+    if (eye < 0.1) return null
+    if (y > 3.2) return { density: 330, length: 0.36, width: 0.085, comb: [-0.5, -0.3, side * 0.7], lift: 0.5, droop: 0.7, tint: 1, tone: 0.75, strands: 8 }
+    const face = ramp(1.55, 1.95, x)
+    return { density: 380, length: (0.3 - 0.17 * face) * (0.45 + 0.55 * ramp(0.1, 0.34, eye)), width: 0.075, comb: [-0.15, -1, side * 0.25], lift: 0.22, droop: 0.7, tint: 1, tone: 0.45, strands: 8 }
+  }
+  // The tail's tuft.
+  if (x < -1.75) return { density: 420, length: 0.22 + 0.2 * ramp(1.7, 1.1, y), width: 0.07, comb: [-0.2, -1, 0], lift: 0.25, droop: 0.8, tint: 1, tone: 0.3, strands: 8 }
+  // The body: longest low on the flanks, where it hangs clear.
+  const low = ramp(2.6, 1.45, y)
+  const top = ramp(0.2, 0.8, n[1])
+  return {
+    density: 300,
+    length: 0.34 + 0.42 * low + 0.1 * top,
+    width: 0.09,
+    comb: [-0.28, -1, side * (0.2 + 0.6 * top)],
+    lift: 0.22 + 0.16 * top - 0.08 * low,
+    droop: 0.85,
+    tint: 1,
+    tone: 0.8 - 0.55 * low,
+    strands: 8,
   }
 }
 

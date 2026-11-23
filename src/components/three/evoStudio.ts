@@ -79,7 +79,7 @@ function drawEditor(canvas: HTMLCanvasElement, paper: string, ink: string, accen
   g.globalAlpha = 1
 }
 
-export function createStudio(air: Air & Arrivals, detail: CreatureDetail, bump: number): Part & { setPaper(paper: string, ink: string, accent: string): void } {
+export function createStudio(air: Air & Arrivals, detail: CreatureDetail, bump: number, coat: number): Part & { setPaper(paper: string, ink: string, accent: string): void } {
   const root = new Group()
   const disposers: (() => void)[] = []
   const keep = <T extends { dispose(): void }>(thing: T): T => {
@@ -205,7 +205,7 @@ export function createStudio(air: Air & Arrivals, detail: CreatureDetail, bump: 
   root.add(lamp, glow)
 
   // ---- whoever it is -------------------------------------------------------
-  const person = new Figure('modern', air, 'studio', { detail, look: 'modern', bump, shadows: false })
+  const person = new Figure('modern', air, { detail, look: 'modern', bump, shadows: false, coat })
   root.add(person.group)
   disposers.push(() => person.dispose())
   const pose = createPose()
@@ -236,6 +236,7 @@ export function createStudio(air: Air & Arrivals, detail: CreatureDetail, bump: 
         // Facing the desk, which is to say away from the street.
         person.place(seatX, seatZ - 0.02, -Math.PI / 2, FLOOR)
         applyPose(person.byName, deskPose(pose, beat.t), person.frame)
+        person.seen(beat.camera.position.distanceTo(person.group.position))
       }
     },
     dispose() {

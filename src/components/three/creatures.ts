@@ -1,3 +1,4 @@
+import type { Coat } from './evoCoat'
 import { meshSdf, type SdfPrimitive, type Vec3 } from './sdf'
 
 /**
@@ -52,6 +53,8 @@ interface Blob {
   negative?: boolean
   /** Joins it to its neighbours in the list as one shape. See `SdfCone.group`. */
   group?: number
+  /** Its own fillet, in place of the mesh's. See `SdfCone.blend`. */
+  blend?: number
 }
 
 /** A limb, tail or muzzle: a tapering tube swept along a curve. */
@@ -64,6 +67,8 @@ interface Tube {
   group?: number
   /** Carve the tube out rather than adding it: a passage through rock. */
   negative?: boolean
+  /** Its own fillet, in place of the mesh's. See `SdfCone.blend`. */
+  blend?: number
 }
 
 export type Part = Blob | Tube
@@ -114,6 +119,21 @@ export interface CreatureTooth {
   down: boolean
 }
 
+/**
+ * Something long, round and tapering that hangs off one bone and does not
+ * bend: a tusk. Not in the field with the rest, because a field sampled on a
+ * grid loses whatever is thinner than a cell — the last half-metre of a tusk —
+ * and joins the rest of it out of straight pieces. It is a circle swept along
+ * a curve, which a mesh can be made of exactly.
+ */
+export interface CreatureSweep {
+  bone: string
+  /** Points the curve goes through, from the bone, in normalised units. */
+  path: Vec3[]
+  /** The radius at each of them. */
+  radii: number[]
+}
+
 /** Everything needed to build a SkinnedMesh, in transferable form. */
 export interface CreaturePayload {
   positions: Float32Array
@@ -130,9 +150,17 @@ export interface CreaturePayload {
   teeth: CreatureTooth[]
   /**
    * For the figures of the long walk (`evoFigures.ts`): how much of each
-   * vertex is skin, hair, clothing and trim, four weights that sum to one.
+   * vertex is each of the eight things a figure can be made of — skin, scalp,
+   * pelt, leather, two cloths, horn and sole — as two sets of four weights
+   * that sum to one between them.
    */
   regions?: Float32Array
+  regions2?: Float32Array
+  /** Marks on the surface, four to a vertex: a flush of blood, shade, a brow's hair, a lip. */
+  paint?: Float32Array
+  /** The fur and hair that stand on it, as cards (`evoCoat.ts`). */
+  coat?: Coat
+  sweeps?: CreatureSweep[]
   /** And how long the longest axis was before it was normalised to 1, in metres. */
   size?: number
 }
@@ -225,7 +253,7 @@ function tubeToCones(part: Tube): SdfPrimitive[] {
     const t = i / steps
     const point = splinePoint(part.path, t)
     const r = radiusAt(t)
-    cones.push({ kind: 'cone', a: prev, b: point, ra: prevR, rb: r, group: part.group, negative: part.negative })
+    cones.push({ kind: 'cone', a: prev, b: point, ra: prevR, rb: r, group: part.group, negative: part.negative, blend: part.blend })
     prev = point
     prevR = r
   }
@@ -244,6 +272,7 @@ export function toPrimitives(parts: Part[]): SdfPrimitive[] {
         pitch: part.pitch,
         negative: part.negative,
         group: part.group,
+        blend: part.blend,
       })
     } else {
       out.push(...tubeToCones(part))

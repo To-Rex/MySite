@@ -3,7 +3,7 @@ import { Vector3 } from 'three'
 import { ERAS, ERA_FROM, captionAt, eraAt, eraUntil, getEvolution, resetEvolution, setEvolution, walkProgress, walkScreens, walkScrollFor } from '@/lib/evolution'
 import { buildSkeleton } from '@/components/three/creatureRig'
 import { STUDIO, towers } from '@/components/three/evoCity'
-import { createFigure } from '@/components/three/evoFigures'
+import { HUMAN, MAMMOTH, REGIONS, createFigure } from '@/components/three/evoFigures'
 import { LAND, PLACE, RANGE, buildLand, caveFootprint, grassAt, groundAt, landAt, rangeAt } from '@/components/three/evoLand'
 import { BEAST_GAITS, GAITS, applyBeast, applyPose, beastGaitPose, createBeastPose, createPose, deskPose, gaitPose, measure, sitPose, standPose } from '@/components/three/evoRig'
 import {
@@ -30,7 +30,7 @@ import {
   type Walker,
 } from '@/components/three/evoScript'
 import { SCREEN } from '@/components/three/evoStudio'
-import { components, edgeUse, openEdges } from './mesh'
+import { allFinite, components, edgeUse, openEdges } from './mesh'
 
 /**
  * The long walk: the pinned scene after the hero that the scroll runs from a
@@ -292,17 +292,22 @@ describe('the cast', () => {
       expect(hunterAt(i, 0.12, w).seated).toBe(0)
       // Out of the cave by the time the camera is, and in the grass.
       expect(hunterAt(i, 0.22, w).x).toBeGreaterThan(0)
+      // Bent low all the way in, and running only once the herd has broken.
       expect(hunterAt(i, 0.34, w).low).toBeGreaterThan(0.9)
-      expect(hunterAt(i, 0.41, w).running).toBeGreaterThan(0.9)
+      expect(hunterAt(i, 0.395, w).low).toBeGreaterThan(0.9)
+      expect(hunterAt(i, 0.395, w).running).toBe(0)
+      expect(hunterAt(i, 0.43, w).running).toBeGreaterThan(0.9)
       expect(hunterAt(i, 0.5, w).running).toBe(0)
       expect(hunterAt(i, 0.5, w).x).toBeGreaterThan(90)
     }
-    // Only the one in front throws, and only once it has run.
+    // Only the one in front throws, and only from close.
     const thrower = {} as Walker
     expect(hunterAt(0, 0.39, thrower).cast).toBe(0)
     expect(hunterAt(0, CAST.from, thrower).cast).toBeGreaterThan(1)
     expect(hunterAt(1, CAST.from, thrower).cast).toBe(0)
     expect(CAST.until).toBeGreaterThan(CAST.from)
+    hunterAt(0, CAST.from, thrower)
+    expect(Math.hypot(thrower.x - HERD[0].x, thrower.z - HERD[0].z)).toBeLessThan(16)
   })
 
   it('keeps the herd at the water until it is alarmed, and then it is gone', () => {
@@ -431,38 +436,195 @@ describe('the city', () => {
 })
 
 describe('the figures', () => {
+  // Made here and not in the tests: meshing is most of a second each, and a
+  // test has five to finish in on whatever machine it is run on.
   const early = createFigure('early', 'low')
+  const modern = createFigure('modern', 'low')
   const mammoth = createFigure('mammoth', 'low')
+  const finer = createFigure('mammoth', 'medium')
 
   it('meshes each as one surface at its real size', () => {
-    for (const figure of [early, createFigure('modern', 'low'), mammoth]) {
+    for (const figure of [early, modern, mammoth]) {
       expect(figure.positions.length / 3).toBeGreaterThan(1500)
       // One piece, and closed but for the odd edge where something as thin as
       // a finger or the tip of a tusk is thinner than the field it was cut from.
       expect(components(figure)).toBe(1)
       expect(openEdges(figure) / edgeUse(figure).size).toBeLessThan(0.001)
-      for (const value of figure.positions) expect(Number.isFinite(value)).toBe(true)
+      expect(allFinite(figure.positions)).toBe(true)
     }
-    // A person a little under a metre eighty; a mammoth most of six from tusk to tail.
+    // A person a little under a metre eighty; a mammoth four and a half from
+    // the end of its trunk to its tail — its tusks are not in the mesh.
     expect(early.size).toBeGreaterThan(1.7)
     expect(early.size).toBeLessThan(1.86)
-    expect(mammoth.size).toBeGreaterThan(5)
-    expect(mammoth.size).toBeLessThan(6.5)
+    expect(mammoth.size).toBeGreaterThan(4.2)
+    expect(mammoth.size).toBeLessThan(5.2)
   })
 
-  it('gives every vertex its share of skin, hair, clothing and trim', () => {
-    const regions = early.regions!
-    expect(regions.length).toBe((early.positions.length / 3) * 4)
-    const totals = [0, 0, 0, 0]
-    for (let v = 0; v < regions.length; v += 4) {
-      const sum = regions[v]! + regions[v + 1]! + regions[v + 2]! + regions[v + 3]!
-      expect(sum).toBeCloseTo(1, 5)
-      for (let r = 0; r < 4; r++) totals[r] = totals[r]! + regions[v + r]!
+  /** How much of a figure is each of the eight things it can be made of. */
+  const made = (figure: typeof early): number[] => {
+    const a = figure.regions!
+    const b = figure.regions2!
+    const count = figure.positions.length / 3
+    expect(a.length).toBe(count * 4)
+    expect(b.length).toBe(count * 4)
+    const totals = new Array<number>(REGIONS).fill(0)
+    let off = 0
+    for (let v = 0; v < count; v++) {
+      let sum = 0
+      for (let r = 0; r < 4; r++) {
+        sum += a[v * 4 + r]! + b[v * 4 + r]!
+        totals[r] = totals[r]! + a[v * 4 + r]!
+        totals[4 + r] = totals[4 + r]! + b[v * 4 + r]!
+      }
+      off = Math.max(off, Math.abs(sum - 1))
     }
-    // Someone from the cave is mostly skin, with hair, a hide and a belt.
-    const count = regions.length / 4
-    expect(totals[0]! / count).toBeGreaterThan(0.35)
-    for (const total of totals) expect(total / count).toBeGreaterThan(0.01)
+    // Every vertex is all of something.
+    expect(off).toBeLessThan(1e-5)
+    return totals.map((total) => total / count)
+  }
+
+  it('gives every vertex its share of what the figure is made of', () => {
+    // Someone from the cave: skin, the scalp under hair, a pelt, and leather.
+    const cave = made(early)
+    for (const region of [0, 1, 2, 3]) expect(cave[region], `region ${region}`).toBeGreaterThan(0.03)
+    expect(cave[4]! + cave[5]! + cave[7]!).toBe(0)
+    // Someone from now: cloth, and trousers, and a sole to each shoe.
+    const now = made(modern)
+    for (const region of [0, 1, 3, 4, 5, 7]) expect(now[region], `region ${region}`).toBeGreaterThan(0.004)
+    expect(now[2]).toBe(0)
+    // A mammoth is its coat, with a nail to each toe.
+    const beast = made(mammoth)
+    expect(beast[2]).toBeGreaterThan(0.75)
+    expect(beast[6]).toBeGreaterThan(0.002)
+  })
+
+  it('paints a face on a person, and nothing out of range on anyone', () => {
+    for (const figure of [early, mammoth]) {
+      const paint = figure.paint!
+      expect(paint.length).toBe((figure.positions.length / 3) * 4)
+      let least = Infinity
+      let most = -Infinity
+      for (const value of paint) {
+        least = Math.min(least, value)
+        most = Math.max(most, value)
+      }
+      expect(least).toBeGreaterThanOrEqual(0)
+      expect(most).toBeLessThanOrEqual(1)
+    }
+    // A flush, shade round the eyes, brows and lips: each of them somewhere.
+    const paint = early.paint!
+    for (let kind = 0; kind < 4; kind++) {
+      let most = 0
+      for (let v = kind; v < paint.length; v += 4) most = Math.max(most, paint[v]!)
+      expect(most, `mark ${kind}`).toBeGreaterThan(0.25)
+    }
+  })
+
+  it('hangs two eyes in every head, one each side', () => {
+    for (const [figure, where] of [[early, HUMAN.eye], [mammoth, MAMMOTH.eye]] as const) {
+      expect(figure.eyes.length).toBe(2)
+      const [left, right] = figure.eyes
+      expect(left!.offset[2]).toBeCloseTo(-right!.offset[2], 6)
+      expect(left!.offset[0]).toBeCloseTo(right!.offset[0], 6)
+      expect(left!.radius).toBeGreaterThan(0)
+      // Where the sculpt says, from the bone they hang on.
+      const head = figure.bones.find((bone) => bone.name === figure.eyeBone)!
+      const size = figure.size!
+      expect((left!.offset[2] + head.head[2]) * size).toBeCloseTo(where[2], 2)
+    }
+  })
+
+  it('sweeps a mammoth two tusks, out of the head and tapering to nothing', () => {
+    const sweeps = mammoth.sweeps!
+    expect(sweeps.length).toBe(2)
+    expect(early.sweeps).toEqual([])
+    const [a, b] = sweeps
+    for (const sweep of sweeps) {
+      expect(sweep.bone).toBe('head')
+      expect(sweep.path.length).toBe(sweep.radii.length)
+      expect(sweep.radii[sweep.radii.length - 1]!).toBeLessThan(sweep.radii[1]! * 0.3)
+      for (const point of sweep.path) for (const value of point) expect(Number.isFinite(value)).toBe(true)
+      // Three metres and more of it, along its curve.
+      let length = 0
+      for (let i = 1; i < sweep.path.length; i++) {
+        length += Math.hypot(sweep.path[i]![0] - sweep.path[i - 1]![0], sweep.path[i]![1] - sweep.path[i - 1]![1], sweep.path[i]![2] - sweep.path[i - 1]![2])
+      }
+      expect(length * mammoth.size!).toBeGreaterThan(3)
+    }
+    a!.path.forEach((point, i) => {
+      expect(point[2]).toBeCloseTo(-b!.path[i]![2], 6)
+      expect(point[1]).toBeCloseTo(b!.path[i]![1], 6)
+    })
+  })
+
+  it('grows a coat on each: locks rooted on the surface, combed, and weighted to the bones under them', () => {
+    for (const figure of [early, mammoth]) {
+      const coat = figure.coat!
+      const size = figure.size!
+      expect(coat.count).toBeGreaterThan(800)
+      expect(coat.roots.length).toBe(coat.count * 3)
+      expect(coat.skinIndices.length).toBe(coat.count * 4)
+      // One pass over the lot, keeping the worst of each thing: a coat is
+      // thousands of locks, and an assertion apiece is most of a test's time.
+      const worst = { finite: true, outside: 0, unit: 0, square: 0, short: Infinity, long: 0, weight: 0, bone: 0, sag: Infinity }
+      for (const list of [coat.roots, coat.normals, coat.grow, coat.across, coat.tone, coat.shape, coat.skinWeights]) {
+        for (const value of list) if (!Number.isFinite(value)) worst.finite = false
+      }
+      for (let i = 0; i < coat.count; i++) {
+        for (let k = 0; k < 3; k++) worst.outside = Math.max(worst.outside, Math.abs(coat.roots[i * 3 + k]!))
+        const g = [coat.grow[i * 4]!, coat.grow[i * 4 + 1]!, coat.grow[i * 4 + 2]!]
+        const w = [coat.across[i * 4]!, coat.across[i * 4 + 1]!, coat.across[i * 4 + 2]!]
+        worst.unit = Math.max(worst.unit, Math.abs(Math.hypot(g[0]!, g[1]!, g[2]!) - 1), Math.abs(Math.hypot(w[0]!, w[1]!, w[2]!) - 1))
+        worst.square = Math.max(worst.square, Math.abs(g[0]! * w[0]! + g[1]! * w[1]! + g[2]! * w[2]!))
+        worst.short = Math.min(worst.short, coat.grow[i * 4 + 3]! * size)
+        worst.long = Math.max(worst.long, coat.grow[i * 4 + 3]! * size)
+        worst.weight = Math.max(worst.weight, Math.abs(coat.skinWeights[i * 4]! + coat.skinWeights[i * 4 + 1]! + coat.skinWeights[i * 4 + 2]! + coat.skinWeights[i * 4 + 3]! - 1))
+        worst.bone = Math.max(worst.bone, coat.skinIndices[i * 4]!)
+        worst.sag = Math.min(worst.sag, coat.shape[i * 4 + 3]!)
+      }
+      expect(worst.finite).toBe(true)
+      // Inside the box the mesh fits in, which is a unit across at most.
+      expect(worst.outside).toBeLessThan(0.52)
+      // The way it grows and the way it is wide are unit vectors, square to each other.
+      expect(worst.unit).toBeLessThan(1e-4)
+      expect(worst.square).toBeLessThan(1e-4)
+      // No lock is longer than a mammoth's skirt, in metres.
+      expect(worst.short).toBeGreaterThan(0.01)
+      expect(worst.long).toBeLessThan(1.3)
+      expect(worst.weight).toBeLessThan(1e-5)
+      expect(worst.bone).toBeLessThan(figure.bones.length)
+      // How far the surface falls away under it is never negative.
+      expect(worst.sag).toBeGreaterThanOrEqual(0)
+    }
+    // A person has the hair of a head and the fur of what they wear; a mammoth only its own.
+    const kinds = (coat: NonNullable<typeof early.coat>) => new Set(Array.from({ length: coat.count }, (_, i) => coat.tone[i * 4 + 2]!))
+    expect([...kinds(early.coat!)].sort()).toEqual([0, 1])
+    expect([...kinds(mammoth.coat!)]).toEqual([1])
+  })
+
+  it('shuffles a coat, so that any first part of it is all of it thinned out', () => {
+    const coat = mammoth.coat!
+    const half = Math.floor(coat.count / 2)
+    const middle = (from: number, until: number): [number, number, number] => {
+      const sum: [number, number, number] = [0, 0, 0]
+      for (let i = from; i < until; i++) for (let k = 0; k < 3; k++) sum[k] = sum[k]! + coat.roots[i * 3 + k]! / (until - from)
+      return sum
+    }
+    const first = middle(0, half)
+    const rest = middle(half, coat.count)
+    for (let k = 0; k < 3; k++) expect(Math.abs(first[k]! - rest[k]!)).toBeLessThan(0.02)
+  })
+
+  it('grows less of a coat, in wider locks, the coarser the figure', () => {
+    const fine = finer.coat!
+    const coarse = mammoth.coat!
+    expect(coarse.count).toBeLessThan(fine.count * 0.7)
+    const width = (coat: typeof fine) => {
+      let sum = 0
+      for (let i = 0; i < coat.count; i++) sum += coat.across[i * 4 + 3]!
+      return sum / coat.count
+    }
+    expect(width(coarse)).toBeGreaterThan(width(fine) * 1.15)
   })
 
   it('skins each side of a body to its own limbs', () => {
@@ -528,11 +690,14 @@ describe('the figures', () => {
     for (const gait of [BEAST_GAITS.walk, BEAST_GAITS.amble]) {
       for (const phase of [0, 0.2, 0.45, 0.7, 0.9]) {
         beastGaitPose(pose, phase, gait)
-        // An elephant never has all four feet off the ground.
-        const down = [pose.frontL, pose.frontR, pose.hindL, pose.hindR].filter((foot) => foot[1] === 0).length
+        // An elephant never has all four feet off the ground. (A foot is down
+        // until it has left its toes, which is as high as its heel is rolled.)
+        const down = [pose.frontL, pose.frontR, pose.hindL, pose.hindR].filter((foot) => foot[1] <= gait.roll).length
         expect(down).toBeGreaterThanOrEqual(2)
         applyBeast(byName, pose, frame)
         byName.get('hips')!.updateMatrixWorld(true)
+        // Carried on its legs: never higher than it stands.
+        expect(byName.get('hips')!.position.y).toBeLessThanOrEqual(frame.rootRest.y + (gait.bob + 1e-6) / frame.size)
         for (const [name, limb, side, foot] of [
           ['footL', frame.legs, 1, pose.hindL],
           ['footR', frame.legs, -1, pose.hindR],
@@ -544,6 +709,26 @@ describe('the figures', () => {
           expect(Math.hypot(at.x - want.x, at.y - want.y, at.z - want.z), `${name} at ${phase}`).toBeLessThan(0.16)
         }
       }
+    }
+  })
+
+  it('carries a mammoth on straight legs: one that bears weight is all but at its full length', () => {
+    const { byName } = buildSkeleton(mammoth.bones)
+    const frame = measure(mammoth.bones, mammoth.size!)
+    const pose = createBeastPose()
+    const top = new Vector3()
+    const end = new Vector3()
+    const gait = BEAST_GAITS.walk
+    // The left hind foot strikes at 0 and the left front one a quarter of a cycle on:
+    // look at each when it is half way through its time on the ground.
+    for (const [upper, last, limb, offset] of [['thighL', 'footL', frame.legs, 0], ['armL', 'handL', frame.arms!, 0.25]] as const) {
+      beastGaitPose(pose, offset + gait.stance * 0.5, gait)
+      applyBeast(byName, pose, frame)
+      byName.get('hips')!.updateMatrixWorld(true)
+      byName.get(upper)!.getWorldPosition(top)
+      byName.get(last)!.getWorldPosition(end)
+      const length = top.distanceTo(end) * frame.size
+      expect(length / (limb.upperLength + limb.lowerLength), upper).toBeGreaterThan(0.975)
     }
   })
 })

@@ -90,7 +90,7 @@ for (const viewport of VIEWPORTS) {
         for (const [at, name] of [
           [0.08, 'fire'],
           [0.2, 'mouth'],
-          [0.4, 'hunt'],
+          [0.41, 'hunt'],
           [0.56, 'field'],
           [0.76, 'city'],
           [0.93, 'now'],

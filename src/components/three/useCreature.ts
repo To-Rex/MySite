@@ -21,6 +21,9 @@ export interface CreatureGeometry {
   teeth: CreaturePayload['teeth']
   /** The longest axis in metres, for the figures that are built to a real size. */
   size?: number
+  /** The fur and hair of a figure, for the scene to make cards of (`evoCoat.ts`). */
+  coat?: CreaturePayload['coat']
+  sweeps?: CreaturePayload['sweeps']
 }
 
 const cache = new Map<string, CreatureGeometry>()
@@ -34,9 +37,11 @@ function toGeometry(payload: CreaturePayload): CreatureGeometry {
   geometry.setAttribute('skinIndex', new BufferAttribute(payload.skinIndices, 4))
   geometry.setAttribute('skinWeight', new BufferAttribute(payload.skinWeights, 4))
   if (payload.regions) geometry.setAttribute('regions', new BufferAttribute(payload.regions, 4))
+  if (payload.regions2) geometry.setAttribute('regions2', new BufferAttribute(payload.regions2, 4))
+  if (payload.paint) geometry.setAttribute('paint', new BufferAttribute(payload.paint, 4))
   geometry.setIndex(new BufferAttribute(payload.indices, 1))
   geometry.computeBoundingSphere()
-  return { geometry, bones: payload.bones, eyeBone: payload.eyeBone, eyes: payload.eyes, teeth: payload.teeth, size: payload.size }
+  return { geometry, bones: payload.bones, eyeBone: payload.eyeBone, eyes: payload.eyes, teeth: payload.teeth, size: payload.size, coat: payload.coat, sweeps: payload.sweeps }
 }
 
 let worker: Worker | null = null
@@ -80,7 +85,7 @@ function getWorker(): Worker | null {
   return worker
 }
 
-function request(kind: AnyKind, detail: CreatureDetail): Promise<CreatureGeometry> {
+function request(kind: AnyKind, detail: CreatureDetail, patience = PATIENCE): Promise<CreatureGeometry> {
   const key = `${kind}:${detail}`
   const cached = cache.get(key)
   if (cached) return Promise.resolve(cached)
@@ -96,12 +101,12 @@ function request(kind: AnyKind, detail: CreatureDetail): Promise<CreatureGeometr
     const id = nextId++
     // And a reply that never comes at all — a worker wedged behind something, a
     // message lost — is caught here rather than left to hang forever.
-    const patience = setTimeout(() => {
+    const waiting = setTimeout(() => {
       if (!inflight.delete(id)) return
       resolve(toGeometry(createAnything(kind, detail)))
-    }, PATIENCE)
+    }, patience)
     inflight.set(id, (response) => {
-      clearTimeout(patience)
+      clearTimeout(waiting)
       if (response.ok) resolve(toGeometry(response))
       // A failed worker run falls back to generating on the main thread: a brief
       // stall is still better than a hero with no creature in it.
@@ -122,8 +127,13 @@ function request(kind: AnyKind, detail: CreatureDetail): Promise<CreatureGeometr
 /**
  * The shared geometry for anything the worker can build, as a promise: for a
  * scene that is put together by hand rather than out of components.
+ *
+ * `patience` is how long the worker is given before the page takes the job
+ * back. The default suits a creature the page is waiting to show; something
+ * that takes a second or two to mesh and is not on screen yet is better
+ * waited for than built on the main thread in the middle of a scroll.
  */
-export const requestCreature = (kind: AnyKind, detail: CreatureDetail): Promise<CreatureGeometry> => request(kind, detail)
+export const requestCreature = (kind: AnyKind, detail: CreatureDetail, patience?: number): Promise<CreatureGeometry> => request(kind, detail, patience)
 
 /**
  * Meshes a list of creatures ahead of time, one after another.

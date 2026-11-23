@@ -439,16 +439,22 @@ export function applyPose(byName: Map<string, Bone>, pose: Pose, frame: FigureFr
 
 // ------------------------------------------------------------------- beasts
 
-/** How a mammoth holds itself. Feet are [forward of where they stand, off the ground], in metres. */
+/** How a mammoth holds itself. Feet are [forward of where they stand, off the ground, toe turned up], in metres and radians. */
+export type BeastFoot = [number, number, number]
+
 export interface BeastPose {
-  /** The body: up and down, pitched nose-down, rolled to its left. */
+  /**
+   * The body: up and down, pitched nose-down, rolled to its left. These are
+   * over and above what its legs let it have — see `applyBeast`, which carries
+   * each end of it no higher than the legs under that end can reach.
+   */
   rise: number
   pitch: number
   roll: number
-  frontL: [number, number]
-  frontR: [number, number]
-  hindL: [number, number]
-  hindR: [number, number]
+  frontL: BeastFoot
+  frontR: BeastFoot
+  hindL: BeastFoot
+  hindR: BeastFoot
   /** The head: raised, turned to its left. */
   raise: number
   turn: number
@@ -461,7 +467,7 @@ export interface BeastPose {
 }
 
 export function createBeastPose(): BeastPose {
-  return { rise: 0, pitch: 0, roll: 0, frontL: [0, 0], frontR: [0, 0], hindL: [0, 0], hindR: [0, 0], raise: 0, turn: 0, curl: 0, swing: 0, ears: 0, tail: 0 }
+  return { rise: 0, pitch: 0, roll: 0, frontL: [0, 0, 0], frontR: [0, 0, 0], hindL: [0, 0, 0], hindR: [0, 0, 0], raise: 0, turn: 0, curl: 0, swing: 0, ears: 0, tail: 0 }
 }
 
 export interface BeastGait {
@@ -469,31 +475,41 @@ export interface BeastGait {
   stance: number
   lift: number
   bob: number
-  /**
-   * How far the body is carried below where it stands. A leg that reaches
-   * forward and back has to be straight at both ends of its step, and a
-   * straight leg at an angle does not come as high as one that is upright.
-   */
-  drop: number
+  /** How far the heel has come off the ground by the time the foot leaves it. */
+  roll: number
 }
 
 export const BEAST_GAITS = {
   /** An elephant's walk: three feet down at any time, and all the time in the world. */
-  walk: { stride: 2.2, stance: 0.72, lift: 0.2, bob: 0.025, drop: 0.15 },
+  walk: { stride: 1.95, stance: 0.7, lift: 0.17, bob: 0.008, roll: 0.1 },
   /** As fast as it goes. It never leaves the ground: an elephant cannot gallop. */
-  amble: { stride: 2.8, stance: 0.58, lift: 0.27, bob: 0.045, drop: 0.14 },
+  amble: { stride: 2.5, stance: 0.58, lift: 0.26, bob: 0.014, roll: 0.14 },
 } as const satisfies Record<string, BeastGait>
 
-function stepFoot(out: [number, number], phase: number, gait: BeastGait): void {
+/** How long a mammoth's foot is from its ankle to its toes, near enough, for how far a lifted heel tips it. */
+const BEAST_FOOT = 0.32
+
+function stepFoot(out: BeastFoot, phase: number, gait: BeastGait): void {
   const p = frac(phase)
-  const reach = gait.stride * gait.stance * 0.5
+  const travel = gait.stride * gait.stance
+  // It lands a little less far ahead of the leg than it leaves behind it.
+  const ahead = travel * 0.44
+  const tipped = -Math.asin(Math.min(1, gait.roll / BEAST_FOOT))
   if (p < gait.stance) {
-    out[0] = reach * (1 - (2 * p) / gait.stance)
-    out[1] = 0
+    // On the ground, the body passing over it; and at the last the heel comes
+    // up and the foot goes onto its toes, which is what lets a straight leg
+    // trail so far behind.
+    const u = p / gait.stance
+    const off = ease(clamp01((u - 0.7) / 0.3))
+    out[0] = ahead - travel * u
+    out[1] = gait.roll * off
+    out[2] = tipped * off + 0.1 * (1 - clamp01(u / 0.14))
   } else {
+    // Carried through with the foot hanging from the wrist, and set down flat.
     const u = (p - gait.stance) / (1 - gait.stance)
-    out[0] = reach * (-1 + 2 * ease(u))
-    out[1] = gait.lift * Math.sin(Math.PI * Math.pow(u, 0.85))
+    out[0] = ahead - travel + travel * ease(u)
+    out[1] = gait.roll * (1 - ease(clamp01(u / 0.4))) + gait.lift * Math.sin(Math.PI * Math.pow(u, 0.85))
+    out[2] = lerp(tipped, 0.1, ease(u)) - 0.45 * Math.sin(Math.PI * u)
   }
 }
 
@@ -508,10 +524,10 @@ export function beastGaitPose(out: BeastPose, phase: number, gait: BeastGait, en
   stepFoot(out.frontL, phase + 0.75, gait)
   stepFoot(out.hindR, phase + 0.5, gait)
   stepFoot(out.frontR, phase + 0.25, gait)
-  out.rise = -gait.drop + gait.bob * energy * Math.cos(2 * beat)
-  out.pitch = 0.02 * energy * Math.sin(2 * beat + 0.6)
-  out.roll = 0.022 * energy * Math.sin(beat + 0.4)
-  out.raise = -0.04 * energy * Math.sin(2 * beat + 1.1)
+  out.rise = gait.bob * energy * Math.cos(2 * beat)
+  out.pitch = 0
+  out.roll = 0.024 * energy * Math.sin(beat + 0.4)
+  out.raise = -0.05 * energy * Math.sin(2 * beat + 1.1)
   out.turn = 0.03 * energy * Math.sin(beat)
   out.curl = 0.08 + 0.05 * energy * Math.sin(2 * beat + 0.3)
   out.swing = 0.16 * energy * Math.sin(beat + 0.8)
@@ -526,10 +542,10 @@ export function beastStandPose(out: BeastPose, t: number, seed = 0, alarm = 0): 
   out.rise = -0.02 + 0.012 * Math.sin(t * 0.9 + seed)
   out.pitch = 0.012 * slow
   out.roll = 0.012 * Math.sin(t * 0.27 + seed * 2.3)
-  out.frontL = [0.06, 0]
-  out.frontR = [-0.05, 0]
-  out.hindL = [-0.08, 0]
-  out.hindR = [0.07, 0]
+  out.frontL = [0.06, 0, 0]
+  out.frontR = [-0.05, 0, 0]
+  out.hindL = [-0.08, 0, 0]
+  out.hindR = [0.07, 0, 0]
   // Head down and the trunk to the ground; up, ears out, when something is wrong.
   out.raise = lerp(-0.22 + 0.06 * slow, 0.34, alarm)
   out.turn = lerp(0.12 * Math.sin(t * 0.21 + seed * 1.3), 0.5 * Math.sin(seed * 5), alarm)
@@ -551,7 +567,7 @@ export function blendBeast(out: BeastPose, a: BeastPose, b: BeastPose, t: number
   out.swing = lerp(a.swing, b.swing, m)
   out.ears = lerp(a.ears, b.ears, m)
   out.tail = lerp(a.tail, b.tail, m)
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     out.frontL[i] = lerp(a.frontL[i]!, b.frontL[i]!, m)
     out.frontR[i] = lerp(a.frontR[i]!, b.frontR[i]!, m)
     out.hindL[i] = lerp(a.hindL[i]!, b.hindL[i]!, m)
@@ -560,22 +576,60 @@ export function blendBeast(out: BeastPose, a: BeastPose, b: BeastPose, t: number
   return out
 }
 
-/** Puts a pose on a mammoth's skeleton. */
+/**
+ * How high above where it stands a leg's top joint can be carried with the
+ * foot where it is: no further from the foot than the leg is long. Nought or
+ * less; and it is the leg reaching furthest, of a pair, that decides.
+ */
+function carried(limb: Limb, rootAt: Vector3, foot: BeastFoot): number {
+  const top = limb.joint.y + rootAt.y
+  const across = foot[0] + limb.stands.x - (limb.joint.x + rootAt.x)
+  // Not quite its whole length: a leg is never locked straight.
+  const reach = (limb.upperLength + limb.lowerLength) * 0.992
+  return limb.stands.y + foot[1] + Math.sqrt(Math.max(0, reach * reach - across * across)) - top
+}
+
+/** The lesser of two, without the corner: the body does not jolt as one leg takes over from the other. */
+const softMin = (a: number, b: number, k: number): number => {
+  const h = Math.max(k - Math.abs(a - b), 0) / k
+  return Math.min(a, b) - h * h * k * 0.25
+}
+
+/**
+ * Puts a pose on a mammoth's skeleton.
+ *
+ * The body is carried on its legs, not posed over them: each end of it is as
+ * high as the legs under that end allow — highest as it passes over a leg
+ * that is upright, lowest when one foot has just landed far ahead and the
+ * other is about to leave far behind. That is what a walking animal's back
+ * does, the two ends of it a quarter of a stride apart; and it is what lets
+ * the legs be straight when they bear weight, which is what an elephant's are.
+ */
 export function applyBeast(byName: Map<string, Bone>, pose: BeastPose, frame: FigureFrame): void {
   const root = byName.get('hips')
   if (!root || !frame.arms) return
-  pelvis.setFromAxisAngle(Z, -pose.pitch)
+  const front = Math.min(0, softMin(carried(frame.arms, frame.rootAt, pose.frontL), carried(frame.arms, frame.rootAt, pose.frontR), 0.05))
+  const hind = Math.min(0, softMin(carried(frame.legs, frame.rootAt, pose.hindL), carried(frame.legs, frame.rootAt, pose.hindR), 0.05))
+  const span = frame.arms.joint.x - frame.legs.joint.x
+  // (An animal with no length between its legs is not one of ours, but a NaN
+  // here would be one in every bone below.)
+  const slope = span > 1e-3 ? (hind - front) / span : 0
+  const pitch = pose.pitch + Math.asin(Math.max(-0.5, Math.min(0.5, Number.isFinite(slope) ? slope : 0)))
+  // The root is not quite over the hind legs: what it is lifted by the pitch, it is let down again.
+  const rise = pose.rise + hind + Math.sin(pitch) * frame.legs.joint.x
+
+  pelvis.setFromAxisAngle(Z, -pitch)
   pelvis.multiply(q.setFromAxisAngle(X, pose.roll))
   pelvisInverse.copy(pelvis).invert()
   root.quaternion.copy(pelvis)
-  root.position.set(frame.rootRest.x, frame.rootRest.y + pose.rise / frame.size, frame.rootRest.z)
+  root.position.set(frame.rootRest.x, frame.rootRest.y + rise / frame.size, frame.rootRest.z)
   rootNow.copy(frame.rootAt)
-  rootNow.y += pose.rise
+  rootNow.y += rise
 
-  solveLimb(byName, frame.legs, 'L', 1, pose.hindL[0], pose.hindL[1], 0, 0)
-  solveLimb(byName, frame.legs, 'R', -1, pose.hindR[0], pose.hindR[1], 0, 0)
-  solveLimb(byName, frame.arms, 'L', 1, pose.frontL[0], pose.frontL[1], 0, 0)
-  solveLimb(byName, frame.arms, 'R', -1, pose.frontR[0], pose.frontR[1], 0, 0)
+  solveLimb(byName, frame.legs, 'L', 1, pose.hindL[0], pose.hindL[1], 0, pose.hindL[2])
+  solveLimb(byName, frame.legs, 'R', -1, pose.hindR[0], pose.hindR[1], 0, pose.hindR[2])
+  solveLimb(byName, frame.arms, 'L', 1, pose.frontL[0], pose.frontL[1], 0, pose.frontL[2])
+  solveLimb(byName, frame.arms, 'R', -1, pose.frontR[0], pose.frontR[1], 0, pose.frontR[2])
 
   const neck = byName.get('neck')
   const head = byName.get('head')

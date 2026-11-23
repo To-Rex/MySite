@@ -27,6 +27,8 @@ export interface SdfEllipsoid {
   negative?: boolean
   /** See `SdfCone.group`. */
   group?: number
+  /** See `SdfCone.blend`. */
+  blend?: number
 }
 
 /** A capsule whose radius varies linearly from `a` to `b`. */
@@ -47,6 +49,13 @@ export interface SdfCone {
    * its own group, which is what the creatures have always been.
    */
   group?: number
+  /**
+   * The fillet this shape is joined to what came before it with (or, for a
+   * carved one, the rounding of its lip), instead of the mesh's own. A body
+   * wants a fillet of a centimetre and a half where a thigh meets a hip; the
+   * same fillet round a nostril is the end of the nostril.
+   */
+  blend?: number
 }
 
 export type SdfPrimitive = SdfEllipsoid | SdfCone
@@ -65,10 +74,15 @@ interface PreparedEllipsoid {
   cosP: number
   sinP: number
   rotated: boolean
-  /** Bounding radius used for spatial binning. */
+  /** Bounding radius, and the half-sides of the box it fits in, for spatial binning. */
   bound: number
+  hx: number
+  hy: number
+  hz: number
   negative: boolean
   group: number
+  /** The shape's own fillet, or -1 for the mesh's. */
+  blend: number
 }
 
 interface PreparedCone {
@@ -86,8 +100,12 @@ interface PreparedCone {
   cy: number
   cz: number
   bound: number
+  hx: number
+  hy: number
+  hz: number
   negative: boolean
   group: number
+  blend: number
 }
 
 type Prepared = PreparedEllipsoid | PreparedCone
@@ -98,6 +116,8 @@ function prepare(prim: SdfPrimitive): Prepared {
     const [rx, ry, rz] = prim.radii
     const yaw = prim.yaw ?? 0
     const pitch = prim.pitch ?? 0
+    const turned = yaw !== 0 || pitch !== 0
+    const bound = Math.max(rx, ry, rz)
     return {
       kind: 0,
       cx,
@@ -110,10 +130,16 @@ function prepare(prim: SdfPrimitive): Prepared {
       sinY: Math.sin(-yaw),
       cosP: Math.cos(-pitch),
       sinP: Math.sin(-pitch),
-      rotated: yaw !== 0 || pitch !== 0,
-      bound: Math.max(rx, ry, rz),
+      rotated: turned,
+      bound,
+      // Turned, it is somewhere inside the ball of its longest radius; square
+      // to the axes, it is exactly as wide as it says.
+      hx: turned ? bound : rx,
+      hy: turned ? bound : ry,
+      hz: turned ? bound : rz,
       negative: prim.negative === true,
       group: prim.group ?? -1,
+      blend: prim.blend ?? -1,
     }
   }
   const [ax, ay, az] = prim.a
@@ -122,6 +148,7 @@ function prepare(prim: SdfPrimitive): Prepared {
   const bay = by - ay
   const baz = bz - az
   const lenSq = bax * bax + bay * bay + baz * baz
+  const thick = Math.max(prim.ra, prim.rb)
   return {
     kind: 1,
     ax,
@@ -136,9 +163,13 @@ function prepare(prim: SdfPrimitive): Prepared {
     cx: (ax + bx) / 2,
     cy: (ay + by) / 2,
     cz: (az + bz) / 2,
-    bound: Math.sqrt(lenSq) / 2 + Math.max(prim.ra, prim.rb),
+    bound: Math.sqrt(lenSq) / 2 + thick,
+    hx: Math.abs(bax) / 2 + thick,
+    hy: Math.abs(bay) / 2 + thick,
+    hz: Math.abs(baz) / 2 + thick,
     negative: prim.negative === true,
     group: prim.group ?? -1,
+    blend: prim.blend ?? -1,
   }
 }
 
@@ -232,6 +263,70 @@ export function nearestField(primitives: SdfPrimitive[]): (x: number, y: number,
   }
 }
 
+/**
+ * `nearestField` for several sets of shapes at once, and only as far as
+ * `reach`: writes into `out` the distance from a point to the nearest shape of
+ * each set, or Infinity for a set with nothing that near. For points already
+ * on a surface, which is what it is asked about, everything further off than a
+ * few centimetres is beside the point — and looking no further is what makes
+ * this cost a tenth of asking every set about every shape.
+ */
+export function nearestFields(sets: SdfPrimitive[][], reach: number): (x: number, y: number, z: number, out: Float64Array) => void {
+  const prepared: Prepared[] = []
+  const setOf: number[] = []
+  sets.forEach((set, index) => {
+    for (const prim of set) {
+      if (prim.negative) continue
+      prepared.push(prepare(prim))
+      setOf.push(index)
+    }
+  })
+  let minX = Infinity
+  let minY = Infinity
+  let minZ = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let maxZ = -Infinity
+  for (const p of prepared) {
+    minX = Math.min(minX, p.cx - p.hx - reach)
+    minY = Math.min(minY, p.cy - p.hy - reach)
+    minZ = Math.min(minZ, p.cz - p.hz - reach)
+    maxX = Math.max(maxX, p.cx + p.hx + reach)
+    maxY = Math.max(maxY, p.cy + p.hy + reach)
+    maxZ = Math.max(maxZ, p.cz + p.hz + reach)
+  }
+  const size = reach * 1.5
+  const bx = Math.max(1, Math.ceil((maxX - minX) / size))
+  const by = Math.max(1, Math.ceil((maxY - minY) / size))
+  const bz = Math.max(1, Math.ceil((maxZ - minZ) / size))
+  const bins: number[][] = Array.from({ length: bx * by * bz }, () => [])
+  prepared.forEach((p, i) => {
+    const i0 = Math.max(0, Math.floor((p.cx - p.hx - reach - minX) / size))
+    const i1 = Math.min(bx - 1, Math.floor((p.cx + p.hx + reach - minX) / size))
+    const j0 = Math.max(0, Math.floor((p.cy - p.hy - reach - minY) / size))
+    const j1 = Math.min(by - 1, Math.floor((p.cy + p.hy + reach - minY) / size))
+    const k0 = Math.max(0, Math.floor((p.cz - p.hz - reach - minZ) / size))
+    const k1 = Math.min(bz - 1, Math.floor((p.cz + p.hz + reach - minZ) / size))
+    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i2 = i0; i2 <= i1; i2++) bins[i2 + bx * (j + by * k)]!.push(i)
+  })
+  return (x, y, z, out) => {
+    out.fill(Infinity)
+    const i = Math.floor((x - minX) / size)
+    const j = Math.floor((y - minY) / size)
+    const k = Math.floor((z - minZ) / size)
+    if (i < 0 || j < 0 || k < 0 || i >= bx || j >= by || k >= bz) return
+    const list = bins[i + bx * (j + by * k)]!
+    for (let n = 0; n < list.length; n++) {
+      const index = list[n]!
+      const d = fairDistance(prepared[index]!, x, y, z)
+      const set = setOf[index]!
+      // A bin holds a little more than what is within reach: not reported, so
+      // that the answer does not depend on where the bins happen to fall.
+      if (d <= reach && d < out[set]!) out[set] = d
+    }
+  }
+}
+
 export interface MeshOptions {
   /** Grid spacing in world units — the dominant quality/cost knob. */
   spacing: number
@@ -239,6 +334,27 @@ export interface MeshOptions {
   blend: number
   /** Rounding on carved details. Smaller than `blend` keeps sockets crisp. */
   carve?: number
+  /**
+   * Take the surface from the field itself rather than from a grid of samples
+   * of it. Surface nets puts each vertex at the middle of where the surface
+   * crosses its cell, and the normals below are differences across two cells:
+   * both are right for a hide, whose smallest feature is a toe, and both
+   * round off anything a cell or two across — an eyelid, a knuckle, the edge
+   * of a lip. With this, every vertex is moved onto the field's own zero and
+   * given the field's own gradient there, so a feature is as sharp as it was
+   * written, down to the size of a triangle.
+   *
+   * It also samples the grid only near the surface, which is what pays for it.
+   */
+  exact?: boolean
+  /**
+   * How many times to halve the triangles round a point: 0 leaves them as the
+   * grid made them, 1 splits each into four, 2 into sixteen. A face needs a
+   * mesh four times as fine as a thigh does, and a grid that fine over a whole
+   * body is sixty-four times the work for the sake of a twentieth of it. Only
+   * with `exact`, which is what puts the new vertices on the surface.
+   */
+  refine?: (x: number, y: number, z: number) => number
 }
 
 /**
@@ -255,7 +371,84 @@ export interface SurfaceMesh {
   ao: Float32Array
 }
 
-export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = blend * 0.5 }: MeshOptions): SurfaceMesh {
+interface Bounds {
+  minX: number
+  minY: number
+  minZ: number
+  maxX: number
+  maxY: number
+  maxZ: number
+}
+
+type Field = (x: number, y: number, z: number) => number
+
+/**
+ * The blended field, as a function of a point. Shapes are binned, and a point
+ * is tested against the ones within `reach` of its bin: beyond that a shape
+ * cannot win the smooth minimum, so the answer is right wherever the surface
+ * is nearer than `reach` and merely positive where nothing is.
+ */
+function sampler(prepared: Prepared[], b: Bounds, binSize: number, reach: number, blend: number, carve: number, far: number): Field {
+  const bx = Math.max(1, Math.ceil((b.maxX - b.minX) / binSize))
+  const by = Math.max(1, Math.ceil((b.maxY - b.minY) / binSize))
+  const bz = Math.max(1, Math.ceil((b.maxZ - b.minZ) / binSize))
+  // Most bins are empty air, and a fine grid of them is a great many: a bin
+  // is only made when something is put in it.
+  const bins: (number[] | undefined)[] = new Array(bx * by * bz)
+  prepared.forEach((p, i) => {
+    const i0 = Math.max(0, Math.floor((p.cx - p.hx - reach - b.minX) / binSize))
+    const i1 = Math.min(bx - 1, Math.floor((p.cx + p.hx + reach - b.minX) / binSize))
+    const j0 = Math.max(0, Math.floor((p.cy - p.hy - reach - b.minY) / binSize))
+    const j1 = Math.min(by - 1, Math.floor((p.cy + p.hy + reach - b.minY) / binSize))
+    const k0 = Math.max(0, Math.floor((p.cz - p.hz - reach - b.minZ) / binSize))
+    const k1 = Math.min(bz - 1, Math.floor((p.cz + p.hz + reach - b.minZ) / binSize))
+    for (let k = k0; k <= k1; k++)
+      for (let j = j0; j <= j1; j++)
+        for (let i2 = i0; i2 <= i1; i2++) {
+          const at = i2 + bx * (j + by * k)
+          const bin = bins[at]
+          if (bin) bin.push(i)
+          else bins[at] = [i]
+        }
+  })
+
+  return (x, y, z) => {
+    const i = Math.min(bx - 1, Math.max(0, Math.floor((x - b.minX) / binSize)))
+    const j = Math.min(by - 1, Math.max(0, Math.floor((y - b.minY) / binSize)))
+    const k = Math.min(bz - 1, Math.max(0, Math.floor((z - b.minZ) / binSize)))
+    const list = bins[i + bx * (j + by * k)]
+    if (!list) return far
+    let d = Infinity
+    // The shape being gathered: one primitive, or a run that shares a group.
+    let run = Infinity
+    let group = -1
+    let fillet = blend
+    for (let n = 0; n < list.length; n++) {
+      const prim = prepared[list[n]!]!
+      if (prim.negative) continue
+      const dn = distance(prim, x, y, z)
+      if (prim.group >= 0 && prim.group === group) {
+        if (dn < run) run = dn
+        continue
+      }
+      if (run !== Infinity) d = d === Infinity ? run : smin(d, run, fillet)
+      run = dn
+      group = prim.group
+      fillet = prim.blend > 0 ? prim.blend : blend
+    }
+    if (run !== Infinity) d = d === Infinity ? run : smin(d, run, fillet)
+    if (d === Infinity) return far
+    // Carving happens after the union so a socket cuts the finished surface.
+    for (let n = 0; n < list.length; n++) {
+      const prim = prepared[list[n]!]!
+      if (!prim.negative) continue
+      d = smax(d, -distance(prim, x, y, z), prim.blend > 0 ? prim.blend : carve)
+    }
+    return d
+  }
+}
+
+export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = blend * 0.5, exact = false, refine }: MeshOptions): SurfaceMesh {
   const prepared = primitives.map(prepare)
 
   // Domain: the union's bounds plus room for the blend fillets and one cell.
@@ -265,6 +458,7 @@ export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = bl
   let maxX = -Infinity
   let maxY = -Infinity
   let maxZ = -Infinity
+  let widest = blend
   for (const p of prepared) {
     minX = Math.min(minX, p.cx - p.bound)
     minY = Math.min(minY, p.cy - p.bound)
@@ -272,85 +466,87 @@ export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = bl
     maxX = Math.max(maxX, p.cx + p.bound)
     maxY = Math.max(maxY, p.cy + p.bound)
     maxZ = Math.max(maxZ, p.cz + p.bound)
+    if (p.blend > widest) widest = p.blend
   }
-  const pad = blend + spacing * 2
+  const pad = widest + spacing * 2
   minX -= pad
   minY -= pad
   minZ -= pad
   maxX += pad
   maxY += pad
   maxZ += pad
+  const bounds: Bounds = { minX, minY, minZ, maxX, maxY, maxZ }
 
   const nx = Math.ceil((maxX - minX) / spacing)
   const ny = Math.ceil((maxY - minY) / spacing)
   const nz = Math.ceil((maxZ - minZ) / spacing)
 
-  // Spatial bins so each sample only evaluates nearby primitives.
+  // Spatial bins so each sample only evaluates nearby primitives. A primitive
+  // influences a sample up to `reach` away — beyond that its contribution can
+  // never win the smooth-minimum.
   const binSize = Math.max(spacing * 6, 0.25)
-  const bx = Math.max(1, Math.ceil((maxX - minX) / binSize))
-  const by = Math.max(1, Math.ceil((maxY - minY) / binSize))
-  const bz = Math.max(1, Math.ceil((maxZ - minZ) / binSize))
-  const bins: number[][] = Array.from({ length: bx * by * bz }, () => [])
-  // A primitive influences a sample up to `reach` away — beyond that its
-  // contribution can never win the smooth-minimum.
-  const reach = binSize + blend + spacing
-  prepared.forEach((p, i) => {
-    const i0 = Math.max(0, Math.floor((p.cx - p.bound - reach - minX) / binSize))
-    const i1 = Math.min(bx - 1, Math.floor((p.cx + p.bound + reach - minX) / binSize))
-    const j0 = Math.max(0, Math.floor((p.cy - p.bound - reach - minY) / binSize))
-    const j1 = Math.min(by - 1, Math.floor((p.cy + p.bound + reach - minY) / binSize))
-    const k0 = Math.max(0, Math.floor((p.cz - p.bound - reach - minZ) / binSize))
-    const k1 = Math.min(bz - 1, Math.floor((p.cz + p.bound + reach - minZ) / binSize))
-    for (let k = k0; k <= k1; k++)
-      for (let j = j0; j <= j1; j++)
-        for (let i2 = i0; i2 <= i1; i2++) bins[i2 + bx * (j + by * k)]!.push(i)
-  })
-
   const FAR = spacing * 4
-  const sample = (x: number, y: number, z: number): number => {
-    const i = Math.min(bx - 1, Math.max(0, Math.floor((x - minX) / binSize)))
-    const j = Math.min(by - 1, Math.max(0, Math.floor((y - minY) / binSize)))
-    const k = Math.min(bz - 1, Math.max(0, Math.floor((z - minZ) / binSize)))
-    const list = bins[i + bx * (j + by * k)]!
-    if (list.length === 0) return FAR
-    let d = Infinity
-    // The shape being gathered: one primitive, or a run that shares a group.
-    let run = Infinity
-    let group = -1
-    for (let n = 0; n < list.length; n++) {
-      const prim = prepared[list[n]!]!
-      if (prim.negative) continue
-      const dn = distance(prim, x, y, z)
-      if (prim.group >= 0 && prim.group === group) {
-        if (dn < run) run = dn
-        continue
-      }
-      if (run !== Infinity) d = d === Infinity ? run : smin(d, run, blend)
-      run = dn
-      group = prim.group
-    }
-    if (run !== Infinity) d = d === Infinity ? run : smin(d, run, blend)
-    if (d === Infinity) return FAR
-    // Carving happens after the union so a socket cuts the finished surface.
-    for (let n = 0; n < list.length; n++) {
-      const prim = prepared[list[n]!]!
-      if (!prim.negative) continue
-      d = smax(d, -distance(prim, x, y, z), carve)
-    }
-    return d
-  }
+  const sample = sampler(prepared, bounds, binSize, binSize + widest + spacing, blend, carve, FAR)
+  // The same field with a shorter memory, for the exact work, all of which
+  // happens within a few cells of the surface: small bins, each holding only
+  // what is that close to it, and so several times cheaper to ask.
+  const close = exact ? sampler(prepared, bounds, spacing * 3, widest + spacing * 4.5, blend, carve, FAR) : sample
+  // And one for the baked occlusion, which looks a set distance out along the
+  // normal whatever the mesh is like: bins a third the size, holding only what
+  // is within that distance.
+  const OCCLUSION_REACH = 0.175
+  const around = exact ? sampler(prepared, bounds, 0.085, OCCLUSION_REACH + widest + 0.01, blend, carve, FAR) : sample
+  // And a third for a point that is already all but on the surface, where
+  // nothing further off than a fillet can matter: the shortest lists of all,
+  // and most of the exact work is asked of this one.
+  const touching = exact ? sampler(prepared, bounds, Math.max(widest, spacing), widest + spacing * 0.7, blend, carve, FAR) : sample
+  /** For each vertex made by splitting an edge, the two it lies between. */
+  const between: number[] = []
+  let grown = 0
 
   // ---- Scalar field ----------------------------------------------------------
   const sx = nx + 1
   const sy = ny + 1
   const field = new Float32Array(sx * sy * (nz + 1))
-  for (let k = 0; k <= nz; k++) {
-    const z = minZ + k * spacing
-    for (let j = 0; j <= ny; j++) {
-      const y = minY + j * spacing
-      const rowBase = sx * (j + sy * k)
-      for (let i = 0; i <= nx; i++) {
-        field[rowBase + i] = sample(minX + i * spacing, y, z)
+  if (!exact) {
+    for (let k = 0; k <= nz; k++) {
+      const z = minZ + k * spacing
+      for (let j = 0; j <= ny; j++) {
+        const y = minY + j * spacing
+        const rowBase = sx * (j + sy * k)
+        for (let i = 0; i <= nx; i++) {
+          field[rowBase + i] = sample(minX + i * spacing, y, z)
+        }
+      }
+    }
+  } else {
+    // In blocks of three samples a side. The field changes by no more than
+    // about one and a half times the distance moved, so a block whose middle
+    // is further from the surface than that allows has no surface in it, and
+    // all of it is given the middle's value: the right sign, which is all that
+    // is asked of a sample nothing crosses beside.
+    const BLOCK = 3
+    const near = spacing * 2.6
+    for (let k0 = 0; k0 <= nz; k0 += BLOCK) {
+      const ck = Math.min(nz, k0 + 1)
+      const k1 = Math.min(nz, k0 + BLOCK - 1)
+      for (let j0 = 0; j0 <= ny; j0 += BLOCK) {
+        const cj = Math.min(ny, j0 + 1)
+        const j1 = Math.min(ny, j0 + BLOCK - 1)
+        for (let i0 = 0; i0 <= nx; i0 += BLOCK) {
+          const ci = Math.min(nx, i0 + 1)
+          const i1 = Math.min(nx, i0 + BLOCK - 1)
+          const middle = close(minX + ci * spacing, minY + cj * spacing, minZ + ck * spacing)
+          const empty = Math.abs(middle) > near
+          for (let k = k0; k <= k1; k++) {
+            for (let j = j0; j <= j1; j++) {
+              const rowBase = sx * (j + sy * k)
+              for (let i = i0; i <= i1; i++) {
+                field[rowBase + i] = empty || (i === ci && j === cj && k === ck) ? middle : close(minX + i * spacing, minY + j * spacing, minZ + k * spacing)
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -430,7 +626,7 @@ export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = bl
   }
 
   // ---- Quads across every sign-changing grid edge ---------------------------
-  const indices: number[] = []
+  let indices: number[] = []
   const cellAt = (i: number, j: number, k: number) => cellVertex[i + nx * (j + ny * k)]!
   const quad = (a: number, b: number, c: number, d: number, flip: boolean) => {
     if (a < 0 || b < 0 || c < 0 || d < 0) return
@@ -484,50 +680,167 @@ export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = bl
       }
     }
   }
-
-  // ---- Normals from the sampled field -------------------------------------
-  // Re-evaluating the SDF six times per vertex dominated the cost; central
-  // differences on the field we already have are far cheaper and just as smooth.
-  const vertexCount = positions.length / 3
-  const normals = new Float32Array(vertexCount * 3)
-  const clampI = (v: number) => (v < 0 ? 0 : v > nx ? nx : v)
-  const clampJ = (v: number) => (v < 0 ? 0 : v > ny ? ny : v)
-  const clampK = (v: number) => (v < 0 ? 0 : v > nz ? nz : v)
-  for (let v = 0; v < vertexCount; v++) {
-    const i = cellOf[v * 3]!
-    const j = cellOf[v * 3 + 1]!
-    const k = cellOf[v * 3 + 2]!
-    // Trilinear blend of the gradient at the cell's eight corners.
-    const fx = (positions[v * 3]! - minX) / spacing - i
-    const fy = (positions[v * 3 + 1]! - minY) / spacing - j
-    const fz = (positions[v * 3 + 2]! - minZ) / spacing - k
-    let gx = 0
-    let gy = 0
-    let gz = 0
-    for (let c = 0; c < 8; c++) {
-      const oi = c & 1
-      const oj = (c >> 1) & 1
-      const ok = (c >> 2) & 1
-      const w = (oi ? fx : 1 - fx) * (oj ? fy : 1 - fy) * (ok ? fz : 1 - fz)
-      if (w === 0) continue
-      const ci = i + oi
-      const cj = j + oj
-      const ck = k + ok
-      gx += w * (fieldAt(clampI(ci + 1), cj, ck) - fieldAt(clampI(ci - 1), cj, ck))
-      gy += w * (fieldAt(ci, clampJ(cj + 1), ck) - fieldAt(ci, clampJ(cj - 1), ck))
-      gz += w * (fieldAt(ci, cj, clampK(ck + 1)) - fieldAt(ci, cj, clampK(ck - 1)))
+  let normals: Float32Array
+  if (exact) {
+    // ---- The field's own surface, and its own normals ------------------------
+    const g: Vec3 = [0, 0, 0]
+    const gradient = (of: Field, x: number, y: number, z: number, h: number) => {
+      g[0] = (of(x + h, y, z) - of(x - h, y, z)) / (2 * h)
+      g[1] = (of(x, y + h, z) - of(x, y - h, z)) / (2 * h)
+      g[2] = (of(x, y, z + h) - of(x, y, z - h)) / (2 * h)
     }
-    const len = Math.hypot(gx, gy, gz) || 1
-    normals[v * 3] = gx / len
-    normals[v * 3 + 1] = gy / len
-    normals[v * 3 + 2] = gz / len
+    /** Two steps of Newton's method down the gradient, never further than a cell. */
+    const settle = (of: Field, v: number, cell: number) => {
+      let x = positions[v * 3]!
+      let y = positions[v * 3 + 1]!
+      let z = positions[v * 3 + 2]!
+      gradient(of, x, y, z, cell * 0.3)
+      for (let pass = 0; pass < 2; pass++) {
+        const f = of(x, y, z)
+        const g2 = g[0] * g[0] + g[1] * g[1] + g[2] * g[2]
+        if (g2 < 1e-9) break
+        let step = f / g2
+        const moved = Math.abs(step) * Math.sqrt(g2)
+        if (moved > cell * 0.9) step *= (cell * 0.9) / moved
+        x -= g[0] * step
+        y -= g[1] * step
+        z -= g[2] * step
+      }
+      positions[v * 3] = x
+      positions[v * 3 + 1] = y
+      positions[v * 3 + 2] = z
+    }
+    // A vertex of the nets can be most of a cell from the surface; once it has
+    // been put there, it and everything made from it is a hair's breadth off.
+    for (let v = 0; v < positions.length / 3; v++) settle(close, v, spacing)
+
+    // Halving the triangles where it is asked for. An edge is split when both
+    // its ends want it, which is a fact about the edge and so the same for the
+    // two triangles that share it: no cracks. A triangle then has all three of
+    // its edges split, or one, or none.
+    grown = positions.length / 3
+    if (refine) {
+      for (let level = 1; level <= 4; level++) {
+        const count = positions.length / 3
+        const want = new Uint8Array(count)
+        let any = false
+        for (let v = 0; v < count; v++) {
+          if (refine(positions[v * 3]!, positions[v * 3 + 1]!, positions[v * 3 + 2]!) >= level) {
+            want[v] = 1
+            any = true
+          }
+        }
+        if (!any) break
+        const made = new Map<number, number>()
+        const mid = (a: number, b: number): number => {
+          const key = a < b ? a * count + b : b * count + a
+          let m = made.get(key)
+          if (m === undefined) {
+            m = positions.length / 3
+            positions.push(
+              (positions[a * 3]! + positions[b * 3]!) / 2,
+              (positions[a * 3 + 1]! + positions[b * 3 + 1]!) / 2,
+              (positions[a * 3 + 2]! + positions[b * 3 + 2]!) / 2,
+            )
+            made.set(key, m)
+            between.push(a, b)
+          }
+          return m
+        }
+        const next: number[] = []
+        for (let t = 0; t < indices.length; t += 3) {
+          const a = indices[t]!
+          const b = indices[t + 1]!
+          const c = indices[t + 2]!
+          const ab = want[a] === 1 && want[b] === 1
+          const bc = want[b] === 1 && want[c] === 1
+          const ca = want[c] === 1 && want[a] === 1
+          if (ab && bc && ca) {
+            const mab = mid(a, b)
+            const mbc = mid(b, c)
+            const mca = mid(c, a)
+            next.push(a, mab, mca, mab, b, mbc, mca, mbc, c, mab, mbc, mca)
+          } else if (ab) {
+            const m = mid(a, b)
+            next.push(a, m, c, m, b, c)
+          } else if (bc) {
+            const m = mid(b, c)
+            next.push(b, m, a, m, c, a)
+          } else if (ca) {
+            const m = mid(c, a)
+            next.push(c, m, b, m, a, b)
+          } else {
+            next.push(a, b, c)
+          }
+        }
+        indices = next
+        const cell = spacing / 2 ** level
+        for (let v = count; v < positions.length / 3; v++) settle(touching, v, cell)
+      }
+    }
+    const total = positions.length / 3
+    normals = new Float32Array(total * 3)
+    for (let v = 0; v < total; v++) {
+      const x = positions[v * 3]!
+      const y = positions[v * 3 + 1]!
+      const z = positions[v * 3 + 2]!
+      const level = refine ? Math.max(0, Math.min(4, Math.floor(refine(x, y, z)))) : 0
+      gradient(touching, x, y, z, (spacing / 2 ** level) * 0.4)
+      const len = Math.hypot(g[0], g[1], g[2]) || 1
+      normals[v * 3] = g[0] / len
+      normals[v * 3 + 1] = g[1] / len
+      normals[v * 3 + 2] = g[2] / len
+    }
+  } else {
+    // ---- Normals from the sampled field -------------------------------------
+    // Re-evaluating the SDF six times per vertex dominated the cost; central
+    // differences on the field we already have are far cheaper and just as smooth.
+    const count = positions.length / 3
+    normals = new Float32Array(count * 3)
+    const clampI = (v: number) => (v < 0 ? 0 : v > nx ? nx : v)
+    const clampJ = (v: number) => (v < 0 ? 0 : v > ny ? ny : v)
+    const clampK = (v: number) => (v < 0 ? 0 : v > nz ? nz : v)
+    for (let v = 0; v < count; v++) {
+      const i = cellOf[v * 3]!
+      const j = cellOf[v * 3 + 1]!
+      const k = cellOf[v * 3 + 2]!
+      // Trilinear blend of the gradient at the cell's eight corners.
+      const fx = (positions[v * 3]! - minX) / spacing - i
+      const fy = (positions[v * 3 + 1]! - minY) / spacing - j
+      const fz = (positions[v * 3 + 2]! - minZ) / spacing - k
+      let gx = 0
+      let gy = 0
+      let gz = 0
+      for (let c = 0; c < 8; c++) {
+        const oi = c & 1
+        const oj = (c >> 1) & 1
+        const ok = (c >> 2) & 1
+        const w = (oi ? fx : 1 - fx) * (oj ? fy : 1 - fy) * (ok ? fz : 1 - fz)
+        if (w === 0) continue
+        const ci = i + oi
+        const cj = j + oj
+        const ck = k + ok
+        gx += w * (fieldAt(clampI(ci + 1), cj, ck) - fieldAt(clampI(ci - 1), cj, ck))
+        gy += w * (fieldAt(ci, clampJ(cj + 1), ck) - fieldAt(ci, clampJ(cj - 1), ck))
+        gz += w * (fieldAt(ci, cj, clampK(ck + 1)) - fieldAt(ci, cj, clampK(ck - 1)))
+      }
+      const len = Math.hypot(gx, gy, gz) || 1
+      normals[v * 3] = gx / len
+      normals[v * 3 + 1] = gy / len
+      normals[v * 3 + 2] = gz / len
+    }
   }
+  const vertexCount = positions.length / 3
 
   // ---- Baked ambient occlusion ---------------------------------------------
   // Classic SDF occlusion: march a few steps along the normal and compare how
   // much closer the surface stays than free space would allow.
   const ao = new Float32Array(vertexCount)
-  for (let v = 0; v < vertexCount; v++) {
+  // Where the mesh was refined, only the vertices it started with are asked:
+  // occlusion changes over centimetres, and a vertex made by splitting an edge
+  // is the mean of the edge's two ends closely enough.
+  const asked = exact ? grown : vertexCount
+  for (let v = 0; v < asked; v++) {
     const x = positions[v * 3]!
     const y = positions[v * 3 + 1]!
     const z = positions[v * 3 + 2]!
@@ -538,14 +851,17 @@ export function meshSdf(primitives: SdfPrimitive[], { spacing, blend, carve = bl
     let weight = 1
     for (let step = 1; step <= 5; step++) {
       const h = 0.015 + 0.16 * (step / 5)
-      const d = sample(x + nx2 * h, y + ny2 * h, z + nz2 * h)
+      const d = around(x + nx2 * h, y + ny2 * h, z + nz2 * h)
       occ += (h - d) * weight
       weight *= 0.82
     }
     const value = 1 - 2.4 * occ
     ao[v] = value < 0 ? 0 : value > 1 ? 1 : value
   }
-
+  for (let v = asked; v < vertexCount; v++) {
+    const at = (v - asked) * 2
+    ao[v] = (ao[between[at]!]! + ao[between[at + 1]!]!) / 2
+  }
   // ---- Winding safety net ---------------------------------------------------
   // Gradient normals always point outward, so if most triangles wind against
   // them the whole surface is inside-out; flipping once fixes every face.

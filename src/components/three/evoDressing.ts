@@ -1,6 +1,6 @@
 import { CircleGeometry, ConeGeometry, CylinderGeometry, Group, InstancedMesh, Mesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three'
 import type { CreatureDetail } from './creatures'
-import { AIR_PARS, EVO_NOISE, airUniforms, inAir, type Air, type Arrivals } from './evoAir'
+import { AIR_PARS, EVO_NOISE, airUniforms, inAir, ownShadow, type Air, type Arrivals } from './evoAir'
 import { Figure } from './evoCast'
 import { PLACE, groundAt, hash2 } from './evoLand'
 import type { FigureLookName } from './evoLooks'
@@ -91,10 +91,12 @@ export function createVillage(air: Air, shadows: boolean): Part {
   const thatch = inAir(new MeshStandardMaterial({ color: '#9a8450', roughness: 1 }), air, 'thatch')
   const walls = new InstancedMesh(wallGeometry, daub, HUTS.length)
   const roofs = new InstancedMesh(roofGeometry, thatch, HUTS.length)
+  const shades: (() => void)[] = []
   for (const mesh of [walls, roofs]) {
     mesh.castShadow = shadows
     mesh.receiveShadow = shadows
     mesh.frustumCulled = false
+    if (shadows) shades.push(ownShadow(mesh))
     root.add(mesh)
   }
   const dummy = new Object3D()
@@ -121,6 +123,7 @@ export function createVillage(air: Air, shadows: boolean): Part {
       roofs.instanceMatrix.needsUpdate = true
     },
     dispose() {
+      for (const dispose of shades) dispose()
       wallGeometry.dispose()
       roofGeometry.dispose()
       daub.dispose()
@@ -143,11 +146,11 @@ const PASSERS: readonly { z: number; going: 1 | -1; speed: number; start: number
 const REACH = { behind: 12, ahead: 74 }
 
 /** People walking the far pavement, in their own time: the city does not wait for the scroll. */
-export function createPassers(air: Air & Arrivals, detail: CreatureDetail, bump: number, shadows: boolean): Part {
+export function createPassers(air: Air & Arrivals, detail: CreatureDetail, bump: number, shadows: boolean, coat: number): Part {
   const root = new Group()
   const span = REACH.behind + REACH.ahead
-  const people = PASSERS.map((who, i) => {
-    const figure = new Figure('modern', air, `passer${i}`, { detail, look: who.look, scale: who.scale, bump, shadows })
+  const people = PASSERS.map((who) => {
+    const figure = new Figure('modern', air, { detail, look: who.look, scale: who.scale, bump, shadows, coat })
     root.add(figure.group)
     return { figure, who }
   })
@@ -167,6 +170,7 @@ export function createPassers(air: Air & Arrivals, detail: CreatureDetail, bump:
         const along = (((who.going * travelled - beat.shot.x + REACH.behind) % span) + span) % span
         const x = beat.shot.x - REACH.behind + along
         figure.place(x, who.z, who.going > 0 ? 0 : Math.PI, 0.07)
+        figure.seen(beat.camera.position.distanceTo(figure.group.position))
         applyPose(figure.byName, gaitPose(pose, travelled / (GAITS.walk.stride * who.scale), GAITS.walk), figure.frame)
       }
     },

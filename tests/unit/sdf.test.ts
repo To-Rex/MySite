@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { meshSdf, type SdfPrimitive } from '@/components/three/sdf'
+import { meshSdf, nearestFields, type SdfPrimitive } from '@/components/three/sdf'
 import { allFinite, components, edgeUse, openEdges, volume } from './mesh'
 
 /**
@@ -127,5 +127,130 @@ describe('meshSdf combining shapes', () => {
     }
     expect(thickEnd).toBeCloseTo(0.5, 1)
     expect(thinEnd).toBeCloseTo(0.25, 1)
+  })
+})
+
+describe('meshSdf, exactly', () => {
+  const COARSE = { spacing: 0.2, blend: 0.1 }
+  const grid = meshSdf([sphere([0, 0, 0], 1)], COARSE)
+  const exact = meshSdf([sphere([0, 0, 0], 1)], { ...COARSE, exact: true })
+  const off = (mesh: typeof grid): number => {
+    let worst = 0
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      worst = Math.max(worst, Math.abs(Math.hypot(mesh.positions[i]!, mesh.positions[i + 1]!, mesh.positions[i + 2]!) - 1))
+    }
+    return worst
+  }
+
+  it('is the same mesh as the grid makes, with every vertex moved onto the surface', () => {
+    expect(exact.positions.length).toBe(grid.positions.length)
+    expect(exact.indices.length).toBe(grid.indices.length)
+    expect(components(exact)).toBe(1)
+    expect(openEdges(exact)).toBe(0)
+    // Surface nets leaves a vertex where the crossings of its cell average
+    // out, which on a sphere is inside it. The field's own surface is not.
+    expect(off(grid)).toBeGreaterThan(0.004)
+    expect(off(exact)).toBeLessThan(0.0005)
+    expect(volume(exact)).toBeGreaterThan(volume(grid))
+  })
+
+  it('takes its normals from the field and not from two cells of it', () => {
+    for (let i = 0; i < exact.positions.length; i += 3) {
+      const r = Math.hypot(exact.positions[i]!, exact.positions[i + 1]!, exact.positions[i + 2]!)
+      const dot = (exact.positions[i]! * exact.normals[i]! + exact.positions[i + 1]! * exact.normals[i + 1]! + exact.positions[i + 2]! * exact.normals[i + 2]!) / r
+      expect(dot).toBeGreaterThan(0.99999)
+    }
+    expect(allFinite(exact.ao)).toBe(true)
+  })
+
+  it('samples only near the surface and still finds all of it', () => {
+    // A shell: a sphere with a smaller one carved out of its middle. Both
+    // surfaces are there, though most of the grid between them was never asked.
+    const shell = meshSdf([sphere([0, 0, 0], 1), sphere([0, 0, 0], 0.5, true)], { spacing: 0.08, blend: 0.05, exact: true })
+    expect(components(shell)).toBe(2)
+    expect(openEdges(shell)).toBe(0)
+  })
+
+  it('halves the triangles where it is asked to, without a crack', () => {
+    const refined = meshSdf([sphere([0, 0, 0], 1)], { ...COARSE, exact: true, refine: (x) => (x > 0.3 ? 2 : 0) })
+    expect(refined.positions.length).toBeGreaterThan(exact.positions.length * 3)
+    expect(components(refined)).toBe(1)
+    expect(openEdges(refined)).toBe(0)
+    expect(off(refined)).toBeLessThan(0.0005)
+    expect(allFinite(refined.normals)).toBe(true)
+    expect(allFinite(refined.ao)).toBe(true)
+    for (const value of refined.ao) expect(value).toBeGreaterThan(0.9)
+    // Finer on the side that was asked for, and as it was on the other.
+    const edge = (mesh: typeof grid, keep: (x: number) => boolean): number => {
+      let total = 0
+      let count = 0
+      for (let t = 0; t < mesh.indices.length; t += 3) {
+        for (let e = 0; e < 3; e++) {
+          const a = mesh.indices[t + e]! * 3
+          const b = mesh.indices[t + ((e + 1) % 3)]! * 3
+          if (!keep(mesh.positions[a]!) || !keep(mesh.positions[b]!)) continue
+          total += Math.hypot(mesh.positions[a]! - mesh.positions[b]!, mesh.positions[a + 1]! - mesh.positions[b + 1]!, mesh.positions[a + 2]! - mesh.positions[b + 2]!)
+          count++
+        }
+      }
+      return total / count
+    }
+    expect(edge(refined, (x) => x > 0.5)).toBeLessThan(edge(exact, (x) => x > 0.5) * 0.3)
+    expect(edge(refined, (x) => x < -0.2)).toBeCloseTo(edge(exact, (x) => x < -0.2), 3)
+    // And still a sphere's worth of it.
+    expect(volume(refined)).toBeGreaterThan(UNIT_SPHERE * 0.985)
+    expect(volume(refined)).toBeLessThan(UNIT_SPHERE)
+  })
+
+  it('leaves the grid mesh as it has always been when neither is asked for', () => {
+    const again = meshSdf([sphere([0, 0, 0], 1)], COARSE)
+    expect(Array.from(again.positions)).toEqual(Array.from(grid.positions))
+    expect(Array.from(again.normals)).toEqual(Array.from(grid.normals))
+  })
+})
+
+describe('a shape with a fillet of its own', () => {
+  // Two spheres that meet in a crease. How far the crease is filled in is the fillet.
+  const waist = (blend: number | undefined): number => {
+    const mesh = meshSdf([sphere([-0.6, 0, 0], 1), { ...sphere([0.6, 0, 0], 1), blend }], { spacing: 0.08, blend: 0.5, exact: true })
+    let least = Infinity
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      if (Math.abs(mesh.positions[i]!) < 0.05) least = Math.min(least, Math.hypot(mesh.positions[i + 1]!, mesh.positions[i + 2]!))
+    }
+    return least
+  }
+  const sharp = waist(0.02)
+  const soft = waist(undefined)
+
+  it('is joined on with that fillet and not the mesh\'s', () => {
+    // Where the spheres themselves cross: 0.8 from the axis.
+    const crease = Math.sqrt(1 - 0.6 * 0.6)
+    expect(sharp).toBeGreaterThan(crease - 0.005)
+    expect(sharp).toBeLessThan(crease + 0.04)
+    expect(soft).toBeGreaterThan(sharp + 0.08)
+  })
+})
+
+describe('nearestFields', () => {
+  const near = nearestFields([[sphere([0, 0, 0], 1)], [sphere([3, 0, 0], 0.5)], [sphere([0, 5, 0], 1, true)]], 0.6)
+  const out = new Float64Array(3)
+
+  it('gives the distance to the nearest shape of each set that is within reach', () => {
+    near(1.2, 0, 0, out)
+    expect(out[0]).toBeCloseTo(0.2, 6)
+    expect(out[1]).toBe(Infinity)
+    near(2.2, 0, 0, out)
+    expect(out[0]).toBe(Infinity)
+    expect(out[1]).toBeCloseTo(0.3, 6)
+    // Inside a shape it is negative.
+    near(0.5, 0, 0, out)
+    expect(out[0]).toBeCloseTo(-0.5, 6)
+  })
+
+  it('has nothing to say about what is carved, or about anywhere far from everything', () => {
+    near(0, 5, 0, out)
+    expect(Array.from(out)).toEqual([Infinity, Infinity, Infinity])
+    near(40, 40, 40, out)
+    expect(Array.from(out)).toEqual([Infinity, Infinity, Infinity])
   })
 })

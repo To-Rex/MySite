@@ -57,13 +57,57 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
   useEffect(() => {
     const post = WALK_QUALITY[quality].glow ? createPost(4) : null
     const walk = createWalk(quality)
+    let gone = false
+    let pending = 0
+    let queue: (() => void)[] = []
+    let turn = 0
+    const later = (job: () => void): number =>
+      typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(job, { timeout: 400 }) : window.setTimeout(job, 60)
+    // One small job at a time, when the page has nothing else to do: each
+    // draws one set of the walk once into a corner of the frame, which is all
+    // the graphics card needs to have it ready.
+    const corner = (): void => {
+      if (post) {
+        post.target.scissorTest = true
+        post.target.scissor.set(0, 0, 8, 8)
+        gl.setRenderTarget(post.target)
+        gl.render(scene, camera)
+        gl.setRenderTarget(null)
+        post.target.scissorTest = false
+      } else {
+        gl.setScissorTest(true)
+        gl.setScissor(0, 0, 8, 8)
+        gl.render(scene, camera)
+        gl.setScissorTest(false)
+      }
+    }
+    const next = (): void => {
+      turn = 0
+      if (gone) return
+      queue.shift()?.()
+      if (queue.length > 0) turn = later(next)
+    }
+    const warm = (): void => {
+      if (gone) return
+      queue = walk.warmups(corner)
+      if (turn === 0) turn = later(next)
+    }
     // A program is built for what it is drawn into, and the glow draws the
     // scene into a frame of its own: compiled for the screen it would only be
     // compiled again, on the frame it was first needed.
     const compile = (object: Object3D) => {
       gl.setRenderTarget(post?.target ?? null)
-      void gl.compileAsync(object, camera, scene).catch(() => undefined)
+      // Once for each way the walk is lit, or the first frame out of the cave
+      // would be spent building everything again for a sky with no fire in it.
+      const built: Promise<unknown>[] = []
+      walk.rehearse(() => built.push(gl.compileAsync(object, camera, scene).catch(() => undefined)))
       gl.setRenderTarget(null)
+      pending++
+      void Promise.all(built).then(() => {
+        // Not until the last of them is in: drawing with a program that is
+        // still being built is waiting for it, on the main thread.
+        if (--pending === 0) warm()
+      })
     }
     walk.arrivals.arrived = compile
     walkRef.current = walk
@@ -73,6 +117,7 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
     // from the first frame the walk hides whatever is out of shot.
     compile(scene)
     return () => {
+      gone = true
       walk.arrivals.arrived = undefined
       scene.remove(walk.root)
       walk.dispose()

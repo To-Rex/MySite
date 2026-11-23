@@ -110,7 +110,9 @@ export function createCave(air: Air & Arrivals, detail: CreatureDetail, bump: nu
   // ---- the crag ------------------------------------------------------------
   const rock = makeRockMaterial(air, bump)
   disposers.push(() => rock.dispose())
-  void requestCreature('crag', detail).then((creature) => {
+  // As long as the worker needs: the walk is built before it is looked at, and
+  // a hill meshed on the main thread is the page stopped for a second.
+  void requestCreature('crag', detail, 30000).then((creature) => {
     if (gone) return
     const mesh = new Mesh(creature.geometry, rock)
     const size = creature.size ?? 1

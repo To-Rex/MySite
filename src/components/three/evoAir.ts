@@ -1,4 +1,16 @@
-import { BackSide, Color, ShaderMaterial, Vector3, Vector4, type Material, type Object3D, type WebGLProgramParametersWithUniforms } from 'three'
+import {
+  BackSide,
+  Color,
+  MeshDepthMaterial,
+  MeshDistanceMaterial,
+  ShaderMaterial,
+  Vector3,
+  Vector4,
+  type Material,
+  type Mesh,
+  type Object3D,
+  type WebGLProgramParametersWithUniforms,
+} from 'three'
 import { PLACE } from './evoLand'
 
 /**
@@ -213,6 +225,29 @@ export function inAir<T extends Material>(material: T, air: Air, key: string, ex
   }
   material.customProgramCacheKey = () => `evo:${key}`
   return material
+}
+
+/**
+ * Gives a mesh that is instanced or skinned its own materials to cast a
+ * shadow with, and returns what disposes of them.
+ *
+ * Left alone, everything in a scene casts its shadow with one material of
+ * three's, which is given a new program each time the kind of thing being
+ * drawn changes — and a program is filed under the number of lights lit at
+ * the time, though a shadow's does not use them. So the first village roof
+ * drawn after the fire in the cave has been left behind is a new program, made
+ * in the middle of somebody's scroll. With a material of its own a kind of
+ * thing has the one program, made the first time it is drawn, for good.
+ */
+export function ownShadow(mesh: Mesh): () => void {
+  const depth = new MeshDepthMaterial()
+  const distance = new MeshDistanceMaterial()
+  mesh.customDepthMaterial = depth
+  mesh.customDistanceMaterial = distance
+  return () => {
+    depth.dispose()
+    distance.dispose()
+  }
 }
 
 const SKY_VERT = /* glsl */ `

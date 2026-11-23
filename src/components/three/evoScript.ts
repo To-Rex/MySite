@@ -103,16 +103,17 @@ export interface Shot {
  */
 const CAMERA: readonly Key[] = [
   //  at     eye x      y      z     look x     y      z    fov
-  [0.0, -23.4, 1.05, -2.3, -14.8, 0.95, 0.9, 40],
-  [0.06, -22.8, 1.3, -2.5, -13.0, 1.2, 0.7, 41],
+  [0.0, -21.3, 1.05, -2.7, -14.9, 0.95, 0.85, 40],
+  [0.06, -20.6, 1.25, -3.3, -13.4, 1.15, 0.75, 41],
   [0.12, -19.6, 1.72, -2.3, -6.0, 1.45, 0.3, 43],
   [0.165, -9.0, 1.85, -0.9, 6.0, 1.5, -0.6, 46],
   [0.2, 1.5, 2.2, 1.2, 30, 1.6, -5.5, 49],
   [0.245, 13, 7.5, 12, 76, 0.6, -19, 47],
-  [0.3, 34, 1.75, 7.4, 62, 1.25, -8.5, 40],
-  [0.36, 66, 1.45, 4.2, 99, 2.0, -19, 38],
-  [0.415, 86, 1.9, -1.5, 117, 2.5, -30, 43],
-  [0.455, 103, 4.4, 2.5, 150, 2.6, -44, 47],
+  [0.3, 42, 1.7, 1.5, 66, 1.3, -9.5, 36],
+  [0.36, 72.5, 1.45, -4.5, 104, 1.9, -21.5, 30],
+  [0.39, 85.5, 1.4, -8.5, 106, 2.1, -22.6, 30],
+  [0.415, 90, 1.5, -10.5, 112, 2.3, -21, 32],
+  [0.455, 104, 4.6, -6, 150, 2.6, -40, 46],
   [0.5, 132, 15, 16, 204, 0.5, -20, 50],
   [0.56, 178, 19.5, 21, 250, 2, -14, 52],
   [0.615, 233, 15, -1.5, 305, 9, -6.5, 50],
@@ -200,7 +201,12 @@ const SUN_ANGLE: readonly Key[] = [
  */
 const SUN_BEARING: readonly Key[] = [
   [0.0, -0.24],
-  [0.475, -0.24],
+  [0.2, -0.24],
+  // Out on the steppe it climbs away to one side of the way the hunt goes: a
+  // sun dead ahead leaves everything that is walked towards a black shape,
+  // and one off to the side puts light down a flank and along a spear.
+  [0.34, 0.75],
+  [0.475, 0.75],
   [0.618, PI - 0.42],
   [1.0, PI - 0.42],
 ]
@@ -433,11 +439,12 @@ const HUNT_PACE = track([
   [0.12, 5.5],
   [0.165, 15],
   [0.19, 19],
-  [0.3, 62],
-  [0.38, 96],
-  [0.44, 119],
-  [0.47, 122.5],
-  [1.0, 122.5],
+  [0.3, 66],
+  [0.375, 106],
+  [0.4, 112],
+  [0.44, 121.5],
+  [0.47, 123.8],
+  [1.0, 123.8],
 ])
 
 /** Who walks where in the party: metres behind the one in front, and metres to its left. */
@@ -486,8 +493,8 @@ export function hunterAt(index: number, progress: number, out: Walker): Walker {
   out.heading = who.facing + shortest(spotScratch.heading - who.facing) * smooth(0, 1.2, travelled)
   out.travelled = travelled
   out.seated = 1 - smooth(0.05 + index * 0.009, 0.082 + index * 0.009, p)
-  out.low = smooth(0.292, 0.325, p) * (1 - smooth(0.372, 0.388, p))
-  out.running = smooth(0.376, 0.392, p) * (1 - smooth(0.44, 0.462, p))
+  out.low = smooth(0.3, 0.33, p) * (1 - smooth(0.402, 0.412, p))
+  out.running = smooth(0.41, 0.424, p) * (1 - smooth(0.446, 0.466, p))
   out.cast = index === 0 ? smooth(0.398, 0.41, p) + smooth(0.41, 0.418, p) : 0
   return out
 }
@@ -514,9 +521,9 @@ const FLIGHT = [
 
 const FLIGHT_PACE = track([
   [0.0, 0],
-  [0.392, 0],
-  [0.42, 9],
-  [0.47, 52],
+  [0.4, 0],
+  [0.425, 8],
+  [0.47, 50],
   [0.52, 120],
   [1.0, 120],
 ])
@@ -541,7 +548,7 @@ export function herdAt(index: number, progress: number, out: Beast): Beast {
   out.z = spotScratch.z
   out.heading = home.heading + shortest(spotScratch.heading - home.heading) * smooth(0, 5, travelled)
   out.travelled = travelled
-  out.alarm = smooth(0.378 + index * 0.004, 0.39 + index * 0.004, p)
+  out.alarm = smooth(0.386 + index * 0.004, 0.398 + index * 0.004, p)
   out.fleeing = smooth(0.2, 6, travelled)
   return out
 }

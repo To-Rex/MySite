@@ -576,7 +576,7 @@ everything else is a family of `evo*` files under `components/three/`.
 | Era | From | What happens |
 | --- | --- | --- |
 | `fire` | 0 | Embers at the back of a cave; the fire catches; three of the four people round it get up and go |
-| `hunt` | 0.2 | Out of the mouth into the sunrise; a herd at the water; stalking, a run, one spear |
+| `hunt` | 0.2 | Out of the mouth into the sunrise; a herd at the water; stalking up close through the grass, one spear, the herd gone and a run after it |
 | `field` | 0.47 | The camera climbs; three days and nights go by; roofs, ploughed strips, a track |
 | `city` | 0.645 | Blocks rise out of the ground one at a time; dusk in a street; lamps and windows come on |
 | `now` | 0.905 | Across the road, through the glass, over a shoulder, into the monitor |
@@ -592,7 +592,12 @@ its keys, which for a camera a metre and a half off the ground means dipping
 into it and for the sun means setting twice. The sun rises straight out of the
 mouth of the cave and sets ahead of the walk behind the city, which a real sun
 cannot do in one day; its circle is swung round while it is going round three
-times, where nobody can see it done.
+times, where nobody can see it done. It is swung once before that, too, and in
+plain sight: on the steppe it climbs away to one side of the way the hunt goes.
+A sun dead ahead of the camera leaves everything the camera is following a
+black shape, and the hunt is the one place the people and the animals are
+looked at closely — through a long lens, from a few metres behind the hunters,
+with the herd filling the frame beyond them.
 
 **Steps are the one thing that is not.** Where a figure is, is a function of the
 scroll; its stride is counted forward from how far it has moved since the last
@@ -605,17 +610,51 @@ people on the pavement keep their own time.
 
 **The people and the mammoths** (`evoFigures.ts`) are sculpted the way the
 creatures are — masses and tubes in one signed distance field, meshed in the
-worker — with three differences that are the reason they have a file of their
-own. They are authored in metres, and the payload says how tall they came out.
-They are more than one material: every shape belongs to a region (skin, hair,
-clothing, trim) and each vertex is given its share of the four from which
-region's shapes it lies nearest, so one seamless mesh is coloured by weights.
-And they are skinned by *reach*: every bone has a girth and a side, and a
+worker — with differences that are the reason they have a file of their own.
+They are authored in metres, and the payload says how tall they came out. They
+are more than one material: every shape belongs to one of eight regions (skin,
+the scalp under hair, pelt, leather, two cloths, horn, the sole of a shoe) and
+each vertex is given its share of each from which region's shapes it lies
+nearest, so one seamless mesh is coloured by weights, with a few painted marks
+on top — blood near the surface of a cheek, the shade round an eye, a brow, a
+lip. And they are skinned by *reach*: every bone has a girth and a side, and a
 vertex goes to the bone whose surface it is nearest on its own side of the
 body. Distance to the axis alone gives the ribs to the upper arm, which hangs
 closer to them than the spine does.
 
-Three things there each cost a round:
+What makes them look like people and animals rather than like clay is four
+things that are not in the field at all:
+
+- **A coat** (`evoCoat.ts`, `makeCoatMaterial`). A sculpt has no hair, only a
+  smooth mass the shape of a head of it. So fur and hair are grown on the
+  finished mesh, in the worker: a few thousand narrow strips, each rooted at a
+  point on the surface, lying the way the hair is combed there, as long as the
+  hair is there, and carrying the bone weights of the skin under its root. They
+  are drawn as instances of one strip with the figure's own skeleton; the
+  vertex shader turns each downward under its own weight after the skin has
+  been posed (so it is the posed animal's coat that hangs), lays it on the
+  surface where that curves away under it, and throws it about with the
+  wearer's stride; the fragment shader cuts it into strands. A mammoth is
+  eleven thousand of them and is mostly coat: the mesh underneath is the animal
+  shorn. Someone from the cave has seven thousand — hair, a beard, and the fur
+  of a tunic and boots.
+- **A face and hands fine enough to have features.** `meshSdf` has an `exact`
+  mode for these figures: every vertex is moved onto the field's own surface
+  and given the field's own gradient there (surface nets alone rounds off
+  anything a cell or two across), the grid is sampled only near the surface to
+  pay for it, and `refine` halves the triangles where it is asked to — a face
+  is meshed four times as finely as a thigh, and its eyes, nose and mouth eight. A shape can also be given a
+  fillet of its own (`blend`): the centimetre and a half that joins a thigh to
+  a hip is the end of a nostril.
+- **Eyes.** A ball behind each pair of lids, parented to the head bone, with an
+  iris and a pupil and the one glossy surface on the figure. A socket carved in
+  a field and shaded dark reads as a hole.
+- **Tusks that are swept, not sculpted** (`CreatureSweep`). A field sampled on a
+  grid loses whatever is thinner than a cell, which is the last half-metre of a
+  tusk, and joins the rest of it out of straight pieces. A circle swept along a
+  curve is a mesh that can be made exactly.
+
+Things there that each cost a round:
 
 - **A tube has to be one shape.** `tubeToCones` cuts a limb into capsules, the
   mesher filleted each to the next, and a smooth union of two overlapping
@@ -626,15 +665,33 @@ Three things there each cost a round:
 - **The mesher's ellipsoid distance is not a distance.** It is scaled by the
   smallest radius, which is right at the surface and far too small away from
   it for a flat shape: asked which region a vertex belonged to, a thin slab of
-  chest muscle claimed the front of every jacket. `nearestField` uses the
+  chest muscle claimed the front of every jacket. `nearestFields` uses the
   first-order estimate instead, and what is worn is given a centimetre's
   preference over what wears it.
 - **A request the worker has had for four seconds is redone on the main
-  thread** (`PATIENCE` in `useCreature.ts`). The crag the cave is cut into is
-  forty metres long and was first meshed finely enough to take eight; the page
-  stopped dead while it was built a second time. It is coarse now on purpose —
-  what its walls look like close to is the shader's business — and the cast
-  asks for one mesh at a time (`inTurn`).
+  thread** (`PATIENCE` in `useCreature.ts`), which is right for a creature the
+  page is waiting to show and wrong for these: the crag the cave is cut into
+  was first meshed finely enough to take eight seconds, and the page stopped
+  dead while it was built a second time. It is coarse now on purpose, the cast
+  asks for one mesh at a time (`inTurn`), and it tells the worker to take as
+  long as it needs — the walk is built before it is looked at.
+- **Half-covered is a screen door.** A coat is not blended: it is written to
+  the depth buffer like anything solid, with how much of a pixel is hair handed
+  to the multisampler as coverage, so it needs no sorting. But a lock whose
+  strands have gone finer than a pixel is evenly half there, and the
+  multisampler draws "half there" as a fixed stipple. So the strands are never
+  blurred into a grey: the further off a lock is, the fewer and wider its
+  strands — half as many each time they would have gone under a pixel and a
+  half — until it is one lock coming to a point.
+- **A lock is the sum of the way it has gone.** Placing each row of a strip
+  along the direction it had turned to by then, from the root, made anything
+  that started upwards — the ruff at a neck — double back on itself in a
+  zigzag. Each row is now the one before it plus a step, so a lock that starts
+  upwards rises, arcs over and falls.
+- **A flat strip shines all over at once.** Light off hair is a streak along
+  each strand (Kajiya and Kay), and on a strip with one normal the streak is
+  the strip: a head of planks. Each strand is tilted a little differently, so
+  each has its streak somewhere else.
 
 **They move by having their feet put down** (`evoRig.ts`). A pose is a short
 list of numbers a person could be told — how far the hips have dropped, where
@@ -643,9 +700,14 @@ poses blend by blending the numbers, and one function turns the result into
 bone rotations, solving each leg from where its foot has to be. A stride clock
 that swings the hips and knees and hopes the sole ends up level is how a figure
 comes to skate. The mammoth is the same solver on four legs, with the legs'
-top joints inside the body where an elephant's are, and it is carried a little
-low: a leg that reaches forward and back has to be straight at both ends of its
-step, and a straight leg at an angle does not come as high as an upright one.
+top joints inside the body where an elephant's are — and its body is carried
+on those legs, not posed over them (`applyBeast`). Each end of it is as high as
+the legs under that end can reach: highest passing over a leg that is upright,
+lowest when one foot has just landed ahead and the other is about to leave
+behind, with the heel coming off the ground first. Posed at a fixed height it
+had to be low enough for the longest reach, and then every leg that bore weight
+was bent — an animal that looked as though it was creeping. An elephant's legs
+are straight when they carry it; its back is what goes up and down.
 
 **The country** (`evoLand.ts`) is one strip seven hundred metres long: high
 ground with the cave in it at the west end, steppe and a pond in the middle,
@@ -698,12 +760,16 @@ only be compiled again on the frame they were first needed.
 | Glow | — | — | ✓ | ✓ |
 | Grass (fine blades / tufts) | — | 29 000 / 36 000 | 62 000 / 84 000 | 109 000 / 144 000 |
 | People and mammoths | low | low | medium | high |
+| Locks in a mammoth's coat | 1 900 | 3 500 | 6 800 | 11 400 |
 | Cars | 10 | 20 | 32 | 44 |
 
 The levels are the valley's (`valleyQuality`), and like the valley the scene
 judges itself: if most of eighty frames are slow it gives up a fifth of its
-resolution, twice at most, through the canvas's own `dpr` prop. On an M2 it
-holds sixty frames a second through all five eras at `ultra`.
+resolution, twice at most, through the canvas's own `dpr` prop. A coat is also
+drawn by distance: all of it from within two and a half times its wearer's
+height, and from there fewer locks, each wider, down to a third of them — they
+are shuffled when they are grown, so any first part of the list is the whole
+coat thinned out.
 
 It is built ahead of being seen — the chunk is fetched and the scene mounted,
 parked, three seconds after the intro, or as soon as a reader has been near it
@@ -713,6 +779,26 @@ look. It draws only while the stage is on screen and the extinction cinematic
 is not. The scroll companion and its
 cameos step aside for as long as it is. With reduced motion, or without WebGL,
 there is no walk at all: the page goes from the hero to About.
+
+Being built ahead is not the same as being ready, and the difference was a
+stall of a tenth to a third of a second at every change of scene. Three things
+are done about it, all in `EvolutionScene.tsx`:
+
+- **Programs are compiled for every lighting** (`walk.rehearse`). A program is
+  built for a number of lights. The walk has three — the fire in the cave, the
+  sky alone, the lamp in the studio — and a program compiled while the fire was
+  the only lamp lit was built again on the first frame out of the cave.
+- **Every set is drawn once before it is seen** (`walk.warmups`). A compiled
+  program is still made ready a second time, by the driver, on the first frame
+  something is drawn with it. So each set is drawn once in each lighting into
+  an eight-pixel corner of the frame, one small job at a time when the page is
+  idle, and again whenever a mesh arrives from the worker.
+- **Whatever casts a shadow and is instanced or skinned has a shadow material
+  of its own** (`ownShadow`). three casts every shadow with one material and
+  gives it a new program each time the kind of thing being drawn changes, filed
+  under the number of lights lit at the time — which a shadow does not use. The
+  first roof of the village, drawn after the fire had been left behind, was a
+  new program in the middle of a scroll.
 
 ### The extinction cinematic
 
@@ -1504,7 +1590,15 @@ whole way in two thousand steps and holds it above the ground and free of
 jumps, watches the sun up and down and counts the three nights, follows every
 hunter to the water without a step back, checks the land is level where the
 walk needs it to be, and — with a skeleton and no renderer — puts every foot of
-every gait where the gait says it is, to within a few centimetres.
+every gait where the gait says it is, to within a few centimetres. The figures
+are held to what they are meant to be as well as to being meshes: a mammoth
+whose leg is all but straight when it bears weight, two tusks that mirror each
+other and taper to nothing, an eye each side of every head, a coat whose every
+lock is rooted on the surface, combed across the way it is wide, weighted to
+bones that exist, and shuffled so that half of it is all of it thinned out.
+`sdf.test.ts` checks the exact mesher against a sphere, where the answer is
+known: every vertex on it to half a thousandth of its radius, no crack where
+the triangles are halved, and the grid mesher left bit for bit as it was.
 
 **The browser tests meet the real policy.** `tests/e2e/serve.mjs` serves
 `dist/` with the headers from `dist/_headers`; `vite preview` would serve the

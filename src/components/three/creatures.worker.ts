@@ -1,4 +1,5 @@
 import type { CreatureDetail, CreaturePayload } from './creatures'
+import { COAT_BUFFERS } from './evoCoat'
 import { createAnything, type AnyKind } from './mascots'
 
 /**
@@ -45,6 +46,9 @@ ctx.onmessage = (event) => {
       payload.skinWeights.buffer,
     ]
     if (payload.regions) buffers.push(payload.regions.buffer)
+    if (payload.regions2) buffers.push(payload.regions2.buffer)
+    if (payload.paint) buffers.push(payload.paint.buffer)
+    if (payload.coat) for (const name of COAT_BUFFERS) buffers.push(payload.coat[name].buffer)
     ctx.postMessage({ id, ok: true, ...payload }, buffers as Transferable[])
   } catch (error) {
     ctx.postMessage({ id, ok: false, error: String(error) })

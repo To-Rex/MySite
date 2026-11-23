@@ -7,6 +7,7 @@ import {
   Object3D,
   SphereGeometry,
   Vector3,
+  type Light,
   type PerspectiveCamera,
   type WebGLRenderer,
 } from 'three'
@@ -43,15 +44,17 @@ export interface WalkQuality {
   /** How finely the people and the animals are meshed. */
   people: CreatureDetail
   beasts: CreatureDetail
+  /** How much of the fur and hair grown at that detail is drawn. */
+  coat: number
   /** Cars on the street. */
   cars: number
 }
 
 export const WALK_QUALITY: Record<ValleyQuality, WalkQuality> = {
-  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, people: 'low', beasts: 'low', cars: 10 },
-  medium: { dpr: 1, shadowMap: 1024, bump: 0.025, glow: false, people: 'low', beasts: 'low', cars: 20 },
-  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.035, glow: true, people: 'medium', beasts: 'medium', cars: 32 },
-  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.035, glow: true, people: 'high', beasts: 'high', cars: 44 },
+  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, people: 'low', beasts: 'low', coat: 0.55, cars: 10 },
+  medium: { dpr: 1, shadowMap: 1024, bump: 0.025, glow: false, people: 'low', beasts: 'low', coat: 1, cars: 20 },
+  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.035, glow: true, people: 'medium', beasts: 'medium', coat: 1, cars: 32 },
+  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.035, glow: true, people: 'high', beasts: 'high', coat: 1, cars: 44 },
 }
 
 /** Everything the scene tells its parts, once a frame. */
@@ -91,6 +94,25 @@ export interface Walk {
   beat: Beat
   /** Where the canvas says what to do with a mesh that has just arrived. */
   arrivals: Arrivals
+  /**
+   * Runs something once for each way the walk is ever lit: by the fire in the
+   * cave, by the sky alone, by the lamp in the studio. A program is built for
+   * a number of lights, so one built while the fire is the only lamp lit has
+   * to be built again on the frame the fire is left behind — a stall of a
+   * tenth of a second or three in the middle of somebody's scroll. Compiling
+   * inside this builds all of them beforehand.
+   */
+  rehearse(run: () => void): void
+  /**
+   * The same idea, for the graphics card rather than the compiler. A program
+   * that has been built is still made ready a second time, by the driver, on
+   * the first frame something is drawn with it — and each set of the walk is
+   * first drawn in the middle of a scroll, as it comes into shot. This is a
+   * list of small jobs, each of which draws one set once, in one lighting,
+   * whether or not it is in shot; done one at a time while nobody is looking,
+   * they leave nothing to be made ready later.
+   */
+  warmups(draw: () => void): (() => void)[]
   add(part: Part): void
   /** The page's own colours, for the screen the walk ends in. */
   setPaper(paper: string, ink: string, accent: string): void
@@ -193,16 +215,16 @@ export function createWalk(quality: ValleyQuality): Walk {
   }
 
   const grass = createGrass(air, quality, { a: land.uMeadowA, b: land.uMeadowB })
-  const studio = createStudio(air, q.people, q.bump)
+  const studio = createStudio(air, q.people, q.bump, q.coat)
   const shadows = q.shadowMap > 0
   for (const part of [
     createCave(air, q.people, q.bump, shadows),
     grass,
-    createCast(air, { people: q.people, beasts: q.beasts }, q.bump, shadows, grass.tread),
+    createCast(air, { people: q.people, beasts: q.beasts, coat: q.coat }, q.bump, shadows, grass.tread),
     createPond(air),
     createVillage(air, shadows),
     createCity(air, { bump: q.bump, shadows, cars: q.cars }),
-    createPassers(air, q.people, q.bump, shadows),
+    createPassers(air, q.people, q.bump, shadows, q.coat),
     studio,
   ]) {
     parts.push(part)
@@ -328,11 +350,69 @@ export function createWalk(quality: ValleyQuality): Walk {
     gl.domElement.dataset.walk = p.toFixed(3)
   }
 
+  /** The sets that bring a lamp of their own, which are never lit together. */
+  const lamps = (): Object3D[] =>
+    parts.flatMap((part) => {
+      let has = false
+      part.object?.traverse((object) => {
+        if ((object as Light).isLight) has = true
+      })
+      return has && part.object ? [part.object] : []
+    })
+
   return {
     root,
     frame,
     beat,
     arrivals: air,
+    rehearse(run) {
+      const lit = lamps()
+      const were = lit.map((object) => object.visible)
+      for (let only = -1; only < lit.length; only++) {
+        lit.forEach((object, index) => {
+          object.visible = index === only
+        })
+        run()
+      }
+      lit.forEach((object, index) => {
+        object.visible = were[index]!
+      })
+    },
+    warmups(draw) {
+      const lit = lamps()
+      const sets: Object3D[] = [dome, ground, range, ...parts.flatMap((part) => (part.object ? [part.object] : []))]
+      const jobs: (() => void)[] = []
+      for (let only = -1; only < lit.length; only++) {
+        for (const set of sets) {
+          // A set with a lamp of its own is only ever drawn by that lamp.
+          const lamp = lit.indexOf(set)
+          if (lamp >= 0 && lamp !== only) continue
+          jobs.push(() => {
+            const shown = sets.map((object) => object.visible)
+            // Only this set, by the one lamp that is lit.
+            sets.forEach((object) => {
+              object.visible = object === set || (only >= 0 && object === lit[only])
+            })
+            // Everything in the set, wherever it is and whether or not it has come on yet.
+            const inside: [Object3D, boolean, boolean][] = []
+            set.traverse((object) => {
+              inside.push([object, object.visible, object.frustumCulled])
+              object.visible = true
+              object.frustumCulled = false
+            })
+            draw()
+            for (const [object, visible, culled] of inside) {
+              object.visible = visible
+              object.frustumCulled = culled
+            }
+            sets.forEach((object, index) => {
+              object.visible = shown[index]!
+            })
+          })
+        }
+      }
+      return jobs
+    },
     add(part) {
       parts.push(part)
       if (part.object) root.add(part.object)

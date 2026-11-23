@@ -1,4 +1,4 @@
-import { Color, MeshStandardMaterial, Vector4 } from 'three'
+import { Color, DoubleSide, MeshStandardMaterial, Vector2, Vector3, Vector4 } from 'three'
 import { EVO_NOISE, PARS_HERE, inAir, type Air } from './evoAir'
 import { PLACE } from './evoLand'
 
@@ -168,48 +168,59 @@ export function makeLandMaterial(air: Air, land: LandUniforms): MeshStandardMate
 
 // ------------------------------------------------------------------ figures
 
-/** How a figure is finished: a colour and a surface for each of its four regions. */
+/**
+ * How a figure is finished. Colours for what it is made of — the eight
+ * regions `evoFigures.ts` paints it with — and for what grows on it.
+ */
 export interface FigureLook {
   skin: string
-  hair: string
+  /** Leather; knitted cloth; woven cloth; ivory and nail; the sole of a shoe. */
+  hide: string
   cloth: string
-  trim: string
-  /** Roughness of skin, hair, cloth and trim. */
-  rough: readonly [number, number, number, number]
-  /** How much each catches the light at its edges: the down on skin, the nap of fur or wool. */
-  fuzz: readonly [number, number, number, number]
-  /** Relief on each, as a share of the land's bump. */
-  relief: readonly [number, number, number, number]
-  /** How shaggy the clothing is: 0 woven, 1 a pelt. */
-  pelt: number
+  denim: string
+  horn: string
+  sole: string
+  /** The hair of the head, at its roots and at its ends. */
+  hair: readonly [string, string]
+  /** Fur — worn or its own — likewise. */
+  fur: readonly [string, string]
+  /** The iris. */
+  eye: string
+  /** How much hair and fur shine along their length: how sharp the streak is, and how bright. */
+  gloss: readonly [number, number]
+  /** How long the hair and the fur are, as a share of how long they were grown. */
+  lengths: readonly [number, number]
 }
 
 export interface FigureUniforms {
-  uSkin: { value: Color }
-  uHair: { value: Color }
-  uCloth: { value: Color }
-  uTrim: { value: Color }
-  uRough: { value: Vector4 }
-  uFuzz: { value: Vector4 }
-  uRelief: { value: Vector4 }
-  uPelt: { value: number }
+  /** One colour for each region, in the regions' own order. */
+  uTint: { value: Color[] }
   /** The light now, for the rim it puts on skin and hair when it is behind them. */
   uLight: { value: Color }
   uBump: { value: number }
+  /** Metres to one unit of the mesh, which is normalised: the surface's grain is the same size on everyone. */
+  uSize: { value: number }
+  uCoatDark: { value: Color[] }
+  uCoatPale: { value: Color[] }
+  uCoatGloss: { value: Vector2 }
+  uCoatLength: { value: Vector2 }
+  /** How much wider than grown to draw each lock, for a coat that is being drawn thinned. */
+  uCoatWidth: { value: number }
+  /** Which way the coat is thrown by how its wearer is moving, in the mesh's units a unit of length. */
+  uSwing: { value: Vector3 }
+  /** The wind in it: along x and along z. */
+  uCoatWind: { value: Vector2 }
+  uIris: { value: Color }
 }
 
 const FIGURE_PARS = /* glsl */ `
-  uniform vec3 uSkin;
-  uniform vec3 uHair;
-  uniform vec3 uCloth;
-  uniform vec3 uTrim;
-  uniform vec4 uRough;
-  uniform vec4 uFuzz;
-  uniform vec4 uRelief;
-  uniform float uPelt;
+  uniform vec3 uTint[8];
   uniform vec3 uLight;
   uniform float uBump;
+  uniform float uSize;
   varying vec4 vEvoRegions;
+  varying vec4 vEvoRegions2;
+  varying vec4 vEvoPaint;
   varying vec3 vEvoBind;
   varying float vEvoAo;
   ${EVO_NOISE}
@@ -218,71 +229,115 @@ const FIGURE_PARS = /* glsl */ `
   float evoFigureHeight;
   float evoFigureRough;
   float evoFigureFuzz;
+  float evoFigureSkin;
 
-  vec3 evoFigure(vec3 bind, vec4 r) {
-    // Noise in the pose the figure was sculpted in, so it stays on the body as it moves.
-    vec3 q = bind * 30.0;
-    float fine = evoNoise3(q * 2.2);
-    float mid = evoNoise3(q);
-    float broad = evoNoise3(q * 0.3);
-    // Strands: noise stretched along the fall of the hair.
-    float strand = evoNoise3(vec3(q.x * 3.2, q.y * 0.4, q.z * 3.2));
-    float tuft = evoNoise3(vec3(q.x * 1.3, q.y * 0.45, q.z * 1.3));
+  // a: skin, scalp, pelt, hide. b: cloth, denim, horn, sole.
+  vec3 evoFigure(vec3 m, vec4 a, vec4 b, vec4 paint) {
+    // Noise in metres, in the pose the figure was sculpted in, so it is the
+    // same size on a person and a mammoth and stays on the body as it moves.
+    float broad = evoNoise3(m * 7.0);
+    float mid = evoNoise3(m * 34.0);
+    float fine = evoNoise3(m * 190.0);
+    // Strands and tufts: noise stretched along the fall of hair.
+    float strand = evoNoise3(vec3(m.x * 210.0, m.y * 24.0, m.z * 210.0));
+    float tuft = evoNoise3(vec3(m.x * 46.0, m.y * 13.0, m.z * 46.0));
+    float twill = evoNoise3(vec3(m.x * 360.0, m.y * 60.0, m.z * 360.0));
 
-    vec3 skin = uSkin * (0.9 + 0.14 * broad + 0.06 * mid);
-    vec3 hair = uHair * (0.62 + 0.75 * strand * (0.6 + 0.4 * tuft));
-    vec3 woven = uCloth * (0.9 + 0.16 * mid + 0.05 * fine);
-    vec3 pelt = uCloth * (0.5 + 0.95 * tuft * (0.55 + 0.45 * strand));
-    vec3 cloth = mix(woven, pelt, uPelt);
-    vec3 trim = uTrim * (0.86 + 0.24 * mid);
+    vec3 skin = uTint[0] * (0.9 + 0.12 * broad + 0.07 * mid);
+    // Blood near the surface, the hair of a brow, a lip.
+    skin = mix(skin, skin * vec3(1.14, 0.8, 0.74), paint.x * 0.6);
+    skin = mix(skin, uTint[1] * 0.6, paint.z * (0.6 + 0.4 * strand));
+    skin = mix(skin, skin * vec3(0.94, 0.62, 0.6), paint.w);
+    // Under hair and under fur it is as dark as their roots.
+    vec3 scalp = uTint[1] * (0.4 + 0.35 * strand);
+    vec3 pelt = uTint[2] * (0.36 + 0.4 * tuft * (0.6 + 0.4 * strand));
+    vec3 hide = uTint[3] * (0.72 + 0.36 * broad + 0.12 * mid) * (0.95 + 0.1 * fine);
+    vec3 cloth = uTint[4] * (0.9 + 0.12 * fine + 0.06 * mid);
+    vec3 denim = uTint[5] * (0.84 + 0.2 * twill + 0.06 * mid);
+    vec3 horn = uTint[6] * (0.86 + 0.14 * mid + 0.05 * fine);
+    vec3 sole = uTint[7] * (0.92 + 0.1 * fine);
 
     evoFigureHeight =
-      r.x * uRelief.x * fine +
-      r.y * uRelief.y * strand +
-      r.z * uRelief.z * mix(fine, tuft * 0.7 + strand * 0.5, uPelt) +
-      r.w * uRelief.w * mid;
-    evoFigureRough = dot(r, uRough);
-    evoFigureFuzz = dot(r, uFuzz);
-    return skin * r.x + hair * r.y + cloth * r.z + trim * r.w;
+      dot(a, vec4(fine * 0.004, strand * 0.4, tuft * 0.6, broad * 0.12 + mid * 0.07 + fine * 0.04)) +
+      dot(b, vec4(fine * 0.035 + broad * 0.05, twill * 0.05 + broad * 0.04, mid * 0.03, fine * 0.04));
+    evoFigureRough = dot(a, vec4(0.66, 0.9, 0.95, 0.74)) + dot(b, vec4(0.93, 0.87, 0.34, 0.8));
+    evoFigureFuzz = dot(a, vec4(0.2, 0.8, 0.9, 0.1)) + dot(b, vec4(0.5, 0.25, 0.06, 0.0));
+    evoFigureSkin = a.x;
+    vec3 color = skin * a.x + scalp * a.y + pelt * a.z + hide * a.w + cloth * b.x + denim * b.y + horn * b.z + sole * b.w;
+    // Shade: the hollow of an eye, the stain at the root of a tusk.
+    return mix(color, color * vec3(0.56, 0.47, 0.4), paint.y);
   }
 `
 
+/**
+ * What a light does to a figure's surface, in place of three's own: the same,
+ * and then, for skin, the red that comes back out of it just where the light
+ * is leaving — the thing that separates flesh from painted clay.
+ */
+const FIGURE_LIGHT = /* glsl */ `
+  void RE_Direct_EvoFigure(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
+    RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+    float nl = dot(geometryNormal, directLight.direction);
+    float band = smoothstep(-0.3, 0.08, nl) * (1.0 - smoothstep(0.08, 0.62, nl));
+    reflectedLight.directDiffuse += directLight.color * BRDF_Lambert(material.diffuseContribution) * vec3(0.9, 0.32, 0.2) * (band * evoFigureSkin * 0.24);
+  }
+  #undef RE_Direct
+  #define RE_Direct RE_Direct_EvoFigure
+`
+
+const tints = (look: FigureLook): Color[] => [
+  new Color(look.skin),
+  new Color(look.hair[0]),
+  new Color(look.fur[0]),
+  new Color(look.hide),
+  new Color(look.cloth),
+  new Color(look.denim),
+  new Color(look.horn),
+  new Color(look.sole),
+]
+
 export function createFigureUniforms(look: FigureLook, bump: number): FigureUniforms {
   return {
-    uSkin: { value: new Color(look.skin) },
-    uHair: { value: new Color(look.hair) },
-    uCloth: { value: new Color(look.cloth) },
-    uTrim: { value: new Color(look.trim) },
-    uRough: { value: new Vector4(...look.rough) },
-    uFuzz: { value: new Vector4(...look.fuzz) },
-    uRelief: { value: new Vector4(...look.relief) },
-    uPelt: { value: look.pelt },
+    uTint: { value: tints(look) },
     uLight: { value: new Color('#ffffff') },
     uBump: { value: bump },
+    uSize: { value: 1 },
+    uCoatDark: { value: [new Color(look.hair[0]), new Color(look.fur[0])] },
+    uCoatPale: { value: [new Color(look.hair[1]), new Color(look.fur[1])] },
+    uCoatGloss: { value: new Vector2(look.gloss[0], look.gloss[1]) },
+    uCoatLength: { value: new Vector2(look.lengths[0], look.lengths[1]) },
+    uCoatWidth: { value: 1 },
+    uSwing: { value: new Vector3() },
+    uCoatWind: { value: new Vector2(0.02, 0.012) },
+    uIris: { value: new Color(look.eye) },
   }
 }
 
 /**
- * A figure's surface: one mesh, four materials' worth of colour blended by the
- * `regions` the mesher gave each vertex, with the sculpt's baked occlusion and
- * a rim of light where the sun is behind — the thing that makes a body in
+ * A figure's surface: one mesh, eight materials' worth of colour blended by
+ * the `regions` the mesher gave each vertex, with the sculpt's baked occlusion
+ * and a rim of light where the sun is behind — the thing that makes a body in
  * front of a low sun read as flesh and hair rather than as a cut-out.
  */
-export function makeFigureMaterial(air: Air, uniforms: FigureUniforms, key: string): MeshStandardMaterial {
+export function makeFigureMaterial(air: Air, uniforms: FigureUniforms): MeshStandardMaterial {
   const material = new MeshStandardMaterial({ color: '#ffffff', roughness: 0.8, metalness: 0 })
-  return inAir(material, air, `figure:${key}`, (shader) => {
+  return inAir(material, air, 'figure', (shader) => {
     Object.assign(shader.uniforms, uniforms)
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute vec4 regions;\nattribute float aoValue;\nvarying vec4 vEvoRegions;\nvarying vec3 vEvoBind;\nvarying float vEvoAo;',
+        '#include <common>\nattribute vec4 regions;\nattribute vec4 regions2;\nattribute vec4 paint;\nattribute float aoValue;\nvarying vec4 vEvoRegions;\nvarying vec4 vEvoRegions2;\nvarying vec4 vEvoPaint;\nvarying vec3 vEvoBind;\nvarying float vEvoAo;',
       )
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEvoRegions = regions;\nvEvoBind = position;\nvEvoAo = aoValue;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvEvoRegions = regions;\nvEvoRegions2 = regions2;\nvEvoPaint = paint;\nvEvoBind = position;\nvEvoAo = aoValue;',
+      )
     shader.fragmentShader = shader.fragmentShader
       .replace(PARS_HERE, `${PARS_HERE}\n${FIGURE_PARS}`)
+      .replace('#include <lights_physical_pars_fragment>', `#include <lights_physical_pars_fragment>\n${FIGURE_LIGHT}`)
       .replace(
         '#include <color_fragment>',
-        '#include <color_fragment>\ndiffuseColor.rgb = evoFigure(vEvoBind, vEvoRegions) * mix(0.42, 1.0, vEvoAo);',
+        '#include <color_fragment>\ndiffuseColor.rgb = evoFigure(vEvoBind * uSize, vEvoRegions, vEvoRegions2, vEvoPaint) * mix(0.4, 1.0, vEvoAo);',
       )
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = evoFigureRough;')
       .replace(
@@ -302,6 +357,250 @@ export function makeFigureMaterial(air: Air, uniforms: FigureUniforms, key: stri
           totalEmissiveRadiance += diffuseColor.rgb * uLight * edge * evoFigureFuzz * (0.18 + 0.9 * behind) * lit * mix(0.5, 1.0, vEvoAo);
         }`,
       )
+  })
+}
+
+// --------------------------------------------------------------------- coat
+
+/** How many times a lock can bend along its length: the strip it is drawn as has one more row than this. */
+export const COAT_SPANS = 5
+
+const COAT_VERT_PARS = /* glsl */ `
+  attribute vec3 aRoot;
+  attribute vec4 aGrow;
+  attribute vec4 aAcross;
+  attribute vec4 aTone;
+  attribute vec4 aShape;
+  uniform vec2 uCoatLength;
+  uniform float uCoatWidth;
+  uniform vec3 uSwing;
+  uniform vec2 uCoatWind;
+  uniform float uTime;
+  uniform float uSize;
+  varying vec4 vEvoCard;
+  varying vec3 vEvoLock;
+  varying vec3 vEvoStrand;
+  ${EVO_NOISE}
+`
+
+/**
+ * A lock, from its root: out along the way it grows, bent by its own weight
+ * the further along it is, thrown by how its wearer is moving and by the wind,
+ * and laid on the surface it grows from wherever that would have put it under.
+ * All of it after the skin has been posed, so it is the posed animal's coat
+ * that hangs — downwards, whichever way up the limb it is on has ended.
+ */
+const COAT_VERT = /* glsl */ `
+  {
+    float evoV = position.y;
+    vec3 evoDir = aGrow.xyz;
+    vec3 evoWide = aAcross.xyz;
+    #ifdef USE_SKINNING
+      evoDir = (skinMatrix * vec4(evoDir, 0.0)).xyz;
+      evoWide = (skinMatrix * vec4(evoWide, 0.0)).xyz;
+    #endif
+    evoWide = normalize(evoWide);
+    vec3 evoUp = normalize(objectNormal);
+    float evoLen = aGrow.w * mix(uCoatLength.x, uCoatLength.y, aTone.z);
+    // Locks that grow near each other lean the same way and are the same
+    // shade: a coat is in clumps about as wide as its hair is long.
+    float evoClump = evoNoise3(aRoot / (aGrow.w * 1.3) + 31.0);
+    float evoKin = evoNoise3(aRoot / (aGrow.w * 1.3) - 17.0);
+    evoDir = normalize(evoDir + evoWide * ((evoClump - 0.5) * 0.7) + evoUp * ((evoKin - 0.5) * 0.3));
+    // Its weight turns it downwards the further along it is, and where it is
+    // is the sum of the way it has gone so far: one that starts upwards rises,
+    // arcs over and falls, as a lock does.
+    float evoFall = acos(clamp(-evoDir.y, -1.0, 1.0));
+    float evoSin = sin(evoFall);
+    vec3 evoHang = evoDir;
+    vec3 evoOff = vec3(0.0);
+    for (int i = 0; i < ${COAT_SPANS}; i++) {
+      float s = (float(i) + 0.5) / ${COAT_SPANS}.0;
+      if (s > evoV) break;
+      float k = clamp(aTone.w * s * 1.5, 0.0, 0.94);
+      evoHang = evoSin > 1e-3 ? (sin((1.0 - k) * evoFall) * evoDir + sin(k * evoFall) * vec3(0.0, -1.0, 0.0)) / evoSin : evoDir;
+      evoOff += evoHang * (evoLen / ${COAT_SPANS}.0);
+    }
+    float evoGust = sin(uTime * 1.7 + aTone.x * 40.0 + aRoot.x * 9.0) * 0.6 + sin(uTime * 0.63 + aRoot.z * 7.0 + aTone.x * 9.0) * 0.4;
+    evoOff += (uSwing + vec3(uCoatWind.x, 0.0, uCoatWind.y) * (0.6 + evoGust)) * (evoV * evoV * evoLen * (0.25 + 0.75 * aTone.w));
+    float evoLeast = evoLen * (aShape.x * 0.5 * evoV - aShape.w * evoV * evoV);
+    evoOff += evoUp * max(0.0, evoLeast - dot(evoOff, evoUp));
+    transformed += evoOff + evoWide * (position.x * aAcross.w * uCoatWidth * (1.0 - 0.3 * evoV));
+    vEvoCard = vec4(position.x, evoV, aTone.x, aTone.z);
+    vEvoLock = vec3(aTone.y, aShape.y, clamp(aShape.z + (evoClump - 0.5) * 0.7, 0.0, 1.0));
+    vEvoStrand = normalMatrix * evoHang;
+  }
+`
+
+const COAT_PARS = /* glsl */ `
+  uniform vec3 uCoatDark[2];
+  uniform vec3 uCoatPale[2];
+  uniform vec2 uCoatGloss;
+  varying vec4 vEvoCard;
+  varying vec3 vEvoLock;
+  varying vec3 vEvoStrand;
+  ${EVO_NOISE}
+
+  float evoCoatTip;
+  float evoCoatTone;
+
+  // A lock cut into strands: each has its own lane across the card, fills it
+  // at the root and narrows to nothing somewhere short of the end, wandering
+  // as it goes. Returns how much of this fragment is hair; \`tone\` is which
+  // strand it is, for its colour.
+  //
+  // The further off the card, the fewer and wider its strands — half as many
+  // each time they would have gone under a pixel and a half — until it is one
+  // lock coming to a point. Blurring them out to a grey instead would hand the
+  // multisampler a card that is evenly half there, which it draws as a screen
+  // door. Each card changes over at its own distance, so nothing pops.
+  float evoStrands(vec2 uv, float seed, float count, out float tone) {
+    float perPixel = fwidth((uv.x + 0.5) * count);
+    float level = floor(max(0.0, log2(max(perPixel * 1.5, 1e-4)) + evoHash(vec2(seed * 4096.0, 5.0))));
+    float lanes = max(1.0, floor(count / exp2(level) + 0.5));
+    float x = (uv.x + 0.5) * lanes;
+    float w = perPixel * lanes / count;
+    float first = floor(x);
+    float lock = floor(seed * 4096.0) + level * 57.0;
+    float cover = 0.0;
+    tone = 0.5;
+    for (int i = -1; i <= 1; i++) {
+      float lane = first + float(i);
+      if (lane < 0.0 || lane >= lanes) continue;
+      float r1 = evoHash(vec2(lane + lock, 3.0));
+      float r2 = evoHash(vec2(lane + lock, 11.0));
+      // Close to, some lanes have no strand in them and no two strands are as
+      // thick: a lock is not a comb.
+      float there = max(step(0.2, evoHash(vec2(lane + lock, 23.0))), min(level, 1.0));
+      float thick = mix(0.6 + 0.4 * evoHash(vec2(lane + lock, 29.0)), 1.0, min(level, 1.0));
+      float reach = 0.55 + 0.45 * r1;
+      float t = uv.y / reach;
+      float centre = lane + 0.5 + (r2 - 0.5) * 0.8 * uv.y + 0.2 * sin(uv.y * (4.0 + 5.0 * r1) + r2 * 6.28) * uv.y;
+      // Out of the skin as a point, soon as wide as it gets, and tapering from there to its end.
+      float half_ = 0.42 * thick * pow(max(1.0 - t, 0.0), 0.75) * smoothstep(0.0, 0.09, t);
+      float a = clamp((half_ - abs(x - centre)) / max(w, 1e-4) + 0.5, 0.0, 1.0) * step(t, 1.0) * there;
+      if (a > cover) {
+        cover = a;
+        tone = r2;
+      }
+    }
+    return cover;
+  }
+`
+
+/**
+ * What a light does to hair. It is not a surface: light gets round it, so it
+ * is lit well past where a skin would have gone dark; it shines in a streak
+ * along each strand and not in a spot (Kajiya and Kay's model, twice, for the
+ * light off the outside of a hair and the light that has been through it); and
+ * with the light behind, its ends glow.
+ */
+const COAT_LIGHT = /* glsl */ `
+  void RE_Direct_EvoCoat(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
+    vec3 L = directLight.direction;
+    float nl = dot(geometryNormal, L);
+    vec3 base = BRDF_Lambert(material.diffuseContribution);
+    reflectedLight.directDiffuse += directLight.color * base * clamp((nl + 0.5) / 1.5, 0.0, 1.0);
+
+    // Each strand lies a little differently, so each has its streak in a
+    // different place: without that a card shines all over at once, as the
+    // flat thing it is.
+    vec3 T = normalize(vEvoStrand);
+    vec3 H = normalize(L + geometryViewDir);
+    float lie = (evoCoatTone - 0.5) * 0.9;
+    float t1 = dot(normalize(T + geometryNormal * (0.14 + lie)), H);
+    float t2 = dot(normalize(T - geometryNormal * (0.22 - lie)), H);
+    float s1 = pow(sqrt(max(1.0 - t1 * t1, 0.0)), uCoatGloss.x);
+    float s2 = pow(sqrt(max(1.0 - t2 * t2, 0.0)), uCoatGloss.x * 0.3);
+    float facing = smoothstep(-0.25, 0.45, nl);
+    reflectedLight.directSpecular += directLight.color * facing * uCoatGloss.y * (s1 * 0.022 + s2 * base * 1.3);
+
+    float through = pow(clamp(dot(-geometryViewDir, L), 0.0, 1.0), 3.0);
+    reflectedLight.directDiffuse += directLight.color * base * (through * evoCoatTip * evoCoatTip * 1.6);
+  }
+  #undef RE_Direct
+  #define RE_Direct RE_Direct_EvoCoat
+`
+
+/**
+ * Fur and hair: every lock of a figure's coat drawn as an instance of one
+ * strip (`evoCoat.ts` says where they are), posed with the skin they grow on
+ * and cut into strands here. Not blended but written to the depth buffer like
+ * anything solid, with how much of a pixel is hair handed to the multisampler
+ * as coverage — so a coat needs no sorting, and its edge is soft all the same.
+ */
+export function makeCoatMaterial(air: Air, uniforms: FigureUniforms): MeshStandardMaterial {
+  const material = new MeshStandardMaterial({ color: '#ffffff', roughness: 0.82, metalness: 0, side: DoubleSide, alphaToCoverage: true })
+  return inAir(material, air, 'coat', (shader) => {
+    Object.assign(shader.uniforms, uniforms, { uTime: air.uTime })
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${COAT_VERT_PARS}`)
+      .replace('#include <begin_vertex>', 'vec3 transformed = aRoot;')
+      .replace('#include <skinning_vertex>', `#include <skinning_vertex>\n${COAT_VERT}`)
+    shader.fragmentShader = shader.fragmentShader
+      .replace(PARS_HERE, `${PARS_HERE}\n${COAT_PARS}`)
+      .replace('#include <lights_physical_pars_fragment>', `#include <lights_physical_pars_fragment>\n${COAT_LIGHT}`)
+      .replace(
+        '#include <color_fragment>',
+        /* glsl */ `#include <color_fragment>
+        {
+          float evoTone;
+          float evoCover = evoStrands(vEvoCard.xy, vEvoCard.z, vEvoLock.y, evoTone);
+          if (evoCover < 0.03) discard;
+          vec3 evoDark = mix(uCoatDark[0], uCoatDark[1], vEvoCard.w);
+          vec3 evoPale = mix(uCoatPale[0], uCoatPale[1], vEvoCard.w);
+          // Dark for most of its length; what the sun has had is the ends, and
+          // more of them where the coat is uppermost.
+          float evoEnds = smoothstep(0.3, 1.0, vEvoCard.y);
+          float evoMix = clamp(evoEnds * (0.2 + 0.8 * vEvoLock.z) + (evoTone - 0.5) * 0.3, 0.0, 1.0);
+          vec3 evoColor = mix(evoDark, evoPale, evoMix);
+          // Roots are in each other's shade, and in whatever the body is in there.
+          evoColor *= mix(0.3, 1.0, smoothstep(0.0, 0.5, vEvoCard.y)) * mix(0.5, 1.0, vEvoLock.x) * (0.78 + 0.44 * evoTone);
+          diffuseColor = vec4(evoColor, evoCover);
+          evoCoatTip = vEvoCard.y;
+          evoCoatTone = evoTone;
+        }`,
+      )
+      // The normal is the skin's under the lock, whichever face of the strip is seen.
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize(vNormal);')
+  })
+}
+
+// --------------------------------------------------------------------- eyes
+
+const EYE_PARS = /* glsl */ `
+  uniform vec3 uIris;
+  uniform float uIrisSize;
+  varying vec3 vEvoEye;
+
+  float evoEyeRough;
+
+  // An eyeball looking along +x: a pupil, an iris with a darker rim, the
+  // white, reddening towards where the lids would cover it.
+  vec3 evoEye(vec3 p) {
+    float a = acos(clamp(normalize(p).x, -1.0, 1.0));
+    float iris = 1.0 - smoothstep(uIrisSize * 0.94, uIrisSize * 1.04, a);
+    float pupil = 1.0 - smoothstep(uIrisSize * 0.34, uIrisSize * 0.42, a);
+    float rim = smoothstep(uIrisSize * 0.7, uIrisSize, a);
+    vec3 white = mix(vec3(0.6, 0.57, 0.52), vec3(0.5, 0.3, 0.25), smoothstep(uIrisSize * 1.2, uIrisSize * 2.6, a));
+    vec3 color = mix(white, uIris * (1.0 - 0.6 * rim), iris);
+    evoEyeRough = 0.16;
+    return mix(color, vec3(0.008), pupil);
+  }
+`
+
+/** An eyeball: wet, so it is the one thing on a figure that throws the light straight back. */
+export function makeEyeMaterial(air: Air, uniforms: FigureUniforms, irisSize: number): MeshStandardMaterial {
+  const material = new MeshStandardMaterial({ color: '#ffffff', roughness: 0.16, metalness: 0 })
+  return inAir(material, air, 'eye', (shader) => {
+    Object.assign(shader.uniforms, { uIris: uniforms.uIris, uIrisSize: { value: irisSize } })
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vEvoEye;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEvoEye = position;')
+    shader.fragmentShader = shader.fragmentShader
+      .replace(PARS_HERE, `${PARS_HERE}\n${EYE_PARS}`)
+      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = evoEye(vEvoEye);')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = evoEyeRough;')
   })
 }
 
