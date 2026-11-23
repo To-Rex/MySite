@@ -21,6 +21,7 @@ import { createPassers, createPond, createVillage } from './evoDressing'
 import { createGrass } from './evoGrass'
 import { createStudio } from './evoStudio'
 import { createTashkent } from './evoTashkent'
+import { createTrees } from './evoTrees'
 import { createAir, makeRangeMaterial, makeSkyMaterial, type Air, type Arrivals } from './evoAir'
 import { buildLand, buildRange, groundAt } from './evoLand'
 import { createLandUniforms, makeLandMaterial, type LandUniforms } from './evoMaterials'
@@ -50,13 +51,15 @@ export interface WalkQuality {
   coat: number
   /** Cars on the street. */
   cars: number
+  /** How many of its leaf cards each street tree gets, 0 to 1. */
+  leaves: number
 }
 
 export const WALK_QUALITY: Record<ValleyQuality, WalkQuality> = {
-  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, people: 'low', beasts: 'low', coat: 0.55, cars: 10 },
-  medium: { dpr: 1, shadowMap: 1024, bump: 0.025, glow: false, people: 'low', beasts: 'low', coat: 1, cars: 20 },
-  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.035, glow: true, people: 'medium', beasts: 'medium', coat: 1, cars: 32 },
-  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.035, glow: true, people: 'high', beasts: 'high', coat: 1, cars: 44 },
+  low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, people: 'low', beasts: 'low', coat: 0.55, cars: 10, leaves: 0.4 },
+  medium: { dpr: 1, shadowMap: 1024, bump: 0.025, glow: false, people: 'low', beasts: 'low', coat: 1, cars: 20, leaves: 0.65 },
+  high: { dpr: [1, 1.4], shadowMap: 2048, bump: 0.035, glow: true, people: 'medium', beasts: 'medium', coat: 1, cars: 32, leaves: 1 },
+  ultra: { dpr: [1, 1.6], shadowMap: 4096, bump: 0.035, glow: true, people: 'high', beasts: 'high', coat: 1, cars: 44, leaves: 1 },
 }
 
 /** Everything the scene tells its parts, once a frame. */
@@ -227,6 +230,7 @@ export function createWalk(quality: ValleyQuality): Walk {
     createVillage(air, shadows),
     createCity(air, { bump: q.bump, shadows }),
     createTashkent(air),
+    createTrees(air, { leaves: q.leaves }),
     createCars(air, { shadows, cars: q.cars }),
     createPassers(air, q.people, q.bump, shadows, q.coat),
     studio,

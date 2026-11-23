@@ -778,6 +778,34 @@ where from across the road its pole goes up beside the dome and the cloth is in
 the sky above it. The lights at the crossing hang on two lamp posts that were
 already there and turn with `crossingHeld`: the walk is what they change for.
 
+**The trees** (`evoTrees.ts`) are planes, the *chinor* Tashkent is planted
+with: a trunk limed to chest height, bark coming off in plates of three or four
+ages, and a crown. The crown is cards — thirteen hundred of them, a handful of
+leaves on each, and the leaves *drawn*, five lobes and a tooth on each shoulder,
+so there is no texture and a leaf is as sharp at two metres as at twenty — hung
+round some twenty rough balls that carry the same leaves, darker. The cards are what
+is seen; the balls are a back for them. There are never enough cards a pixel to
+close a crown by themselves, and with nothing behind them the sky comes through
+everywhere at once, as glitter; with a plain green ball behind them it comes
+through nowhere and the ball shows as a boulder. Their edges go to the
+multisampler, like the hair's, and for the same reason nothing is ever faded
+out with distance: a leaf has its bays filled in, then the leaves swell until
+they meet, then a card is a disc — each card at its own distance — so what the
+multisampler is handed is always a shape and never an even half, which it draws
+as a screen door. A card is lit as the crown is and not as it happens to be
+turned: it takes the direction the crown faces where it hangs, so a crown has a
+lit side and a shaded one, and leaves between the eye and the sun let it
+through. None of this is lit by three's lights. A material that is has a
+program for each number of lamps in the scene, and the walk has three; these
+have one, take the sun and the sky as two colours, and work out the street's
+lamps from where `evoStreet.ts` says they stand. One pattern tree is round, and
+there are three patterns; a tree on a kerb has its crown pressed narrower
+across the street, where the fronts are, and pushed out over the road, as it is
+drawn. And a tree brings its ground with it — the square of earth it stands in,
+and the shade of its crown and trunk, multiplied into whatever is paved there —
+so the street's shader does not know where the trees are, and one planted
+anywhere `treeSpots()` says has both.
+
 **The air** (`evoAir.ts`) has a sun that moves, so nothing about it is a
 constant and nothing is a module-level singleton either: `createAir()` makes
 the one set of uniforms a scene shares between its dome and every material
@@ -808,6 +836,7 @@ only be compiled again on the frame they were first needed.
 | People and mammoths | low | low | medium | high |
 | Locks in a mammoth's coat | 1 900 | 3 500 | 6 800 | 11 400 |
 | Cars | 10 | 20 | 32 | 44 |
+| Leaf cards on a street tree | 520 | 845 | 1 300 | 1 300 |
 
 The levels are the valley's (`valleyQuality`), and like the valley the scene
 judges itself: if most of eighty frames are slow it gives up a fifth of its

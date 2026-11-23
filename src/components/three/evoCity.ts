@@ -37,7 +37,6 @@ import {
   STREET_LENGTH,
   STREET_Z,
   TOWER_SEEN_FROM,
-  TREE_INSET,
   TV_TOWER,
 } from './evoStreet'
 import { BUMP, LIN } from './evoMaterials'
@@ -857,7 +856,6 @@ const STREET_FRAG = /* glsl */ `
   const float CROSS_X = ${CROSSWALK.x.toFixed(2)};
   const float CROSS_HALF = ${CROSSWALK.half.toFixed(2)};
   const float CROSS_STOP = ${CROSSWALK.stop.toFixed(2)};
-  const float TREE_INSET = ${TREE_INSET.toFixed(2)};
   const vec2 PLAZA_X = vec2(${PLAZA.x0.toFixed(1)}, ${PLAZA.x1.toFixed(1)});
 
   vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
@@ -920,17 +918,8 @@ const STREET_FRAG = /* glsl */ `
       color = mix(grey, red, band) * (1.0 - 0.3 * joint) * (0.9 + 0.2 * n1);
       // The kerb: a line of stone, a little higher than the road.
       color = mix(color, lin(vec3(0.56, 0.55, 0.52)), 1.0 - smoothstep(0.0, 0.3, past));
-      // Earth round each tree, in a square with a rim.
-      bool farSide = across < 0.0;
-      float gap = farSide ? LAMP_GAP : LAMP_GAP * 2.0;
-      float first = farSide ? LAMP_GAP * 0.5 : LAMP_GAP;
-      float tx = (floor((at.x - first) / gap + 0.5)) * gap + first;
-      bool open = farSide && tx > PLAZA_X.x + 4.0 && tx < PLAZA_X.y - 2.0;
-      vec2 pit = abs(vec2(at.x - tx, past - TREE_INSET));
-      float m = max(pit.x, pit.y);
-      if (m < 0.75 && abs(tx - CROSS_X) > CROSS_HALF + 5.0 && !open) {
-        color = m < 0.66 ? lin(vec3(0.13, 0.1, 0.08)) * (0.7 + 0.6 * n2) : lin(vec3(0.5, 0.49, 0.46));
-      }
+      // (The square of earth round each tree is the tree's own: 'evoTrees.ts'
+      // lays it, and the shade under the crown, wherever it stands one.)
       gloss = smoothstep(0.6, 0.8, n3) * 0.5 + 0.05;
     }
 

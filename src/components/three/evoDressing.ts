@@ -5,6 +5,7 @@ import { Figure } from './evoCast'
 import { PLACE, groundAt, hash2 } from './evoLand'
 import type { FigureLookName } from './evoLooks'
 import { GAITS, applyPose, createPose, gaitPose } from './evoRig'
+import { PASSER_LANES } from './evoStreet'
 import type { Beat, Part } from './evoWalk'
 
 /**
@@ -137,10 +138,10 @@ const ROAD = PLACE.city.half
 
 /** Who is on the street: which pavement, which way, how fast, and where along it they start. */
 const PASSERS: readonly { z: number; going: 1 | -1; speed: number; start: number; look: FigureLookName; scale: number }[] = [
-  { z: STREET - ROAD - 1.5, going: 1, speed: 1.35, start: 6, look: 'walker', scale: 1 },
-  { z: STREET - ROAD - 2.9, going: -1, speed: 1.2, start: 31, look: 'passer', scale: 0.94 },
-  { z: STREET - ROAD - 2.2, going: -1, speed: 1.5, start: 58, look: 'modern', scale: 1.03 },
-  { z: STREET - ROAD - 1.2, going: 1, speed: 1.25, start: 44, look: 'passer', scale: 0.97 },
+  { z: STREET - ROAD - PASSER_LANES[1], going: 1, speed: 1.35, start: 6, look: 'walker', scale: 1 },
+  { z: STREET - ROAD - PASSER_LANES[3], going: -1, speed: 1.2, start: 31, look: 'passer', scale: 0.94 },
+  { z: STREET - ROAD - PASSER_LANES[2], going: -1, speed: 1.5, start: 58, look: 'modern', scale: 1.03 },
+  { z: STREET - ROAD - PASSER_LANES[0], going: 1, speed: 1.25, start: 44, look: 'passer', scale: 0.97 },
 ]
 /** How far of the pavement they are kept to: from a little behind the camera to well ahead of it. */
 const REACH = { behind: 12, ahead: 74 }

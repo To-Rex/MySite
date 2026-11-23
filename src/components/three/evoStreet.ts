@@ -1,4 +1,4 @@
-import { PLACE } from './evoLand'
+import { PLACE, hash2 } from './evoLand'
 
 /**
  * The street the walk ends on, as numbers.
@@ -166,28 +166,77 @@ export const NEAR_TREES_FROM = 320
  * across it (the fronts are close, so it is narrower that way), how high its
  * underside is and how high its top, and how far it leans out over the road.
  */
-export const TREE_CROWN = { along: 4.6, across: 3.4, from: 4.6, top: 14, lean: 0.5 } as const
+export const TREE_CROWN = { along: 5.2, across: 3.5, from: 4.6, top: 16, lean: 0.5 } as const
+
+/** Half the gap the fronts leave where a side street comes in. */
+export const CROSSING_HALF = 7
+/** Half the side of the square of earth left open round a trunk. */
+export const TREE_PIT = 0.75
+/** How much bigger or smaller than the pattern one tree is than the next. */
+export const TREE_SCALE = { from: 0.9, to: 1.06 } as const
 
 /**
- * Where the plane trees stand along a kerb: between the lamps, never where
- * the walk crosses the road or a side street comes in, and on the far side
- * not along the front of the square, which is left open to be looked across.
+ * People on the far pavement: how far in from its kerb each of them walks.
+ * Past the squares of earth the trees stand in, and far enough from each
+ * other to pass.
  */
-export function treesAlong(side: 'far' | 'near'): number[] {
-  const out: number[] = []
+export const PASSER_LANES = [1.75, 2.35, 3.0, 3.55] as const
+
+/**
+ * A tree, as a place to stand one. `park` is a tree that is not on a kerb: it
+ * has no road to lean out over and no fronts to keep clear of, so its crown is
+ * as wide one way as the other.
+ */
+export interface TreeSpot {
+  x: number
+  z: number
+  scale: number
+  park?: boolean
+}
+
+/**
+ * Every tree the city has: the two kerbs' rows. `evoTrees.ts` plants from this
+ * list and nothing else, and deals its patterns out in the order of it — so
+ * anything added goes on the end.
+ */
+export function treeSpots(): TreeSpot[] {
+  const size = (x: number, row: number) => TREE_SCALE.from + (TREE_SCALE.to - TREE_SCALE.from) * hash2(Math.round(x), 53 + row)
+  return [
+    ...treesAlong('far').map((x) => ({ x, z: STREET_Z - ROAD - TREE_INSET, scale: size(x, 0) })),
+    ...treesAlong('near').map((x) => ({ x, z: STREET_Z + ROAD + TREE_INSET, scale: size(x, 1) })),
+  ]
+}
+
+/** A kerb's trees are this far apart, and the first of them this far along. */
+const treeRow = (side: 'far' | 'near'): { gap: number; first: number } =>
   // The far kerb has a tree between every two lamps; the near one, which the
   // walk goes down a pace from, one in four.
-  const gap = side === 'far' ? LAMP_GAP : LAMP_GAP * 2
-  const first = side === 'far' ? LAMP_GAP / 2 : LAMP_GAP
+  side === 'far' ? { gap: LAMP_GAP, first: LAMP_GAP / 2 } : { gap: LAMP_GAP * 2, first: LAMP_GAP }
+
+/**
+ * Whether a tree stands in a place of a kerb's row: never where the walk
+ * crosses the road or a side street comes in, and on the far side not along
+ * the front of the square, which is left open to be looked across.
+ */
+export function treeStands(x: number, side: 'far' | 'near'): boolean {
+  if (x < CITY_FROM + 6 || x >= CITY_UNTIL - 6) return false
+  if (Math.abs(x - CROSSWALK.x) < CROSSWALK.half + 5) return false
+  // Not in the mouth of a side street; on its corner is as near as one comes.
+  if (CROSSINGS.some((c) => Math.abs(x - c) < CROSSING_HALF - 0.05)) return false
+  if (side === 'far' && x > PLAZA.x0 + 4 && x < PLAZA.x1 - 2) return false
+  // And none on the near side until the walk is down on the pavement and has
+  // looked across the square: the camera comes down through where the first
+  // of them would be, and the next would stand in front of the tower.
+  if (side === 'near' && x < NEAR_TREES_FROM) return false
+  return true
+}
+
+/** Where the plane trees stand along a kerb: between the lamps, wherever `treeStands` lets one. */
+export function treesAlong(side: 'far' | 'near'): number[] {
+  const out: number[] = []
+  const { gap, first } = treeRow(side)
   for (let x = Math.ceil((CITY_FROM + 6 - first) / gap) * gap + first; x < CITY_UNTIL - 6; x += gap) {
-    if (Math.abs(x - CROSSWALK.x) < CROSSWALK.half + 5) continue
-    if (CROSSINGS.some((c) => Math.abs(x - c) < 9)) continue
-    if (side === 'far' && x > PLAZA.x0 + 4 && x < PLAZA.x1 - 2) continue
-    // And none on the near side until the walk is down on the pavement and has
-    // looked across the square: the camera comes down through where the first
-    // of them would be, and the next would stand in front of the tower.
-    if (side === 'near' && x < NEAR_TREES_FROM) continue
-    out.push(x)
+    if (treeStands(x, side)) out.push(x)
   }
   return out
 }
