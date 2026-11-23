@@ -900,7 +900,11 @@ there is no walk at all: the page goes from the hero to About.
 
 Being built ahead is not the same as being ready, and the difference was a
 stall of a tenth to a third of a second at every change of scene. Three things
-are done about it, all in `EvolutionScene.tsx`:
+are done about it, all in `EvolutionScene.tsx` — and none of them where WebGL is
+drawn by the CPU, where a program is seconds of the whole machine and building
+them all ahead froze the page for most of a minute on a CI runner, for a reader
+who had only stopped near the walk. There each program is built by the first
+frame that needs it:
 
 - **Programs are compiled for every lighting** (`walk.rehearse`). A program is
   built for a number of lights. The walk has three — the fire in the cave, the

@@ -1,6 +1,7 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { Object3D, PerspectiveCamera } from 'three'
+import { gpuClass } from '@/hooks/useDeviceTier'
 import { walkProgress } from '@/lib/evolution'
 import type { ValleyQuality } from '@/lib/valley'
 import type { Theme } from '@/theme/context'
@@ -109,13 +110,20 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
         if (--pending === 0) warm()
       })
     }
-    walk.arrivals.arrived = compile
+    // None of that where WebGL is drawn by the CPU. There a program is seconds
+    // of the whole machine, and building every one of them ahead — for every
+    // lighting, and then drawing each set once more — froze the page for most
+    // of a minute on a CI runner, for a reader who had only stopped near the
+    // walk and not gone into it. Each is built by the first frame that needs
+    // it instead: slow, but only for someone looking at the walk.
+    const ahead = gpuClass() !== 'software'
+    walk.arrivals.arrived = ahead ? compile : undefined
     walkRef.current = walk
     postRef.current = post
     scene.add(walk.root)
     // Everything that exists already, while it is all still switched on:
     // from the first frame the walk hides whatever is out of shot.
-    compile(scene)
+    if (ahead) compile(scene)
     return () => {
       gone = true
       walk.arrivals.arrived = undefined
