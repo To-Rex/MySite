@@ -17,8 +17,10 @@ import {
   ROAD,
   STREET_Z,
   TOWER_SEEN_FROM,
+  TREE_CROWN,
   TV_TOWER,
   crossingHeld,
+  treeSpots,
 } from '@/components/three/evoStreet'
 import { FLOOD, HOTEL_NAME, SIGN, SIGNAL_POSTS, SURFACE, TOWER_PROFILE, buildTashkent } from '@/components/three/evoTashkent'
 
@@ -286,6 +288,68 @@ describe('what stands still', () => {
     expect(stray).toBe(0)
     expect(highest).toBeGreaterThanOrEqual(TV_TOWER.height)
     expect(highest).toBeLessThan(TV_TOWER.height + 3)
+  })
+})
+
+describe('the trees', () => {
+  const trees = treeSpots()
+
+  it('stand none of them between the walk and what it turns to look at', () => {
+    const shot: Shot = { x: 0, y: 0, z: 0, tx: 0, ty: 0, tz: 0, fov: 45 }
+    const sights = [
+      { name: 'the flag', x: FLAG.x + 0.12 + FLAG.length / 2, y: FLAG.pole - 0.5 - FLAG.length / 4, z: FLAG.z },
+      { name: 'the dome', x: MOSQUE.x, y: MOSQUE.step + MOSQUE.wall + MOSQUE.dome.drumHeight + MOSQUE.dome.height * 0.45, z: MOSQUE.z },
+      { name: 'the portal', x: MOSQUE.x, y: MOSQUE.portal.height * 0.6, z: MOSQUE.z + MOSQUE.hall / 2 + MOSQUE.portal.depth },
+      ...MOSQUE.minarets.map(([x, z], i) => ({ name: `minaret ${i}`, x, y: MOSQUE.minaret - 5, z })),
+      { name: 'the tower', x: TV_TOWER.x, y: 105, z: TV_TOWER.z },
+    ]
+    let looked = 0
+    for (const p of steps(0.66, 0.79, 52)) {
+      cameraAt(p, shot)
+      for (const sight of sights) {
+        // The tower for as long as it is looked at; after that the walk goes
+        // under a tree of its own kerb, and loses it behind the crown as it does.
+        if (sight.name === 'the tower' && (shot.x < TOWER_SEEN_FROM.x0 - 2 || shot.x > TOWER_SEEN_FROM.x1)) continue
+        const dx = sight.x - shot.x
+        const dz = sight.z - shot.z
+        const across = Math.hypot(dx, dz)
+        for (const tree of trees) {
+          // The crown as a drum: as wide as it reaches (and its lean), as high as it stands.
+          const r = TREE_CROWN.along * tree.scale + (tree.park ? 0 : TREE_CROWN.lean)
+          const t = ((tree.x - shot.x) * dx + (tree.z - shot.z) * dz) / (across * across)
+          const off = Math.abs((tree.x - shot.x) * dz - (tree.z - shot.z) * dx) / across
+          if (off >= r) continue
+          const half = Math.sqrt(r * r - off * off) / across
+          const t0 = Math.max(0, t - half)
+          const t1 = Math.min(1, t + half)
+          if (t0 >= t1) continue
+          // Where the line is through the drum, from the eye up or down to what it looks at.
+          const y0 = shot.y + (sight.y - shot.y) * t0
+          const y1 = shot.y + (sight.y - shot.y) * t1
+          const under = Math.min(y0, y1) > TREE_CROWN.top * tree.scale
+          const over = Math.max(y0, y1) < TREE_CROWN.from * tree.scale
+          expect(under || over, `the tree at ${tree.x},${tree.z} in front of ${sight.name} at ${p}`).toBe(true)
+        }
+        looked++
+      }
+    }
+    expect(looked).toBeGreaterThan(200)
+  })
+
+  it('keeps the square\'s own clear of everything else on it', () => {
+    const park = trees.filter((tree) => tree.park)
+    expect(park.length).toBeGreaterThan(4)
+    for (const tree of park) {
+      const r = TREE_CROWN.along * tree.scale
+      for (const box of mosqueBoxes()) {
+        // The mosque's steps reach three metres out from its walls all round.
+        expect(Math.abs(tree.x - box.x) > box.w / 2 + 3 + r || Math.abs(tree.z - box.z) > box.d / 2 + 3 + r, `in the mosque at ${tree.x},${tree.z}`).toBe(true)
+      }
+      for (const [mx, mz] of MOSQUE.minarets) expect(Math.hypot(tree.x - mx, tree.z - mz)).toBeGreaterThan(r + 2)
+      for (const [lx, lz] of LANTERNS) expect(Math.hypot(tree.x - lx, tree.z - lz)).toBeGreaterThan(r)
+      expect(Math.hypot(tree.x - FOUNTAIN.x, tree.z - FOUNTAIN.z)).toBeGreaterThan(FOUNTAIN.r + r + 2)
+      expect(Math.hypot(tree.x - FLAG.x, tree.z - FLAG.z)).toBeGreaterThan(r + 2)
+    }
   })
 })
 

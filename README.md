@@ -777,6 +777,12 @@ four and five — and stands at the corner of the square the walk reaches first,
 where from across the road its pole goes up beside the dome and the cloth is in
 the sky above it. The lights at the crossing hang on two lamp posts that were
 already there and turn with `crossingHeld`: the walk is what they change for.
+The trees are kept out of all of this by a test as well: none may stand where,
+from the pavement opposite, its crown would be in front of the flag, the dome,
+the portal, a minaret or the tower. That is why the far kerb is bare from half
+a gap before the square, and why the square's own trees are at its back
+corners — beside the mosque, never behind the dome — and at the back of the one
+lawn, with none on the lawn the tower is looked at over.
 
 **The trees** (`evoTrees.ts`) are planes, the *chinor* Tashkent is planted
 with: a trunk limed to chest height, bark coming off in plates of three or four

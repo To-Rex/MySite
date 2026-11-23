@@ -195,15 +195,32 @@ export interface TreeSpot {
 }
 
 /**
- * Every tree the city has: the two kerbs' rows. `evoTrees.ts` plants from this
- * list and nothing else, and deals its patterns out in the order of it — so
- * anything added goes on the end.
+ * The square's own trees, on its lawns: at the two back corners, either side
+ * of the mosque and never behind it, for its dome is seen against the sky; and
+ * at the back of the lawn on the side the walk reaches first, where coming
+ * down to the pavement it looks over the front of that lawn at the dome. The
+ * lawn on the other side has none, because the tower is looked at over it.
+ */
+export const PARK_TREES: readonly (readonly [number, number])[] = [
+  [307.5, PLAZA.back + 5.4],
+  [316, PLAZA.back + 5.2],
+  [374.5, PLAZA.back + 5.2],
+  [383, PLAZA.back + 5.4],
+  [308.2, PLAZA.front - 35],
+  [308.2, PLAZA.front - 48],
+]
+
+/**
+ * Every tree the city has: the two kerbs' rows, then the square's. `evoTrees.ts`
+ * plants from this list and nothing else, and deals its patterns out in the
+ * order of it — so anything added goes on the end.
  */
 export function treeSpots(): TreeSpot[] {
   const size = (x: number, row: number) => TREE_SCALE.from + (TREE_SCALE.to - TREE_SCALE.from) * hash2(Math.round(x), 53 + row)
   return [
     ...treesAlong('far').map((x) => ({ x, z: STREET_Z - ROAD - TREE_INSET, scale: size(x, 0) })),
     ...treesAlong('near').map((x) => ({ x, z: STREET_Z + ROAD + TREE_INSET, scale: size(x, 1) })),
+    ...PARK_TREES.map(([x, z]) => ({ x, z, scale: size(x * 3 + z, 2), park: true })),
   ]
 }
 
@@ -216,14 +233,16 @@ const treeRow = (side: 'far' | 'near'): { gap: number; first: number } =>
 /**
  * Whether a tree stands in a place of a kerb's row: never where the walk
  * crosses the road or a side street comes in, and on the far side not along
- * the front of the square, which is left open to be looked across.
+ * the front of the square, which is left open to be looked across — nor for
+ * half a gap before it, where from the pavement opposite a crown would stand
+ * in front of the flag and the mosque.
  */
 export function treeStands(x: number, side: 'far' | 'near'): boolean {
   if (x < CITY_FROM + 6 || x >= CITY_UNTIL - 6) return false
   if (Math.abs(x - CROSSWALK.x) < CROSSWALK.half + 5) return false
   // Not in the mouth of a side street; on its corner is as near as one comes.
   if (CROSSINGS.some((c) => Math.abs(x - c) < CROSSING_HALF - 0.05)) return false
-  if (side === 'far' && x > PLAZA.x0 + 4 && x < PLAZA.x1 - 2) return false
+  if (side === 'far' && x > PLAZA.x0 - LAMP_GAP / 2 && x < PLAZA.x1 - 2) return false
   // And none on the near side until the walk is down on the pavement and has
   // looked across the square: the camera comes down through where the first
   // of them would be, and the next would stand in front of the tower.

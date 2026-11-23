@@ -8,7 +8,9 @@ import {
   FRONT_FAR,
   FRONT_NEAR,
   LAMP_GAP,
+  LAWNS,
   NEAR_TREES_FROM,
+  PARK_TREES,
   PASSER_LANES,
   PAVEMENT,
   PLAZA,
@@ -36,6 +38,8 @@ import { WALK_QUALITY } from '@/components/three/evoWalk'
 const far = treesAlong('far')
 const near = treesAlong('near')
 const spots = treeSpots()
+const kerb = spots.filter((spot) => !spot.park)
+const park = spots.filter((spot) => spot.park)
 const full = TREE_PATTERNS.map((pattern) => growTree(pattern, 1))
 const thin = TREE_PATTERNS.map((pattern) => growTree(pattern, WALK_QUALITY.low.leaves))
 
@@ -104,7 +108,7 @@ describe('where the trees stand', () => {
       expect(Math.abs(x - CROSSWALK.x), `crossing at ${x}`).toBeGreaterThanOrEqual(CROSSWALK.half + 5)
       for (const c of CROSSINGS) expect(Math.abs(x - c), `side street at ${x}`).toBeGreaterThan(CROSSING_HALF - 0.1)
     }
-    for (const x of far) expect(x <= PLAZA.x0 + 4 || x >= PLAZA.x1 - 2, `square at ${x}`).toBe(true)
+    for (const x of far) expect(x <= PLAZA.x0 - LAMP_GAP / 2 || x >= PLAZA.x1 - 2, `square at ${x}`).toBe(true)
   })
 
   it('leaves the near kerb bare until the walk is down on it, and then has one to walk under', () => {
@@ -114,9 +118,23 @@ describe('where the trees stand', () => {
     expect(near.some((x) => x < CROSSWALK.x - 20)).toBe(true)
   })
 
-  it('lists them as spots, one row to a kerb', () => {
-    expect(spots).toHaveLength(far.length + near.length)
-    for (const spot of spots) {
+  it('lists them as spots, one row to a kerb and then the square', () => {
+    expect(kerb).toHaveLength(far.length + near.length)
+    // The kerbs first: the patterns are dealt out in this order.
+    expect(spots.slice(0, kerb.length)).toEqual(kerb)
+    expect(park).toHaveLength(PARK_TREES.length)
+    for (const spot of park) {
+      expect(spot.scale).toBeGreaterThanOrEqual(TREE_SCALE.from)
+      expect(spot.scale).toBeLessThanOrEqual(TREE_SCALE.to)
+      // On a lawn, with its whole crown over the square.
+      const lawn = LAWNS.find((l) => spot.x > l.x0 && spot.x < l.x1 && spot.z > l.z0 && spot.z < l.z1)
+      expect(lawn, `no lawn under ${spot.x},${spot.z}`).toBeDefined()
+      const reach = TREE_CROWN.along * spot.scale
+      expect(spot.x - reach).toBeGreaterThan(PLAZA.x0 - 0.5)
+      expect(spot.x + reach).toBeLessThan(PLAZA.x1 + 0.5)
+      expect(spot.z - reach).toBeGreaterThan(PLAZA.back - 0.5)
+    }
+    for (const spot of kerb) {
       expect(Number.isFinite(spot.x) && Number.isFinite(spot.z) && Number.isFinite(spot.scale)).toBe(true)
       expect(spot.scale).toBeGreaterThanOrEqual(TREE_SCALE.from)
       expect(spot.scale).toBeLessThanOrEqual(TREE_SCALE.to)
@@ -128,7 +146,7 @@ describe('where the trees stand', () => {
   })
 
   it('keeps every crown clear of the fronts', () => {
-    for (const spot of spots) {
+    for (const spot of kerb) {
       const road = spot.z < STREET_Z ? 1 : -1
       // The crown leans out over the road, so the side towards the front is the short one.
       const back = spot.z + road * TREE_CROWN.lean * spot.scale - road * TREE_CROWN.across * spot.scale
@@ -243,7 +261,9 @@ describe('a plane tree', () => {
 
   it('is cheap enough for a street of them', () => {
     const count = (meshes: TreeMesh[]) => spots.reduce((sum, spot, index) => sum + trianglesIn(meshes[treeAt(spot, index).pattern]!), 0)
-    expect(count(full)).toBeLessThan(70_000)
+    // The street's and the square's together: the square's are only ever seen
+    // from across the road, small, and cost their triangles and little else.
+    expect(count(full)).toBeLessThan(100_000)
     expect(count(thin)).toBeLessThan(count(full) * 0.7)
   })
 
