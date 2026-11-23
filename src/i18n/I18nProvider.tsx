@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { DEFAULT_LANGUAGE, LANGUAGES, type Language } from './types'
 import { I18nContext, LOCALE_TAGS, dictionaries, isLanguage, type I18nContextValue } from './context'
 import { storage } from '@/lib/storage'
-import { canMorph, captureText, playMorph, type Captured } from './letterMorph'
+import { canMorph, captureText, playMorph, type Leaving } from './letterMorph'
 
 /**
  * Where an explicit choice — a click on the switcher — is remembered. Only
@@ -39,7 +39,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [switching, setSwitching] = useState(false)
   const timer = useRef<number | null>(null)
   /** What was on screen when the language was last changed, until React has put the new text in. */
-  const leaving = useRef<{ captured: Map<Text, Captured>; flip: boolean } | null>(null)
+  const leaving = useRef<{ captured: Leaving; flip: boolean } | null>(null)
   /** Ends a change that is still on its way. */
   const settle = useRef<(() => void) | null>(null)
 

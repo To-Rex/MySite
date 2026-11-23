@@ -1,4 +1,4 @@
-import { morphAt, planMorph, type MorphPlan } from './morph'
+import { morphAt, planMorph, planMorphByWord, type MorphFrame, type MorphPlan } from './morph'
 
 /**
  * A change of language, shown: every piece of text on screen turns into its
@@ -11,6 +11,12 @@ import { morphAt, planMorph, type MorphPlan } from './morph'
  * long as that last write happens it cannot tell — and if React writes to a
  * node again first, with something newer, this finds a value it did not put
  * there and lets go of that node.
+ *
+ * A heading split into masked words is the one thing that cannot be written
+ * into like that: how many text nodes it is depends on what it says, and they
+ * are React's to make and remove. It is a `Writer` instead: it is told to go
+ * back to what it said, and then what to say at each step, and lays that out
+ * itself (`useWriter.ts`).
  */
 
 /** Whether this browser, for this reader, is one to do it in. */
@@ -25,7 +31,8 @@ export function canMorph(): boolean {
  * - what is not text on the page at all (scripts, form controls, drawings);
  * - what a screen reader is read aloud as it changes, or is its alone;
  * - what is under an open overlay (`inert`), where nobody would see it;
- * - and anything that asks to be left out with `data-no-morph`.
+ * - anything that asks to be left out with `data-no-morph`;
+ * - and what a writer lays out (`data-morph="own"`): it is told, not written into.
  */
 const LEFT_ALONE = [
   'script',
@@ -49,6 +56,7 @@ const LEFT_ALONE = [
   '.sr-only',
   '.sr-only-focusable',
   '[data-no-morph]',
+  '[data-morph="own"]',
 ].join(',')
 
 /** How far past the edges of the screen text still counts as on it, in screen heights. */
@@ -67,9 +75,59 @@ export interface Captured {
   /** Where on the screen it was, in pixels: the change starts at the top and works down. */
   top: number
   left: number
+  /** For a writer: how it lay. */
+  lay?: Lay
+}
+
+/** How text set in words lies: which of its words begin a line (the first never counts), and how wide its widest line is, in pixels. */
+export interface Lay {
+  lines: readonly number[]
+  widest: number
 }
 
 type Place = (element: Element) => { top: number; left: number } | null
+
+/** The letters changing or just changed, as [start, end) in the text: what `morphAt` calls hot. */
+type Hot = readonly (readonly [number, number])[]
+
+/**
+ * Text that lays its own letters out, and so is told what to say rather than
+ * written into. `useWriter` makes one of whatever it is given.
+ */
+export interface Writer {
+  /** Where it is in the page, once it is there. */
+  element(): Element | null
+  /** Whether a reader is being shown what it says: a heading still behind its masks is not on its way anywhere. */
+  shown(): boolean
+  /** What it says now, and what it has been asked to say: the same thing, except while a change is on its way. */
+  said(): string
+  asked(): string
+  /** How it lies now. */
+  lay(): Lay
+  /**
+   * Goes back to saying what it said — `text`, lying as it did (`lay`) —
+   * having first looked at how what it has been asked to say lies. Called once
+   * React has written the new text and before the browser has painted it.
+   */
+  leave(text: string, lay: Lay): void
+  /** Says this, now: a step on the way. Answers with where in the page the letters of `hot` ended up. */
+  say(step: MorphFrame, hot: Hot): Range[]
+  /** Goes back to saying what it was asked to, laid out as it falls. */
+  rest(): void
+}
+
+const writers = new Set<Writer>()
+
+/** Puts a writer among what a change of language is shown on. Returns the way to take it out again. */
+export function addWriter(writer: Writer): () => void {
+  writers.add(writer)
+  return () => void writers.delete(writer)
+}
+
+/** Everything a reader could see when the language was changed, and what each piece of it said. */
+export type Leaving = Map<Text | Writer, Captured>
+
+const isText = (on: Text | Writer): on is Text => (on as Text).nodeType === 3
 
 /** Where an element is, if it is somewhere a reader could see it. */
 const onScreen: Place = (element) => {
@@ -85,10 +143,20 @@ const onScreen: Place = (element) => {
  * Every piece of text a reader can see, as it is now. Taken just before the
  * language changes, it is what each of them will be changing *from*.
  */
-export function captureText(root: Node = document.body, place: Place = onScreen): Map<Text, Captured> {
-  const found = new Map<Text, Captured>()
+export function captureText(root: Node = document.body, place: Place = onScreen): Leaving {
+  const found: Leaving = new Map()
   const placed = new Map<Element, ReturnType<Place>>()
   let letters = 0
+  // The writers first: a handful of headings, and the largest text there is.
+  for (const writer of writers) {
+    const element = writer.element()
+    if (!element || !root.contains(element) || !writer.shown() || element.parentElement?.closest(LEFT_ALONE)) continue
+    const where = place(element)
+    const text = writer.said()
+    if (!where || !text.trim()) continue
+    found.set(writer, { text, top: where.top, left: where.left, lay: writer.lay() })
+    letters += text.length
+  }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     // A whole subtree is passed over at its root, not asked about node by node.
     acceptNode: (node) =>
@@ -111,8 +179,50 @@ export function captureText(root: Node = document.body, place: Place = onScreen)
   return found
 }
 
+const SPACE = /\s/
+
+/**
+ * Where letters of `text` are in the page, for an element that says `text` in
+ * however many text nodes, with the spaces between its words collapsed, moved
+ * or left out. So the letters are counted without the spaces: the nth letter
+ * of the text is the nth letter under the element, wherever the words break.
+ */
+export function rangesWithin(root: Element, text: string, hot: Hot): Range[] {
+  if (!hot.length || typeof document.createRange !== 'function') return []
+  const inked = (until: number) => {
+    let count = 0
+    for (let i = 0; i < until && i < text.length; i++) if (!SPACE.test(text[i]!)) count++
+    return count
+  }
+  const spans = hot.map(([from, to]) => [inked(from), inked(to)] as const).filter(([from, to]) => to > from)
+  const ranges: Range[] = []
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let seen = 0
+  let next = 0
+  let open: Range | null = null
+  for (let node = walker.nextNode() as Text | null; node && next < spans.length; node = walker.nextNode() as Text | null) {
+    const data = node.data
+    for (let i = 0; i < data.length && next < spans.length; i++) {
+      if (SPACE.test(data[i]!)) continue
+      const [from, to] = spans[next]!
+      if (seen === from) {
+        open = document.createRange()
+        open.setStart(node, i)
+      }
+      seen++
+      if (open && seen === to) {
+        open.setEnd(node, i + 1)
+        ranges.push(open)
+        open = null
+        next++
+      }
+    }
+  }
+  return ranges
+}
+
 interface Job {
-  node: Text
+  on: Text | Writer
   plan: MorphPlan
   /** Milliseconds after the change began that this one starts, and how long it takes. */
   start: number
@@ -164,6 +274,22 @@ function highlights(): { registry: Highlights; make: (ranges: Range[]) => unknow
   return { registry, make: (ranges) => new Highlight(...ranges) }
 }
 
+/** What it says now: null once it has left the page. */
+const said = (on: Text | Writer): string | null => (isText(on) ? (on.isConnected ? on.data : null) : on.element()?.isConnected ? on.said() : null)
+
+/** Has it say what a moment of the change has it say, and answers with where in the page the letters of `hot` are. */
+function write(on: Text | Writer, step: MorphFrame, hot: Hot): Range[] {
+  if (!isText(on)) return on.say(step, hot)
+  const { text } = step
+  if (on.data !== text) on.data = text
+  return hot.map(([from, to]) => {
+    const range = document.createRange()
+    range.setStart(on, from)
+    range.setEnd(on, to)
+    return range
+  })
+}
+
 /**
  * Plays the change for everything that was captured and has since been given
  * different text. `flip` is for two spellings of one language: each letter
@@ -172,17 +298,19 @@ function highlights(): { registry: Highlights; make: (ranges: Range[]) => unknow
  * Returns a function that ends it at once, leaving every node it still holds
  * with the text it was heading for.
  */
-export function playMorph(captured: ReadonlyMap<Text, Captured>, { flip = false }: { flip?: boolean } = {}): () => void {
+export function playMorph(captured: Readonly<Leaving>, { flip = false }: { flip?: boolean } = {}): () => void {
   const height = Math.max(1, window.innerHeight)
   const width = Math.max(1, window.innerWidth)
   const jobs: Job[] = []
-  for (const [node, was] of captured) {
-    if (!node.isConnected || node.data === was.text) continue
-    const plan = planMorph(was.text, node.data)
-    if (!plan.changes) continue
+  for (const [on, was] of captured) {
+    // What it is to say now: what React wrote into the node, or what the writer has been asked for.
+    const now = isText(on) ? (on.isConnected ? on.data : null) : on.element()?.isConnected ? on.asked() : null
+    // A writer's words are laid out one by one, and stay words on the way.
+    const plan = now === null || now === was.text ? null : isText(on) ? planMorph(was.text, now) : planMorphByWord(was.text, now)
+    if (!plan?.changes) continue
     const length = flip ? clamp(360 + plan.changes * 16, 420, 900) : clamp(440 + plan.changes * 9, 500, 1050)
     jobs.push({
-      node,
+      on,
       plan,
       start: clamp(was.top / height, 0, 1) * 240 + clamp(was.left / width, 0, 1) * 70,
       length,
@@ -192,7 +320,8 @@ export function playMorph(captured: ReadonlyMap<Text, Captured>, { flip = false 
       done: false,
     })
     // Back to what it said, before the browser has painted what it says now.
-    node.data = was.text
+    if (isText(on)) on.data = was.text
+    else on.leave(was.text, was.lay ?? { lines: [], widest: 0 })
   }
   if (!jobs.length) return () => {}
 
@@ -225,27 +354,22 @@ export function playMorph(captured: ReadonlyMap<Text, Captured>, { flip = false 
     for (const job of jobs) {
       if (job.done) continue
       // Gone, or rewritten by someone else since — React, with something newer. It is theirs.
-      if (!job.node.isConnected || job.node.data !== job.last) {
+      if (said(job.on) !== job.last) {
         job.done = true
         continue
       }
       const t = (now - began - job.start) / job.length
       const moment = morphAt(job.plan, t, job)
-      if (moment.text !== job.last) {
-        job.node.data = moment.text
-        job.last = moment.text
-      }
-      if (t >= 1) {
+      const landed = t >= 1
+      const drawn = write(job.on, moment, lit && !landed ? moment.hot : [])
+      job.last = moment.text
+      if (landed) {
         job.done = true
         continue
       }
       live++
-      if (!lit) continue
-      for (const [from, to] of moment.hot) {
+      for (const range of drawn) {
         if (ranges.length >= MOST.ranges) break
-        const range = document.createRange()
-        range.setStart(job.node, from)
-        range.setEnd(job.node, to)
         ranges.push(range)
       }
     }
@@ -261,7 +385,9 @@ export function playMorph(captured: ReadonlyMap<Text, Captured>, { flip = false 
     for (const job of jobs) {
       if (job.done) continue
       job.done = true
-      if (job.node.isConnected && job.node.data === job.last) job.node.data = job.plan.to
+      if (said(job.on) !== job.last) continue
+      if (isText(job.on)) job.on.data = job.plan.to
+      else job.on.rest()
     }
     finish()
   }
