@@ -28,7 +28,7 @@ import {
 import { EVO_NOISE, PARS_HERE, inAir, ownShadow, type Air } from './evoAir'
 import { ARCH_GAP, VEHICLE_KINDS, VEHICLE_SHAPES, plateAt, vehicleMesh, type VehicleKind, type VehicleShape } from './evoCarShapes'
 import { hash2 } from './evoLand'
-import { FRONT_FAR, FRONT_NEAR, STREET_GLSL, crossingHeld } from './evoStreet'
+import { FRONT_FAR, FRONT_NEAR, PLAZA, STREET_GLSL, crossingHeld } from './evoStreet'
 import { PAINT_COUNT, TRAFFIC_RING, createTraffic, type Traffic } from './evoTraffic'
 import type { Beat, Part } from './evoWalk'
 
@@ -81,7 +81,7 @@ const SECOND = '#d8d9d3'
  * Where the far side of the street is a square and not a row of fronts, along
  * the street: there a car's far flank has only the sky to show.
  */
-const SQUARE = { from: 302, until: 388 } as const
+const SQUARE = { from: PLAZA.x0, until: PLAZA.x1 } as const
 
 // ---------------------------------------------------------------- the light
 
