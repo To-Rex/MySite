@@ -1,5 +1,5 @@
 import { hash2 } from './evoLand'
-import { STREET_Z } from './evoStreet'
+import { SHOP_WIDE, STREET_Z } from './evoStreet'
 
 /**
  * How the city's walls are laid out, as numbers: what kinds of wall there are,
@@ -67,7 +67,7 @@ export const RENDER: Grid = { bay: 3.4, storey: 3.0, ground: 4.4 }
  * A shop: how wide, and where on it its board is — from what height to what
  * height, and how far in from either side, as a share of its width.
  */
-export const SHOP = { wide: 6.4, board: { from: 3.36, to: 4.2, side: 0.06 } } as const
+export const SHOP = { wide: SHOP_WIDE, board: { from: 3.36, to: 4.2, side: 0.06 } } as const
 
 /** How the shader holds a number it was handed as a float. */
 const f32 = Math.fround

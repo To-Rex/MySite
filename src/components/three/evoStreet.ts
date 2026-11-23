@@ -326,7 +326,11 @@ export const BUS_STOP = { x: 279.5, half: 3.2, side: 'far', bay: 16 } as const
  */
 export const ARIQ = { inner: 1.24, outer: 1.74, lip: 0.08, water: 0.3, slab: 0.14 } as const
 
-/** How wide a shop is along a front, and so where its door is: in the middle of it. The façades' own number. */
+/**
+ * How wide a shop is along a front, and so where its door is: in the middle of
+ * it. The one number for it: `evoFacade.ts` builds `SHOP` from it, and the
+ * façade shader and the boards out over the doors are drawn from that.
+ */
 export const SHOP_WIDE = 6.4
 
 /** A slab over the ariq: from where to where along it, on which kerb, and what crosses on it. */
