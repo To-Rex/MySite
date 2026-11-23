@@ -82,6 +82,29 @@ function mulberry(seed: number): () => number {
   }
 }
 
+/** A lattice of random numbers and what lies between them: for what a coat does in clumps. */
+function lattice(x: number, y: number, z: number): number {
+  let h = (Math.imul(x, 668265261) ^ Math.imul(y, 374761393) ^ Math.imul(z, 1274126177)) >>> 0
+  h = Math.imul(h ^ (h >>> 15), 739982445) >>> 0
+  h = Math.imul(h ^ (h >>> 12), 695872825) >>> 0
+  return ((h ^ (h >>> 15)) >>> 8) / 16777216
+}
+function noise(x: number, y: number, z: number): number {
+  const ix = Math.floor(x)
+  const iy = Math.floor(y)
+  const iz = Math.floor(z)
+  const fx = x - ix
+  const fy = y - iy
+  const fz = z - iz
+  const ux = fx * fx * (3 - 2 * fx)
+  const uy = fy * fy * (3 - 2 * fy)
+  const uz = fz * fz * (3 - 2 * fz)
+  const along = (j: number, k: number) => lattice(ix, iy + j, iz + k) + (lattice(ix + 1, iy + j, iz + k) - lattice(ix, iy + j, iz + k)) * ux
+  const near = along(0, 0) + (along(1, 0) - along(0, 0)) * uy
+  const far = along(0, 1) + (along(1, 1) - along(0, 1)) * uy
+  return near + (far - near) * uz
+}
+
 export interface CoatSource {
   /** The mesh as it was sculpted, before it is centred and scaled: `unit` of its units to a metre. */
   positions: Float32Array
@@ -207,11 +230,30 @@ export function growCoat(source: CoatSource, grower: Grower, options: CoatOption
       cx /= cl
       cy /= cl
       cz /= cl
-      // ...and then stood off it by as much as it is asked to.
-      const stand = Math.min(1, Math.max(0, tuft.lift + (random() - 0.5) * 0.16)) * (Math.PI / 2)
-      const dx = cx * Math.cos(stand) + mx * Math.sin(stand)
-      const dy = cy * Math.cos(stand) + my * Math.sin(stand)
-      const dz = cz * Math.cos(stand) + mz * Math.sin(stand)
+      // ...and then stood off it by as much as it is asked to. Locks that grow
+      // near each other stand and lean alike, and are the same shade: a coat
+      // is in clumps about as wide as its hair is long.
+      const grain = 1 / (tuft.length * 1.3 * unit)
+      const clump = noise(px * grain + 31, py * grain + 31, pz * grain + 31) - 0.5
+      const kin = noise(px * grain - 17, py * grain - 17, pz * grain - 17) - 0.5
+      const stand = Math.min(1, Math.max(0, tuft.lift + (random() - 0.5) * 0.16 + kin * 0.2)) * (Math.PI / 2)
+      let dx = cx * Math.cos(stand) + mx * Math.sin(stand)
+      let dy = cy * Math.cos(stand) + my * Math.sin(stand)
+      let dz = cz * Math.cos(stand) + mz * Math.sin(stand)
+      {
+        // Leaning to one side or the other of the way it is combed, with its clump.
+        const sx = dy * mz - dz * my
+        const sy = dz * mx - dx * mz
+        const sz = dx * my - dy * mx
+        const sl = Math.hypot(sx, sy, sz) || 1
+        dx += (sx / sl) * clump * 0.7
+        dy += (sy / sl) * clump * 0.7
+        dz += (sz / sl) * clump * 0.7
+        const dl = Math.hypot(dx, dy, dz) || 1
+        dx /= dl
+        dy /= dl
+        dz /= dl
+      }
 
       // Wide across the way it grows, flat to the surface, and then turned a
       // little about itself so that no two lie quite alike.
@@ -243,7 +285,7 @@ export function growCoat(source: CoatSource, grower: Grower, options: CoatOption
       grow.push(dx, dy, dz, length)
       across.push(wx, wy, wz, tuft.width * options.widen * (0.8 + 0.4 * random()))
       tone.push(random(), ao[a]! * f + ao[b]! * s + ao[c]! * w, tuft.tint, tuft.droop)
-      shape.push(tuft.lift, tuft.strands, Math.min(1, Math.max(0, tuft.tone + (random() - 0.5) * 0.3)), sag)
+      shape.push(tuft.lift, tuft.strands, Math.min(1, Math.max(0, tuft.tone + (random() - 0.5) * 0.3 + clump * 0.7)), sag)
     }
   }
 

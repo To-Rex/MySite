@@ -326,7 +326,7 @@ export class Figure {
   /**
    * How much of its coat to draw, for how far off it is: all of it from
    * within two and a half times its own height, and from there fewer locks,
-   * each drawn wider, down to a third of them. A coat is thousands of small
+   * each drawn wider, down to a little over a quarter of them. A coat is thousands of small
    * strips lying over one another, and from a distance most of what is paid
    * for is strips that are hidden by other strips. `distance` is in metres
    * through a forty-degree lens: a longer lens brings it nearer.
@@ -335,9 +335,11 @@ export class Figure {
     const coat = this.coat
     if (!coat) return
     const far = Math.max(1, finite(distance, 1) / (this.tall * 2.5))
-    const drawn = coat.share * Math.max(0.33, Math.pow(far, -0.8))
+    const drawn = coat.share * Math.max(0.28, 1 / far)
     coat.geometry.instanceCount = Math.max(1, Math.round(coat.count * drawn))
-    this.uniforms.uCoatWidth.value = 1 / Math.sqrt(drawn)
+    // Not quite as much wider as there are fewer: a coat has locks to spare,
+    // and what is being saved is the drawing of one over another.
+    this.uniforms.uCoatWidth.value = Math.pow(drawn, -0.42)
   }
 
   /** Whether it has been built yet: nothing can be posed before its mesh arrives. */

@@ -126,6 +126,7 @@ const GRASS_VERT_PARS = /* glsl */ `
   uniform float uCity;
   uniform float uPixel;
   uniform float uFade;
+  uniform vec2 uNear;
   uniform vec4 uTread[${TREADS}];
   varying vec3 vBlade;
   varying vec3 vBladeNormal;
@@ -160,6 +161,11 @@ const GRASS_VERT_PARS = /* glsl */ `
     // Knee-high for the most part, waist-high in the thick of a clump, and
     // short where the ground is wet or trodden.
     float tall = (0.3 + 0.42 * h4) * (0.55 + 0.7 * clump) * (0.45 + 0.55 * smoothstep(0.2, 0.9, land.g)) * uLayer.w;
+    // Trodden down round the lens. A blade a pace or two from the camera is a
+    // green wall across the bottom of the frame — and, drawn over and over at
+    // that size, most of what a frame low in the meadow costs.
+    float trodden = smoothstep(uNear.x, uNear.y, length(root - cameraPosition.xz));
+    tall *= trodden;
     float t = position.y;
     // Leaning its own way, then with the wind: a breeze, and gusts that cross the meadow.
     float yaw = h1 * 6.2831853;
@@ -178,7 +184,7 @@ const GRASS_VERT_PARS = /* glsl */ `
     }
 
     float bend = t * t;
-    float width = max(uLayer.z * (0.7 + 0.6 * h3), uPixel * length(vec3(root.x, land.r, root.y) - cameraPosition));
+    float width = max(uLayer.z * (0.7 + 0.6 * h3), uPixel * length(vec3(root.x, land.r, root.y) - cameraPosition)) * (0.25 + 0.75 * trodden);
     vec3 at = vec3(root.x, land.r, root.y);
     at.xz += lean * bend * tall;
     at.y += tall * t * (1.0 - 0.32 * dot(lean, lean) * bend);
@@ -215,6 +221,7 @@ export function createGrass(air: Air, quality: ValleyQuality, meadow: { a: { val
     uCityFrom: { value: PLACE.city.from },
     uCity: { value: 0 },
     uPixel: { value: 0.001 },
+    uNear: { value: new Vector2(2.6, 8) },
     uTread: { value: treads },
     uGrassRoot: { value: new Vector3(0.05, 0.045, 0.02) },
     uGrassA: { value: meadow.a.value },
@@ -291,6 +298,9 @@ export function createGrass(air: Air, quality: ValleyQuality, meadow: { a: { val
       shared.uLight.value.set(beat.light.r, beat.light.g, beat.light.b)
       // A pixel's width at a metre, so no blade is ever drawn thinner than one.
       shared.uPixel.value = (2 * Math.tan((camera.fov * Math.PI) / 360)) / Math.max(1, beat.height) * 0.75
+      // Further out through a long lens, which makes what is near larger still.
+      const lens = Math.min(1.7, Math.max(1, Math.tan((40 * Math.PI) / 360) / Math.tan((camera.fov * Math.PI) / 360)))
+      shared.uNear.value.set(2.6 * lens, 8 * lens)
       const up = camera.position.y - groundAt(camera.position.x, camera.position.z)
       meshes.forEach(({ mesh }, i) => {
         // From a height the fine blades are less than a pixel wide and only cost.

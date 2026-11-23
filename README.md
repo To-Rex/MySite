@@ -770,9 +770,12 @@ The levels are the valley's (`valleyQuality`), and like the valley the scene
 judges itself: if most of eighty frames are slow it gives up a fifth of its
 resolution, twice at most, through the canvas's own `dpr` prop. A coat is also
 drawn by distance: all of it from within two and a half times its wearer's
-height, and from there fewer locks, each wider, down to a third of them — they
-are shuffled when they are grown, so any first part of the list is the whole
-coat thinned out.
+height, and from there fewer locks, each wider, down to a little over a quarter
+of them — they are shuffled when they are grown, so any first part of the list
+is the whole coat thinned out. And the meadow is trodden down for a few paces
+round the lens (`uNear` in `evoGrass.ts`): the hunt is followed from low in the
+grass, where a blade a pace from the camera is a green wall across the frame
+and, drawn over and over at that size, was most of what the frame cost.
 
 It is built ahead of being seen — the chunk is fetched and the scene mounted,
 parked, three seconds after the intro, or as soon as a reader has been near it

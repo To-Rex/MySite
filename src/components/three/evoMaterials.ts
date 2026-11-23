@@ -376,11 +376,9 @@ const COAT_VERT_PARS = /* glsl */ `
   uniform vec3 uSwing;
   uniform vec2 uCoatWind;
   uniform float uTime;
-  uniform float uSize;
   varying vec4 vEvoCard;
   varying vec3 vEvoLock;
   varying vec3 vEvoStrand;
-  ${EVO_NOISE}
 `
 
 /**
@@ -402,11 +400,7 @@ const COAT_VERT = /* glsl */ `
     evoWide = normalize(evoWide);
     vec3 evoUp = normalize(objectNormal);
     float evoLen = aGrow.w * mix(uCoatLength.x, uCoatLength.y, aTone.z);
-    // Locks that grow near each other lean the same way and are the same
-    // shade: a coat is in clumps about as wide as its hair is long.
-    float evoClump = evoNoise3(aRoot / (aGrow.w * 1.3) + 31.0);
-    float evoKin = evoNoise3(aRoot / (aGrow.w * 1.3) - 17.0);
-    evoDir = normalize(evoDir + evoWide * ((evoClump - 0.5) * 0.7) + evoUp * ((evoKin - 0.5) * 0.3));
+    evoDir = normalize(evoDir);
     // Its weight turns it downwards the further along it is, and where it is
     // is the sum of the way it has gone so far: one that starts upwards rises,
     // arcs over and falls, as a lock does.
@@ -427,7 +421,7 @@ const COAT_VERT = /* glsl */ `
     evoOff += evoUp * max(0.0, evoLeast - dot(evoOff, evoUp));
     transformed += evoOff + evoWide * (position.x * aAcross.w * uCoatWidth * (1.0 - 0.3 * evoV));
     vEvoCard = vec4(position.x, evoV, aTone.x, aTone.z);
-    vEvoLock = vec3(aTone.y, aShape.y, clamp(aShape.z + (evoClump - 0.5) * 0.7, 0.0, 1.0));
+    vEvoLock = vec3(aTone.y, aShape.y, aShape.z);
     vEvoStrand = normalMatrix * evoHang;
   }
 `
