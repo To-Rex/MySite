@@ -812,6 +812,35 @@ and the shade of its crown and trunk, multiplied into whatever is paved there �
 so the street's shader does not know where the trees are, and one planted
 anywhere `treeSpots()` says has both.
 
+**The traffic** (`evoCarShapes.ts`, `evoTraffic.ts`, `evoCars.ts`) is five
+bodies and a rule for driving them. A body is lofted, not modelled: its side
+view and its plan are a handful of points each, and every cross-section has the same
+thirty points in the same order, so a bonnet is a cabin whose roof has come down
+to its belt line and one function makes a hatchback and a bus. Sections are put
+exactly where a window, a pillar or an arch starts and stops, so the edge of the
+glass is the edge of a face; anything smaller than a panel — lamps that come
+round the corners, the grille, the lines the doors shut on, the seats and the
+driver seen through the glass — is drawn on the skin from a few numbers. There
+is nothing for the paint to reflect, so it works out what it would see: the
+sky's gradient over the roofs, the lit shop fronts along each pavement (none
+where the far side is the square), and the six nearest street lamps from
+`STREET_GLSL`, the numbers the road is lit by, which is what slides a lamp over a
+bonnet and up a windscreen as the car passes under it. Lamps are brighter than
+white for the glow to find; where a frame gets no glow, a halo sees that from
+what it is being drawn into and stays. The plates have the country's layout and
+made-up numbers. The driving (the Intelligent Driver Model; a lane is a ring and
+nothing overtakes) keeps its own time and knows two things about the walk: the
+crossing's lights, from `crossingHeld`, and where the camera is. On amber a car
+that can pull up for the line does; on red nothing crosses it; and because a
+scroll can take the lights from red to "the stripes must be empty" in a tenth of
+a second, whatever is still on them is carried off in step with the change
+rather than left to drive. Nothing comes within 1.5 m of the camera — what is
+coming stops short of it, and a scroll that puts the camera down on a car moves
+the car — and a walk that steps into the road short of the line is waited for
+where it stepped out. `tests/unit/cars.test.ts` measures the bodies and drives
+the street for the best part of half an hour, a step at a time, asking all of
+that at every step.
+
 **The air** (`evoAir.ts`) has a sun that moves, so nothing about it is a
 constant and nothing is a module-level singleton either: `createAir()` makes
 the one set of uniforms a scene shares between its dome and every material
