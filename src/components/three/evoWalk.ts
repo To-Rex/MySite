@@ -13,6 +13,7 @@ import {
 } from 'three'
 import type { ValleyQuality } from '@/lib/valley'
 import type { CreatureDetail } from './creatures'
+import { createCars } from './evoCars'
 import { createCast } from './evoCast'
 import { createCave } from './evoCave'
 import { createCity } from './evoCity'
@@ -223,7 +224,8 @@ export function createWalk(quality: ValleyQuality): Walk {
     createCast(air, { people: q.people, beasts: q.beasts, coat: q.coat }, q.bump, shadows, grass.tread),
     createPond(air),
     createVillage(air, shadows),
-    createCity(air, { bump: q.bump, shadows, cars: q.cars }),
+    createCity(air, { bump: q.bump, shadows }),
+    createCars(air, { shadows, cars: q.cars }),
     createPassers(air, q.people, q.bump, shadows, q.coat),
     studio,
   ]) {
