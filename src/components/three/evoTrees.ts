@@ -704,11 +704,15 @@ const WOOD_FRAG = /* glsl */ `
 
   void main() {
     vec3 p = vWood;
-    // Plane bark comes off in plates and leaves the trunk a map of them: the
-    // newest bare wood cream, older olive, the oldest grey and brown. A plate
-    // is a few cells that happen to be of an age; where two of different ages
-    // meet, the older stands a little proud of the newer and shades its edge.
-    vec3 q = (p + vSeed * 37.0) * vec3(8.2, 4.2, 8.2);
+    // Plane bark comes off in plates and leaves the trunk a map of them, all
+    // of it pale: ivory and cream where it has just shed, pale grey-green and
+    // khaki for the plates that have been there a while, now and then one gone
+    // grey-brown. A plate is a few cells that happen to be of an age. Its edge
+    // is soft, the two colours running into each other, except where an older
+    // plate is lifting off a newer one: there it has a thin, darker lip.
+    // The plates are smaller on the boughs than on the trunk, as they are.
+    float finer = mix(1.0, 1.7, smoothstep(uFork - 0.6, uFork + 0.8, p.y));
+    vec3 q = (p - vec3(0.0, uFork, 0.0)) * vec3(16.0, 10.0, 16.0) * finer + vSeed * 37.0;
     float grain = length(fwidth(q));
     // No edge of a plate is straight.
     q += 0.6 * (vec3(evoNoise3(q * 0.9), evoNoise3(q * 0.9 + 21.3), evoNoise3(q * 0.9 + 47.9)) - 0.5);
@@ -738,28 +742,34 @@ const WOOD_FRAG = /* glsl */ `
       }
     }
     float seam = sqrt(next) - sqrt(nearest);
-    // How old: 0 the newest, 3 the oldest.
-    float age = floor(4.0 * pow(fract(plate * 7.13), 1.25));
-    float ageBeside = floor(4.0 * pow(fract(beside * 7.13), 1.25));
-    vec3 cream = lin(vec3(0.79, 0.75, 0.6));
-    vec3 olive = lin(vec3(0.58, 0.59, 0.42));
-    vec3 grey = lin(vec3(0.6, 0.57, 0.51));
-    vec3 brown = lin(vec3(0.47, 0.41, 0.33));
-    vec3 bark = age < 0.5 ? cream : age < 1.5 ? olive : age < 2.5 ? grey : brown;
-    bark *= 0.93 + 0.14 * fract(plate * 23.7);
-    bark *= 0.88 + 0.24 * evoNoise3(q * 0.45 + 9.0);
-    // The old bark low on the trunk has stopped flaking: darker, and more of a colour.
-    float old = 1.0 - smoothstep(0.6, 2.6, p.y);
-    bark = mix(bark, brown * (0.8 + 0.3 * fract(plate * 23.7)), old * 0.4);
-    float lip = (1.0 - smoothstep(0.0, 0.08, seam)) * step(0.5, abs(age - ageBeside));
-    bark *= age < ageBeside ? 1.0 - 0.5 * lip : 1.0 + 0.1 * lip;
+    // How old, 0 to 3, and its colour.
+    float age = floor(4.0 * pow(fract(plate * 7.13), 2.2));
+    float ageBeside = floor(4.0 * pow(fract(beside * 7.13), 2.2));
+    vec3 ivory = lin(vec3(0.88, 0.85, 0.73));
+    vec3 sage = lin(vec3(0.71, 0.73, 0.6));
+    vec3 khaki = lin(vec3(0.77, 0.72, 0.57));
+    vec3 dusk = lin(vec3(0.67, 0.63, 0.54));
+    vec3 bark = age < 0.5 ? ivory : age < 1.5 ? sage : age < 2.5 ? khaki : dusk;
+    vec3 near_ = ageBeside < 0.5 ? ivory : ageBeside < 1.5 ? sage : ageBeside < 2.5 ? khaki : dusk;
+    bark *= 0.95 + 0.1 * fract(plate * 23.7);
+    near_ *= 0.95 + 0.1 * fract(beside * 23.7);
+    // Soft-edged: half way to the next plate's colour at the seam.
+    bark = mix(bark, near_, 0.5 * (1.0 - smoothstep(0.0, 0.16, seam)));
+    // And a little mottled within, as a plate is.
+    bark *= 0.93 + 0.14 * evoNoise3(q * 1.7 + 9.0);
+    // Where an older plate lifts off a newer one, its edge.
+    float rim = (1.0 - smoothstep(0.015, 0.045, seam)) * step(0.5, age - ageBeside);
+    bark *= 1.0 - 0.2 * rim;
+    // The old bark low on the trunk has stopped flaking, and is a little greyer.
+    float old = 1.0 - smoothstep(0.8, 2.4, p.y);
+    bark = mix(bark, khaki * 0.9, old * 0.18);
     // Too far off to see a plate, it is the colour they average to.
     float seen = 1.0 - smoothstep(0.35, 1.1, grain);
-    vec3 mean = mix(lin(vec3(0.62, 0.6, 0.48)), brown * 0.95, old * 0.4);
-    vec3 color = mix(mean, bark, seen) * (0.92 + 0.16 * evoNoise3(p * vec3(60.0, 14.0, 60.0)));
-    // And on the plates, close to: the short dark dashes a plane's bark breathes through.
-    float dash = smoothstep(0.78, 0.86, evoNoise3(p * vec3(34.0, 120.0, 34.0))) * (1.0 - smoothstep(0.1, 0.3, grain));
-    color *= 1.0 - 0.3 * dash;
+    vec3 mean = mix(lin(vec3(0.75, 0.73, 0.61)), khaki * 0.9, old * 0.18);
+    vec3 color = mix(mean, bark, seen) * (0.95 + 0.1 * evoNoise3(p * vec3(60.0, 14.0, 60.0)));
+    // And close to, the short dark dashes a plane's bark breathes through.
+    float dash = smoothstep(0.8, 0.88, evoNoise3(p * vec3(34.0, 120.0, 34.0))) * (1.0 - smoothstep(0.1, 0.3, grain));
+    color *= 1.0 - 0.14 * dash;
 
     // Lime, to chest height, put on with a brush: a ragged upper edge, the
     // plates under it showing only as their edges, a few of them fallen away
@@ -767,8 +777,8 @@ const WOOD_FRAG = /* glsl */ `
     float round_ = atan(p.z, p.x);
     float brim = 1.12 + 0.06 * sin(round_ * 3.0 + vSeed * 40.0) + 0.05 * (evoNoise3(vec3(round_ * 2.2, p.y * 3.0, vSeed * 9.0)) - 0.5) + 0.03 * (evoNoise3(p * vec3(19.0, 5.0, 19.0)) - 0.5);
     float limed = 1.0 - smoothstep(-0.012, 0.012, p.y - brim);
-    limed *= 1.0 - seen * step(0.93, fract(plate * 41.3));
-    vec3 lime = lin(vec3(0.9, 0.89, 0.84)) * (0.9 + 0.12 * evoNoise3(p * 9.0)) * (1.0 - 0.16 * lip * seen);
+    limed *= 1.0 - seen * step(0.94, fract(plate * 41.3));
+    vec3 lime = lin(vec3(0.9, 0.89, 0.84)) * (0.9 + 0.12 * evoNoise3(p * 9.0)) * (1.0 - 0.1 * rim * seen);
     lime = mix(lime, lin(vec3(0.5, 0.46, 0.4)), (1.0 - smoothstep(0.0, 0.42, p.y)) * (0.35 + 0.5 * evoNoise3(p * vec3(11.0, 4.0, 11.0))));
     color = mix(color, lime, limed);
 
