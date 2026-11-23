@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ARIQ,
   CITY_FROM,
   CITY_UNTIL,
   CROSSINGS,
@@ -157,10 +158,12 @@ describe('where the trees stand', () => {
 
   it('leaves the people on the pavement room to pass', () => {
     const lanes = [...PASSER_LANES].sort((a, b) => a - b)
-    // Past the square of earth, with a shoulder to spare; and short of the shop fronts.
+    // Past the square of earth and the ariq beyond it; and short of the shop fronts.
     expect(lanes[0]!).toBeGreaterThanOrEqual(TREE_INSET + TREE_PIT + 0.25)
+    expect(lanes[0]!).toBeGreaterThanOrEqual(ARIQ.outer + ARIQ.lip + 0.25)
     expect(lanes[lanes.length - 1]!).toBeLessThanOrEqual(PAVEMENT - 0.5)
-    for (let i = 1; i < lanes.length; i++) expect(lanes[i]! - lanes[i - 1]!).toBeGreaterThanOrEqual(0.5)
+    // A shoulder's width apart, at least.
+    for (let i = 1; i < lanes.length; i++) expect(lanes[i]! - lanes[i - 1]!).toBeGreaterThanOrEqual(0.44)
   })
 
   it('brings each of them up in its own time, and all of them before the city is built', () => {

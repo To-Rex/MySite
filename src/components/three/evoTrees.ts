@@ -17,6 +17,7 @@ import {
   ZeroFactor,
 } from 'three'
 import { AIR_PARS, EVO_NOISE, type Air } from './evoAir'
+import { SUN_SHADOW_GLSL, createSunShadow } from './evoSunShadow'
 import { hash2 } from './evoLand'
 import { CITY_FROM, CITY_LIGHT_GLSL, CITY_UNTIL, STREET_GLSL, STREET_Z, TREE_CROWN, TREE_PIT, treeSpots, type TreeSpot } from './evoStreet'
 import type { Beat, Part } from './evoWalk'
@@ -621,9 +622,11 @@ const TREE_VERT = /* glsl */ `
   uniform vec3 uLight;
   uniform vec3 uAmbient;
   uniform vec3 uToLight;
+  uniform vec3 uSunDir;
   varying vec3 vEvoWorld;
   ${STREET_GLSL}
   ${CITY_LIGHT_GLSL}
+  ${SUN_SHADOW_GLSL}
 
   // How far a tree has come, 0 to 1: each has its own moment to start.
   float evoGrown() {
@@ -690,6 +693,8 @@ const WOOD_VERT = /* glsl */ `
 `
 
 const WOOD_FRAG = /* glsl */ `
+  #define EVO_FRAGMENT
+  ${SUN_SHADOW_GLSL}
   uniform float uFork;
   uniform vec3 uLight;
   uniform vec3 uAmbient;
@@ -787,6 +792,9 @@ const WOOD_FRAG = /* glsl */ `
     // the sun is high the whole trunk stands in the crown's shade.
     float among = smoothstep(uFork - 0.5, uFork + 2.2, p.y);
     float shade = mix(1.0, 0.3, among) * mix(1.0, 0.4, smoothstep(0.35, 0.75, uToLight.y));
+    // Where there is a map of the sun's shadow, that says it instead: asked a
+    // little way out towards the sun, past the wood's own surface.
+    if (uSunShadowInfo.x > 0.5 && uSunDir.y > 0.0) shade = evoSunSeen(vEvoWorld + uToLight * 0.8, n);
     float sky = mix(0.72, 0.26, among) * (0.65 + 0.35 * n.y);
     vec3 lit = color * 0.32 * (uAmbient * sky + uLight * max(dot(n, uToLight), 0.0) * shade + vLamps);
     // Where it meets the ground.
@@ -818,6 +826,7 @@ const CROWN_VERT = /* glsl */ `
     float open = smoothstep(0.25, 1.0, grown);
     vec3 centre = mix(vec3(0.0, uFork, 0.0), position, 0.3 + 0.7 * open);
     vec3 at = evoStand(centre, size);
+    vec3 middle = at;
     vec3 n = evoFacing(normal, position.y);
     vec3 view = normalize(at - cameraPosition);
 
@@ -837,10 +846,14 @@ const CROWN_VERT = /* glsl */ `
     // here, round into its shaded side, and less the deeper in.
     float sky = aCard.y;
     float towards = dot(n, uToLight);
-    vec3 lit = uLight * max((towards + 0.35) / 1.35, 0.0) * mix(0.2, 1.0, sky * sky);
+    // And only where the sun gets to: asked of the map a few metres out
+    // towards it, past the leaves nearest, so a crown is not its own shadow
+    // but a front across the road is.
+    float sunSeen = uSunShadowInfo.x > 0.5 && uSunDir.y > 0.0 ? evoSunSeenLod(middle + uToLight * 3.0, vec3(0.0)) : 1.0;
+    vec3 lit = uLight * max((towards + 0.35) / 1.35, 0.0) * mix(0.2, 1.0, sky * sky) * sunSeen;
     lit += uAmbient * mix(0.22, 1.0, sky) * max(0.5 + 0.5 * n.y, 0.14);
     // And the light that comes through a leaf from behind it.
-    vec3 through = uLight * pow(max(dot(view, uToLight), 0.0), 2.0) * (0.2 + 0.8 * sky) * clamp(0.65 - 0.5 * towards, 0.0, 1.0) * 0.8;
+    vec3 through = uLight * pow(max(dot(view, uToLight), 0.0), 2.0) * (0.2 + 0.8 * sky) * clamp(0.65 - 0.5 * towards, 0.0, 1.0) * 0.8 * sunSeen;
     if (uLamps > 0.001) {
       lit += evoLampsOn(at, n, 0.7) * mix(0.4, 1.0, sky);
       through += evoLampsOn(at, -n, 0.7) * 0.55 * sky;
@@ -854,6 +867,61 @@ const CROWN_VERT = /* glsl */ `
     vCard = aCard;
     vEvoWorld = at;
     gl_Position = projectionMatrix * viewMatrix * vec4(at, 1.0);
+  }
+`
+
+/** The wood as the sun's map sees it: grown as far as it has, and moved by the wind. */
+const WOOD_DEPTH_VERT = /* glsl */ `
+  ${TREE_VERT}
+  void main() {
+    vec3 at = evoStand(position, evoSize(evoGrown()));
+    gl_Position = projectionMatrix * viewMatrix * vec4(at, 1.0);
+  }
+`
+
+/**
+ * The crown as the sun's map sees it: not its cards — a crown is a few
+ * thousand of them, one in front of another, and a shadow map that drew them
+ * all would draw every one — but the mass inside it, pushed out to where the
+ * leaves are, frayed at its outline as it is for the eye, and with holes in
+ * it where the sun gets through: a crown's shadow is dappled.
+ */
+const CROWN_DEPTH_VERT = /* glsl */ `
+  ${TREE_VERT}
+  attribute vec3 aAcross;
+  attribute vec3 aUp;
+  attribute vec4 aCard;
+  varying vec2 vLeaves;
+  varying vec4 vCard;
+  varying float vRim;
+  void main() {
+    vLeaves = aUp.xy;
+    vCard = aCard;
+    vRim = 1.0;
+    // A card: behind the far plane, so nothing of it is drawn.
+    if (aCard.z > 0.5) {
+      gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+      return;
+    }
+    float grown = evoGrown();
+    float size = evoSize(grown);
+    float open = smoothstep(0.25, 1.0, grown);
+    vec3 centre = mix(vec3(0.0, uFork, 0.0), position, 0.3 + 0.7 * open) + normal * 0.85 * open;
+    vec3 at = evoStand(centre, size);
+    vRim = abs(dot(evoFacing(aAcross, position.y), normalize(at - cameraPosition)));
+    gl_Position = projectionMatrix * viewMatrix * vec4(at, 1.0);
+  }
+`
+
+const CROWN_DEPTH_FRAG = /* glsl */ `
+  varying vec2 vLeaves;
+  varying vec4 vCard;
+  varying float vRim;
+  ${EVO_NOISE}
+  void main() {
+    if (vRim < 0.2 + 0.4 * evoHash(floor(vLeaves * 3.0))) discard;
+    if (evoNoise(vLeaves * 1.7 + vCard.x * 13.0) > 0.7) discard;
+    gl_FragColor = vec4(1.0);
   }
 `
 
@@ -1087,6 +1155,8 @@ const SHADE_VERT = /* glsl */ `
 `
 
 const SHADE_FRAG = /* glsl */ `
+  // Whether the sun's shadow has a map: then the crowns cast their own, into it.
+  uniform vec4 uSunShadowInfo;
   uniform float uLamps;
   uniform float uTime;
   uniform vec3 uLight;
@@ -1133,7 +1203,7 @@ const SHADE_FRAG = /* glsl */ `
     vec3 weigh = vec3(0.3, 0.55, 0.15);
     float sun = dot(uLight, weigh) * max(uSunDir.y, 0.0);
     float share = sun / max(sun + dot(uAmbient, weigh), 1e-4);
-    float shade = shadow * share + under * 0.32 * (1.0 - share);
+    float shade = shadow * share * step(uSunShadowInfo.x, 0.5) + under * 0.32 * (1.0 - share);
     // By night a crown stands between the ground under it and some of the lamps.
     shade = shade * (1.0 - 0.6 * uLamps) + under * (0.42 - 0.3 * fleck) * 0.8 * uLamps;
     shade *= vOpen.x * (1.0 - smoothstep(150.0, 280.0, length(at - cameraPosition)));
@@ -1165,8 +1235,13 @@ export function createTrees(air: Air, options: TreeOptions): Part {
     uSunDir: air.uSunDir,
     uAir: air.uAir,
   }
+  // Lit by the sun only where it gets to them, and casting their own shadows into its map.
+  const sunShadow = createSunShadow()
+  Object.assign(shared, sunShadow.uniforms)
+  disposers.push(() => sunShadow.dispose())
   const spots = treeSpots().map((spot, index) => ({ spot, as: treeAt(spot, index) }))
   const dummy = new Object3D()
+  const casters: Object3D[] = []
 
   TREE_PATTERNS.forEach((pattern, index) => {
     const here = spots.filter((tree) => tree.as.pattern === index)
@@ -1220,10 +1295,17 @@ export function createTrees(air: Air, options: TreeOptions): Part {
       wood.setMatrixAt(i, dummy.matrix)
       crown.setMatrixAt(i, dummy.matrix)
     })
+    const woodDepth = new ShaderMaterial({ uniforms, vertexShader: WOOD_DEPTH_VERT, fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }' })
+    const crownDepth = new ShaderMaterial({ uniforms, vertexShader: CROWN_DEPTH_VERT, fragmentShader: CROWN_DEPTH_FRAG, side: DoubleSide })
+    wood.customDepthMaterial = woodDepth
+    crown.customDepthMaterial = crownDepth
     for (const drawn of [wood, crown]) {
       drawn.instanceMatrix.needsUpdate = true
       // They stand the length of the street: there is no one sphere to cull them by.
       drawn.frustumCulled = false
+      drawn.castShadow = true
+      casters.push(drawn)
+      sunShadow.bind(drawn)
       root.add(drawn)
     }
     disposers.push(
@@ -1231,6 +1313,8 @@ export function createTrees(air: Air, options: TreeOptions): Part {
       () => woodMaterial.dispose(),
       () => crownGeometry.dispose(),
       () => crownMaterial.dispose(),
+      () => woodDepth.dispose(),
+      () => crownDepth.dispose(),
     )
   })
 
@@ -1279,6 +1363,7 @@ export function createTrees(air: Air, options: TreeOptions): Part {
   })
   const pits = new Mesh(square, pitMaterial)
   const shade = new Mesh(square, shadeMaterial)
+  sunShadow.bind(shade)
   // Before anything else that is drawn over the ground: a lamp's glow is not in its shade.
   shade.renderOrder = -1
   for (const laid of [pits, shade]) {
@@ -1292,6 +1377,10 @@ export function createTrees(air: Air, options: TreeOptions): Part {
   )
 
   function update(beat: Beat): void {
+    // A shadow only while the sun is up to throw one: what lights the street
+    // by night is its lamps, and the map is drawn every frame whether or not.
+    const strong = beat.sky.elevation > 0 && beat.light.r + beat.light.g + beat.light.b > 0.3
+    for (const drawn of casters) drawn.castShadow = strong
     // Nothing of them before the street is laid.
     const seen = beat.stage.city > 0.58
     root.visible = seen

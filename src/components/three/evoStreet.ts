@@ -172,17 +172,17 @@ export const TREE_CROWN = { along: 5.2, across: 3.5, from: 4.6, top: 16, lean: 0
 
 /** Half the gap the fronts leave where a side street comes in. */
 export const CROSSING_HALF = 7
-/** Half the side of the square of earth left open round a trunk. */
-export const TREE_PIT = 0.75
+/** Half the side of the square of earth left open round a trunk: short of the ariq beside it. */
+export const TREE_PIT = 0.45
 /** How much bigger or smaller than the pattern one tree is than the next. */
 export const TREE_SCALE = { from: 0.9, to: 1.06 } as const
 
 /**
  * People on the far pavement: how far in from its kerb each of them walks.
- * Past the squares of earth the trees stand in, and far enough from each
- * other to pass.
+ * On the far side of the ariq from the trees, past the bus shelter, and far
+ * enough from each other to pass.
  */
-export const PASSER_LANES = [1.75, 2.35, 3.0, 3.55] as const
+export const PASSER_LANES = [2.25, 2.7, 3.2, 3.65] as const
 
 /**
  * A tree, as a place to stand one. `park` is a tree that is not on a kerb: it
@@ -313,3 +313,138 @@ export const CITY_LIGHT_GLSL = /* glsl */ `
  * kerb in front of it that is kept clear for them to pull in to.
  */
 export const BUS_STOP = { x: 279.5, half: 3.2, side: 'far', bay: 16 } as const
+
+// ----------------------------------------------------------------- the ariq
+
+/**
+ * The ariq: the concrete channel the city's water runs along beside every
+ * kerb, with the trees on its bank. Measured, like everything on a pavement,
+ * out from its kerb: the channel's two inside faces, the concrete lip on top
+ * of each, how far down the water is, and how thick a slab laid over it is.
+ * Between the kerb and the ariq are the trees and the lamp posts; beyond it,
+ * the pavement people walk on.
+ */
+export const ARIQ = { inner: 1.24, outer: 1.74, lip: 0.08, water: 0.3, slab: 0.14 } as const
+
+/** How wide a shop is along a front, and so where its door is: in the middle of it. The façades' own number. */
+export const SHOP_WIDE = 6.4
+
+/** A slab over the ariq: from where to where along it, on which kerb, and what crosses on it. */
+export interface AriqSlab {
+  x0: number
+  x1: number
+  side: 'far' | 'near'
+  for: 'crossing' | 'stop' | 'door'
+}
+
+/** What a front needs to say for a slab to be laid to its doors: where it is, and whether it has shops. */
+export interface FrontBlock {
+  x: number
+  z: number
+  w: number
+  d: number
+  base: number
+  yaw: number
+  style: number
+  shops: boolean
+}
+
+/** The façades that have shops on their ground floor: panels (when not lifted), brick and render. */
+const SHOP_STYLES = [0, 1, 3]
+
+/** Where the doors are along the fronts of a kerb: the middle of every whole shop. */
+export function shopDoors(blocks: readonly FrontBlock[], side: 'far' | 'near'): number[] {
+  const out: number[] = []
+  for (const b of blocks) {
+    if (!b.shops || Math.abs(b.yaw) > 1e-6 || !SHOP_STYLES.includes(b.style) || (b.style === 0 && b.base >= 0.5)) continue
+    const face = side === 'far' ? b.z + b.d / 2 : b.z - b.d / 2
+    if (Math.abs(face - (side === 'far' ? FRONT_FAR : FRONT_NEAR)) > 0.6) continue
+    for (let k = 0; (k + 0.59) * SHOP_WIDE <= b.w; k++) out.push(b.x - b.w / 2 + (k + 0.5) * SHOP_WIDE)
+  }
+  return out.sort((a, b) => a - b)
+}
+
+/** The lamp posts of a kerb, along it. */
+export function lampsAlong(side: 'far' | 'near'): number[] {
+  const out: number[] = []
+  for (let x = Math.ceil(CITY_FROM / LAMP_GAP) * LAMP_GAP; x < CITY_UNTIL; x += LAMP_GAP) out.push(side === 'far' ? x : x + LAMP_GAP / 2)
+  return out
+}
+
+/**
+ * Where slabs are laid over the ariq: the length of the crossing on both
+ * kerbs, and a little way back along the near one, where the walk comes up
+ * to it on the slant; the length of the bus stop, where the shelter stands
+ * on them; and now and then at a shop's door — about one in three, and never
+ * hard against a tree or a lamp post. `blocks` are the city's, from `towers()`.
+ */
+export function ariqSlabs(blocks: readonly FrontBlock[]): AriqSlab[] {
+  const out: AriqSlab[] = [
+    { x0: CROSSWALK.x - CROSSWALK.half - 4.5, x1: CROSSWALK.x + CROSSWALK.half + 1, side: 'near', for: 'crossing' },
+    { x0: CROSSWALK.x - CROSSWALK.half - 1, x1: CROSSWALK.x + CROSSWALK.half + 1, side: 'far', for: 'crossing' },
+    { x0: BUS_STOP.x - BUS_STOP.half - 0.3, x1: BUS_STOP.x + BUS_STOP.half + 0.3, side: 'far', for: 'stop' },
+  ]
+  for (const side of ['far', 'near'] as const) {
+    const trunks = treesAlong(side)
+    const posts = lampsAlong(side)
+    for (const door of shopDoors(blocks, side)) {
+      if (hash2(Math.round(door * 4), side === 'far' ? 211 : 223) > 0.36) continue
+      const x0 = door - 0.75
+      const x1 = door + 0.75
+      if (trunks.some((t) => Math.abs(t - door) < 1.9) || posts.some((l) => Math.abs(l - door) < 1.4)) continue
+      if (out.some((o) => o.side === side && x0 < o.x1 + 1.5 && x1 > o.x0 - 1.5)) continue
+      out.push({ x0, x1, side, for: 'door' })
+    }
+  }
+  return out
+}
+
+/** Which kerb a point on the ground is on the pavement of, and how far out from that kerb. */
+export function pavementAt(z: number): { side: 'far' | 'near'; past: number } {
+  const across = z - STREET_Z
+  return { side: across < 0 ? 'far' : 'near', past: Math.abs(across) - ROAD }
+}
+
+/** Whether a point on the ground is over the ariq's open water, with no slab over it. */
+export function inTheAriq(x: number, z: number, slabs: readonly AriqSlab[]): boolean {
+  const { side, past } = pavementAt(z)
+  if (past <= ARIQ.inner || past >= ARIQ.outer || x < PAVED_FROM || x > CITY_UNTIL + 20) return false
+  return !slabs.some((s) => s.side === side && x >= s.x0 && x <= s.x1)
+}
+
+// -------------------------------------------------------- street furniture
+
+/**
+ * The bus shelter, on the slabs over the ariq at the stop: open to the road,
+ * glass at the back and the ends, a roof that reaches out over the kerb and
+ * a bench along the back. Its front and back as distances out from the kerb.
+ */
+export const SHELTER = { x: BUS_STOP.x, half: 2.9, front: 0.55, back: 1.92, height: 2.6 } as const
+
+/** The metro: a pylon with an M on it, at the corner of the square nearest the crossing. */
+export const METRO = { x: 384.2, z: FRONT_FAR - 2.6, height: 6.4, width: 1.1 } as const
+
+/** Benches on the square, along its front and facing it: where, and which way their seats face (radians about y; 0 is +z). */
+export const BENCHES: readonly { x: number; z: number; turn: number }[] = [316.5, 326.5, 363.5, 373.5].map((x) => ({ x, z: FRONT_FAR - 3.3, turn: Math.PI }))
+
+/** Litter bins: by the bus stop, at the crossing, by the benches, and here and there in the near kerb's strip. */
+export const BINS: readonly (readonly [number, number])[] = [
+  [SHELTER.x + SHELTER.half + 1.2, STREET_Z - ROAD - 0.85],
+  [CROSSWALK.x - CROSSWALK.half - 1.9, STREET_Z - ROAD - 0.85],
+  [321.5, FRONT_FAR - 3.3],
+  [368.5, FRONT_FAR - 3.3],
+  [312, STREET_Z + ROAD + 0.85],
+  [364, STREET_Z + ROAD + 0.85],
+]
+
+/**
+ * A low fence down the middle of the road, the length of the street, with a
+ * gap where the crossing is and a little either side of it.
+ */
+export const FENCE = {
+  from: PAVED_FROM + 10,
+  until: CITY_UNTIL + 14,
+  gap: [CROSSWALK.x - CROSSWALK.half - CROSSWALK.stop - 1.2, CROSSWALK.x + CROSSWALK.half + CROSSWALK.stop + 1.2] as const,
+  height: 0.92,
+  post: 2.4,
+} as const

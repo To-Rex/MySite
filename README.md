@@ -834,7 +834,43 @@ across the street, where the fronts are, and pushed out over the road, as it is
 drawn. And a tree brings its ground with it — the square of earth it stands in,
 and the shade of its crown and trunk, multiplied into whatever is paved there —
 so the street's shader does not know where the trees are, and one planted
-anywhere `treeSpots()` says has both.
+anywhere `treeSpots()` says has both. Where there is a map of the sun's shadow
+the trees cast into it instead, and the overlay keeps only the sky a crown
+hides; on the lowest setting, with no map, it draws the shadow itself. What a
+crown casts is not its cards — thousands of them one in front of another, every
+one drawn into the map — but the mass inside it, grown and swayed as the crown
+is, pushed out to where the leaves are, frayed at its outline and holed where
+the sun comes through: drawing the cards into the map cost three milliseconds a
+frame at twice the screen's resolution. And only while the sun is up: by night
+the street is lit by its lamps, and the map is drawn every frame regardless.
+
+**The street level** is Tashkent's as well. Along each kerb runs an ariq, the
+concrete channel the city's water goes down, with the trees and the lamp posts
+on its road side and the pavement people walk on beyond it. It is not built:
+the pavement is one flat sheet, and where the channel is, the ray from the eye
+is carried on down into it — as it is into the rooms behind the windows — to
+whichever of its two sides or the water it reaches first. The water is slow and
+murky, a dull mirror for the slot of sky the channel lets it see, a smear for
+each lamp at night, with a leaf or two going down on it. Slabs are laid over it
+where a way crosses it: the length of the crossing on both kerbs and a little
+back along the near one, where the walk comes up to the kerb on the slant; the
+length of the bus stop; and now and then at a shop's door (`ariqSlabs()`).
+`tests/unit/street.test.ts` walks the camera along and fails if it ever puts a
+foot in the water. The sun's shadow, which three's own materials take by
+themselves, reaches the ground of the street, the floor of the square and the
+mosque through `evoSunShadow.ts`: it finds the light that casts the shadow the
+first time one of them is drawn, and from then on hands them its map and matrix
+just before each draw, soft at the edges and faded out at the rim of the box
+the map covers. Where there is no map, the samplers are handed a depth texture
+of one texel — a shadow sampler with nothing proper bound to it stops the draw
+on some graphics cards whether or not it is ever read. The foot of every front
+sees less of the sky, so the pavement darkens towards the walls. And what stands
+about is in `evoFurniture.ts`: a glass bus shelter at the stop on the slabs, with
+its board and its routes lit at night; the metro's M on a pylon at the corner of
+the square nearest the crossing, in the sightline test with the trees; benches
+on the square, bins, and a low railing down the middle of the road with a gap
+for the crossing. The street's lamps light all of it, worked out from where
+they stand, as they light the ground.
 
 **The traffic** (`evoCarShapes.ts`, `evoTraffic.ts`, `evoCars.ts`) is five
 bodies and a rule for driving them. A body is lofted, not modelled: its side

@@ -12,6 +12,7 @@ import {
   HOTEL,
   LAMP_GAP,
   LANTERNS,
+  METRO,
   MOSQUE,
   PLAZA,
   ROAD,
@@ -329,6 +330,15 @@ describe('the trees', () => {
           const under = Math.min(y0, y1) > TREE_CROWN.top * tree.scale
           const over = Math.max(y0, y1) < TREE_CROWN.from * tree.scale
           expect(under || over, `the tree at ${tree.x},${tree.z} in front of ${sight.name} at ${p}`).toBe(true)
+        }
+        // And what stands on the street, from the ground up: the line goes over it or past it.
+        for (const thing of [{ name: 'the metro', x: METRO.x, z: METRO.z, r: METRO.width * 0.72, top: METRO.height }]) {
+          const t = ((thing.x - shot.x) * dx + (thing.z - shot.z) * dz) / (across * across)
+          const off = Math.abs((thing.x - shot.x) * dz - (thing.z - shot.z) * dx) / across
+          if (off >= thing.r || t <= 0 || t >= 1) continue
+          const half = Math.sqrt(thing.r * thing.r - off * off) / across
+          const y = shot.y + (sight.y - shot.y) * Math.max(0, t - half)
+          expect(y, `${thing.name} in front of ${sight.name} at ${p}`).toBeGreaterThan(thing.top)
         }
         looked++
       }

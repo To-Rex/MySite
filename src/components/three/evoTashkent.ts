@@ -15,6 +15,7 @@ import {
 } from 'three'
 import { AIR_PARS, EVO_NOISE, type Air } from './evoAir'
 import { CITY_LIGHT_GLSL, FLAG, FOUNTAIN, HOTEL, LAMP_GAP, MOSQUE, ROAD, STREET_GLSL, STREET_Z, TV_TOWER, crossingHeld } from './evoStreet'
+import { SUN_SHADOW_GLSL, createSunShadow } from './evoSunShadow'
 import type { Beat, Part } from './evoWalk'
 
 /**
@@ -482,7 +483,20 @@ const MASS_VERT = /* glsl */ `
   }
 `
 
+/** The same rise for the sun's shadow map, so a dome on its way up casts the shadow of where it is. */
+const MASS_DEPTH_VERT = /* glsl */ `
+  attribute vec4 aGrow;
+  uniform float uCity;
+  void main() {
+    float rise = smoothstep(aGrow.z, aGrow.z + aGrow.w, uCity);
+    vec3 at = position;
+    at.y -= (1.0 - rise) * aGrow.y;
+    gl_Position = projectionMatrix * viewMatrix * vec4(at, 1.0);
+  }
+`
+
 const MASS_FRAG = /* glsl */ `
+  #define EVO_FRAGMENT
   uniform float uHeld;
   varying vec3 vNormal;
   varying vec4 vSurface;
@@ -490,6 +504,14 @@ const MASS_FRAG = /* glsl */ `
   varying vec3 vTint;
   varying float vRise;
   ${LIGHT_PARS}
+  ${SUN_SHADOW_GLSL}
+
+  // The part of what 'evoDaylight' gives that is the sun's, to take back where it is in shadow.
+  vec3 evoSunPart(vec3 albedo, vec3 n, vec3 view, float gloss) {
+    float sunward = max(dot(n, uLightDir), 0.0);
+    vec3 halfway = normalize(uLightDir - view);
+    return albedo * DAY * uLight * sunward + uLight * pow(max(dot(n, halfway), 0.0), mix(18.0, 260.0, gloss)) * gloss * 0.4 * step(0.001, sunward);
+  }
 
   const vec3 MARBLE = ${glsl(MARBLE)};
   const vec3 GRANITE = ${glsl(GRANITE)};
@@ -838,6 +860,8 @@ const MASS_FRAG = /* glsl */ `
     }
 
     vec3 lit = evoDaylight(albedo, n, view, gloss, occ);
+    // The minarets on the hall, the portal on the dome, and all of it on the square.
+    if (uSunShadowInfo.x > 0.5 && uSunDir.y > 0.0 && dot(n, uLightDir) > 0.0) lit -= evoSunPart(albedo, n, view, gloss) * (1.0 - evoSunSeen(vEvoWorld, n));
     if (uLamps > 0.001) {
       vec3 night;
       float up = max(vEvoWorld.y, 0.0);
@@ -1215,8 +1239,18 @@ export function createTashkent(air: Air): Part {
   }
 
   // ---- what stands still ---------------------------------------------------
-  const massMaterial = keep(new ShaderMaterial({ uniforms: { ...shared, uHeld: held }, vertexShader: MASS_VERT, fragmentShader: `${AIR_PARS}\n${MASS_FRAG}` }))
-  add(new Mesh(keep(buildTashkent().geometry()), massMaterial))
+  // Taking the sun's shadow and casting one: the minarets' and the mosque's across the square.
+  const sunShadow = createSunShadow()
+  const massMaterial = keep(new ShaderMaterial({ uniforms: { ...shared, ...sunShadow.uniforms, uHeld: held }, vertexShader: MASS_VERT, fragmentShader: `${AIR_PARS}\n${MASS_FRAG}` }))
+  const masses = add(new Mesh(keep(buildTashkent().geometry()), massMaterial))
+  masses.castShadow = true
+  // Into the map only while the sun is up: by night what lights the square is its lanterns and floodlights.
+  masses.onBeforeRender = () => {
+    masses.castShadow = shared.uSunDir.value.y > 0
+  }
+  masses.customDepthMaterial = keep(new ShaderMaterial({ uniforms: { uCity: shared.uCity }, vertexShader: MASS_DEPTH_VERT, fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }' }))
+  sunShadow.bind(masses)
+  disposers.push(() => sunShadow.dispose())
 
   // ---- the flag ------------------------------------------------------------
   const cloth = keep(new PlaneGeometry(FLAG.length, FLAG_HEIGHT, 36, 10))

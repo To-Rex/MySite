@@ -22,6 +22,7 @@ import { createGrass } from './evoGrass'
 import { createStudio } from './evoStudio'
 import { createTashkent } from './evoTashkent'
 import { createTrees } from './evoTrees'
+import { createFurniture } from './evoFurniture'
 import { createAir, makeRangeMaterial, makeSkyMaterial, type Air, type Arrivals } from './evoAir'
 import { buildLand, buildRange, groundAt } from './evoLand'
 import { createLandUniforms, makeLandMaterial, type LandUniforms } from './evoMaterials'
@@ -231,6 +232,7 @@ export function createWalk(quality: ValleyQuality): Walk {
     createCity(air, { bump: q.bump, shadows }),
     createTashkent(air),
     createTrees(air, { leaves: q.leaves }),
+    createFurniture(air, { shadows }),
     createCars(air, { shadows, cars: q.cars }),
     createPassers(air, q.people, q.bump, shadows, q.coat),
     studio,

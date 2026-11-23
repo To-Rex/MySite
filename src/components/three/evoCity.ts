@@ -40,6 +40,8 @@ import {
   TOWER_SEEN_FROM,
   TV_TOWER,
 } from './evoStreet'
+import { ARIQ, ariqSlabs, type AriqSlab, type FrontBlock } from './evoStreet'
+import { SUN_SHADOW_GLSL, createSunShadow } from './evoSunShadow'
 import { BUMP, LIN } from './evoMaterials'
 import { BRICK, PANEL, RENDER, SHOP, STYLE, type Tower } from './evoFacade'
 import { createRelief } from './evoRelief'
@@ -891,24 +893,75 @@ const BUILDING_FRAG_PARS = /* glsl */ `
 `
 
 /**
+ * Stretches of a kerb, as GLSL: an array of (from, to, side) and its length,
+ * side -1 for the far kerb and 1 for the near. Never empty: GLSL has no
+ * arrays of nothing, so an empty list is one stretch nowhere.
+ */
+function stretches(name: string, list: readonly { x0: number; x1: number; side: 'far' | 'near' }[]): string {
+  const rows = list.length > 0 ? list : [{ x0: -1e4, x1: -1e4, side: 'far' as const }]
+  const items = rows.map((r) => `vec3(${r.x0.toFixed(2)}, ${r.x1.toFixed(2)}, ${r.side === 'far' ? '-1.0' : '1.0'})`).join(', ')
+  return `const int ${name}_COUNT = ${rows.length};\n  const vec3 ${name}[${rows.length}] = vec3[](${items});`
+}
+
+/** Where the fronts stand right on the pavement, kerb by kerb, joined where they touch. */
+function frontsAlong(blocks: readonly FrontBlock[]): { x0: number; x1: number; side: 'far' | 'near' }[] {
+  const out: { x0: number; x1: number; side: 'far' | 'near' }[] = []
+  for (const side of ['far', 'near'] as const) {
+    const runs = blocks
+      .filter((b) => Math.abs(b.yaw) < 1e-6 && Math.abs(side === 'far' ? b.z + b.d / 2 - FRONT_FAR : b.z - b.d / 2 - FRONT_NEAR) < 0.6)
+      .map((b) => [b.x - b.w / 2, b.x + b.w / 2] as [number, number])
+      .sort((u, v) => u[0] - v[0])
+    for (const [x0, x1] of runs) {
+      const last = out[out.length - 1]
+      // A passage between two blocks narrower than a person is no gap at the foot of the wall.
+      if (last && last.side === side && x0 <= last.x1 + 0.8) last.x1 = Math.max(last.x1, x1)
+      else out.push({ x0, x1, side })
+    }
+  }
+  return out
+}
+
+/**
  * The ground of the street: the road with its paint and its crossing, and the
  * pavements either side in the small grey setts the city lays, with a band of
- * red ones along the kerb and a square of earth round every tree.
+ * red ones along the kerb.
+ *
+ * And the ariq along each kerb, which is not there at all: the pavement is
+ * one flat sheet, and where the channel is the ray from the eye is carried
+ * on down into it, to whichever of its two concrete sides or the water it
+ * meets first — the way the rooms behind the windows are drawn. The water
+ * shows what is over it: the sky, the slot of sky the channel lets it see,
+ * the lamps at night; and carries a leaf or two down the street.
+ *
+ * The sun's shadow, where there is a map of it; and the sky's light less where
+ * a front stands over the pavement, so the foot of every wall is darker.
  */
-const STREET_FRAG = /* glsl */ `
+function streetFragment(slabs: readonly AriqSlab[], fronts: readonly { x0: number; x1: number; side: 'far' | 'near' }[]): string {
+  return /* glsl */ `
+  #define EVO_FRAGMENT
   uniform float uLamps;
   uniform float uCity;
   uniform vec3 uLight;
   uniform vec3 uAmbient;
   uniform float uTime;
+  uniform vec3 uZenith;
+  uniform vec3 uHorizon;
   varying vec3 vWorld;
   ${EVO_NOISE}
   ${STREET_GLSL}
+  ${SUN_SHADOW_GLSL}
 
   const float CROSS_X = ${CROSSWALK.x.toFixed(2)};
   const float CROSS_HALF = ${CROSSWALK.half.toFixed(2)};
   const float CROSS_STOP = ${CROSSWALK.stop.toFixed(2)};
   const vec2 PLAZA_X = vec2(${PLAZA.x0.toFixed(1)}, ${PLAZA.x1.toFixed(1)});
+  const float ARIQ_IN = ${ARIQ.inner.toFixed(3)};
+  const float ARIQ_OUT = ${ARIQ.outer.toFixed(3)};
+  const float ARIQ_LIP = ${ARIQ.lip.toFixed(3)};
+  const float ARIQ_WATER = ${ARIQ.water.toFixed(3)};
+  const float ARIQ_SLAB = ${ARIQ.slab.toFixed(3)};
+  ${stretches('SLABS', slabs)}
+  ${stretches('FRONTS', fronts)}
 
   vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
 
@@ -923,6 +976,144 @@ const STREET_FRAG = /* glsl */ `
     return vec3(1.0, 0.78, 0.5) * (fall * 62.0 + spec);
   }
 
+  // The stretch of a kerb's list that 'x' is in, as (from, to), or none.
+  vec2 evoSlabAt(float x, float side) {
+    for (int i = 0; i < SLABS_COUNT; i++) {
+      vec3 s = SLABS[i];
+      if (s.z == side && x >= s.x && x <= s.y) return s.xy;
+    }
+    return vec2(1e5);
+  }
+  bool evoFrontAt(float x, float side) {
+    for (int i = 0; i < FRONTS_COUNT; i++) {
+      vec3 s = FRONTS[i];
+      if (s.z == side && x >= s.x && x <= s.y) return true;
+    }
+    return false;
+  }
+
+  vec3 evoSkyIn(vec3 dir) {
+    return mix(uHorizon, uZenith, clamp(dir.y * 1.4 + 0.15, 0.0, 1.0));
+  }
+
+  // What the eye sees down the open ariq through the point 'at' on the
+  // pavement's level: a side of it, or the water. 'side' -1 for the far kerb.
+  vec3 evoAriq(vec3 at, float side, vec3 view) {
+    float zA = STREET_Z + side * (ROAD + ARIQ_IN);
+    float zB = STREET_Z + side * (ROAD + ARIQ_OUT);
+    float zLo = min(zA, zB);
+    float zHi = max(zA, zB);
+    float top = at.y;
+    float water = top - ARIQ_WATER;
+    float tW = view.y < -1e-4 ? (water - top) / view.y : 1e4;
+    float tZ = abs(view.z) > 1e-5 ? ((view.z > 0.0 ? zHi : zLo) - at.z) / view.z : 1e4;
+    bool wall = tZ < tW;
+    vec3 hit = at + view * min(tZ, tW);
+    vec3 sky = uAmbient;
+    vec3 concrete = lin(vec3(0.5, 0.49, 0.45)) * (0.88 + 0.2 * evoNoise(vec2(hit.x * 2.1, hit.y * 4.0 + side * 5.0)));
+
+    // Under a slab: the ray went in at its end. It meets the end of the slab
+    // itself if it went in high enough, and otherwise what it reaches is in
+    // the dark under it.
+    vec2 slab = evoSlabAt(hit.x, side);
+    if (slab.x < 1e4) {
+      float edge = view.x > 0.0 ? slab.x : slab.y;
+      float yEdge = top + (edge - at.x) / view.x * view.y;
+      if (abs(view.x) > 1e-4 && yEdge > top - ARIQ_SLAB) {
+        vec3 face = lin(vec3(0.46, 0.45, 0.42)) * (0.8 + 0.3 * evoNoise(vec2(at.z * 20.0, yEdge * 30.0)));
+        return face * (sky * 0.5 + uLight * max(-sign(view.x) * uSunDir.x, 0.0) * 0.6);
+      }
+      return (wall ? concrete : lin(vec3(0.1, 0.1, 0.06))) * sky * 0.05;
+    }
+
+    if (wall) {
+      // A side: darker the further down, and green and wet at the water.
+      float down = top - hit.y;
+      float wet = smoothstep(ARIQ_WATER - 0.09, ARIQ_WATER - 0.01, down);
+      vec3 albedo = mix(concrete, lin(vec3(0.16, 0.19, 0.1)), wet * 0.85) * mix(1.0, 0.55, smoothstep(0.0, 0.05, down) * (1.0 - smoothstep(0.05, 0.1, down)) * 0.4);
+      vec3 n = vec3(0.0, 0.0, -sign(view.z));
+      float open = mix(0.75, 0.18, down / ARIQ_WATER);
+      // The sun on it, if the other side does not stand in the way.
+      float sun = max(dot(n, uSunDir), 0.0);
+      if (sun > 0.0 && uSunDir.y > 0.01) {
+        float up = (top - hit.y) / uSunDir.y;
+        float zOut = hit.z - n.z * 1e-3 + uSunDir.z * up;
+        vec3 out_ = vec3(hit.x + uSunDir.x * up, top, zOut);
+        sun *= step(zLo - 1e-3, zOut) * step(zOut, zHi + 1e-3) * evoSunSeen(out_, vec3(0.0, 1.0, 0.0));
+      }
+      vec3 lit = albedo * (sky * open + uLight * sun);
+      if (uLamps > 0.001) {
+        float nearest = floor(hit.x / LAMP_GAP + 0.5) * LAMP_GAP;
+        vec3 glow = lampOn(hit, n, view, vec3(nearest, LAMP_HEIGHT, STREET_Z - ROAD + LAMP_REACH), 0.0) + lampOn(hit, n, view, vec3(nearest + LAMP_GAP * 0.5, LAMP_HEIGHT, STREET_Z + ROAD - LAMP_REACH), 0.0);
+        lit += albedo * glow * uLamps * 0.42 * open;
+      }
+      return lit;
+    }
+
+    // The water: slow, the colour of what it has come down off the hills
+    // with, and wrinkled by its going.
+    float flow = uTime * 0.16;
+    vec2 w = vec2(hit.x - flow, hit.z);
+    // Wrinkles, not waves: two scales of noise drifting with it, and the
+    // slope of each worked out from the noise itself.
+    vec2 g = w * vec2(2.6, 9.0) + vec2(0.0, uTime * 0.13);
+    float e = 0.15;
+    float c0 = evoNoise(g) + 0.5 * evoNoise(g * 2.3 + 17.0);
+    float cx = evoNoise(g + vec2(e, 0.0)) + 0.5 * evoNoise((g + vec2(e, 0.0)) * 2.3 + 17.0);
+    float cz = evoNoise(g + vec2(0.0, e)) + 0.5 * evoNoise((g + vec2(0.0, e)) * 2.3 + 17.0);
+    vec3 n = normalize(vec3((c0 - cx) * 0.09, 1.0, (c0 - cz) * 0.05));
+    vec3 bounce = reflect(view, n);
+    // Murky water is a dull mirror: it gives back less of the sky than clear water does.
+    float fresnel = 0.02 + 0.6 * pow(1.0 - max(dot(-view, n), 0.0), 5.0);
+    // What the water shows: the sky, if the reflected ray gets out of the
+    // channel; the inside of the far side of it, if not.
+    float rise = (top - hit.y) / max(bounce.y, 1e-3);
+    float zOut = hit.z + bounce.z * rise;
+    float clear = step(zLo, zOut) * step(zOut, zHi);
+    vec3 shown = mix(concrete * sky * 0.2, evoSkyIn(bounce) * 0.85, clear);
+    float sunlit = 1.0;
+    if (uSunDir.y > 0.01) {
+      float up = (top - hit.y) / uSunDir.y;
+      float zSun = hit.z + uSunDir.z * up;
+      sunlit = step(zLo, zSun) * step(zSun, zHi) * evoSunSeen(vec3(hit.x + uSunDir.x * up, top, zSun), vec3(0.0, 1.0, 0.0));
+    }
+    vec3 murk = lin(vec3(0.17, 0.16, 0.09)) * (sky * 0.45 + uLight * max(uSunDir.y, 0.0) * sunlit * 0.35);
+    vec3 lit = mix(murk, shown, fresnel);
+    lit += uLight * pow(max(dot(bounce, uSunDir), 0.0), 900.0) * 3.0 * sunlit * clear;
+    if (uLamps > 0.001) {
+      // The lamps over it: each a small bright thing, broken by the wrinkles
+      // into a smear along the water.
+      vec3 glint = vec3(0.0);
+      float nearest = floor(hit.x / LAMP_GAP + 0.5) * LAMP_GAP;
+      for (int i = -1; i <= 1; i++) {
+        float lx = nearest + float(i) * LAMP_GAP;
+        vec3 ta = vec3(lx, LAMP_HEIGHT, STREET_Z - ROAD + LAMP_REACH) - hit;
+        vec3 tb = vec3(lx + LAMP_GAP * 0.5, LAMP_HEIGHT, STREET_Z + ROAD - LAMP_REACH) - hit;
+        glint += pow(max(dot(bounce, normalize(ta)), 0.0), 1800.0) / (1.0 + dot(ta, ta) * 0.01);
+        glint += pow(max(dot(bounce, normalize(tb)), 0.0), 1800.0) / (1.0 + dot(tb, tb) * 0.01);
+      }
+      // And the lit shop windows, low across it.
+      float shops = bounce.z * side > 0.0 ? (1.0 - smoothstep(0.02, 0.12, bounce.y)) : 0.0;
+      lit += (vec3(1.0, 0.78, 0.5) * glint * 6.0 + vec3(1.0, 0.82, 0.6) * shops * 0.12) * uLamps * clear;
+    }
+    // Leaves going down on it, a hand apart at their closest.
+    float lane = floor(w.x / 0.62);
+    float h = evoHash(vec2(lane, side * 13.0 + 7.0));
+    if (h < 0.24) {
+      float h2 = fract(h * 91.7);
+      vec2 c = vec2((lane + 0.3 + 0.4 * h2) * 0.62, mix(zLo + 0.1, zHi - 0.1, fract(h * 47.3)));
+      float turn = h * 37.0;
+      vec2 d = vec2(w.x, w.y) - c;
+      d = vec2(cos(turn) * d.x + sin(turn) * d.y, cos(turn) * d.y - sin(turn) * d.x);
+      float leaf = length(d / vec2(0.055, 0.032)) - 1.0 + 0.25 * abs(sin(atan(d.y, d.x) * 2.5));
+      if (leaf < 0.0) {
+        vec3 tint = mix(lin(vec3(0.5, 0.36, 0.12)), lin(vec3(0.42, 0.45, 0.16)), fract(h * 13.1));
+        lit = tint * (sky * 0.5 + uLight * max(uSunDir.y, 0.0) * sunlit * 0.8);
+      }
+    }
+    return lit;
+  }
+
   void main() {
     vec3 at = vWorld;
     float across = at.z - STREET_Z;
@@ -933,6 +1124,13 @@ const STREET_FRAG = /* glsl */ `
     float n3 = evoFbm(at.xz * 0.11);
     bool road = abs(across) < ROAD;
     float far = length(at - cameraPosition);
+    vec3 view = normalize(at - cameraPosition);
+    float side = across < 0.0 ? -1.0 : 1.0;
+    float past = abs(across) - ROAD;
+    // The sun, where nothing stands between — asked only while it is up.
+    float seen = uSunDir.y > 0.0 && dot(uLight, vec3(1.0)) > 0.02 ? evoSunSeen(at, vec3(0.0, 1.0, 0.0)) : 1.0;
+    // The sky, less of it at the foot of a front.
+    float open = 1.0;
 
     vec3 color;
     float gloss;
@@ -957,8 +1155,17 @@ const STREET_FRAG = /* glsl */ `
       // Puddles in the low places.
       gloss = smoothstep(0.52, 0.72, n3 + n1 * 0.12) * 0.9 + 0.12;
     } else {
+      // The ariq: open water between its two lips, or a slab over it.
+      bool ariq = past > ARIQ_IN - ARIQ_LIP && past < ARIQ_OUT + ARIQ_LIP;
+      bool covered = ariq && evoSlabAt(at.x, side).x < 1e4;
+      if (!covered && past > ARIQ_IN && past < ARIQ_OUT) {
+        vec3 lit = evoAriq(at, side, view);
+        gl_FragColor = vec4(evoAir(lit), 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        return;
+      }
       // Setts, laid in courses a hand long: grey, and red in a band along the kerb.
-      float past = abs(across) - ROAD;
       vec2 sett = at.xz / vec2(0.2, 0.1);
       sett.x += floor(sett.y) * 0.5;
       float fade = 1.0 - smoothstep(9.0, 26.0, far);
@@ -973,15 +1180,32 @@ const STREET_FRAG = /* glsl */ `
       // (The square of earth round each tree is the tree's own: 'evoTrees.ts'
       // lays it, and the shade under the crown, wherever it stands one.)
       gloss = smoothstep(0.6, 0.8, n3) * 0.5 + 0.05;
+      // The ariq's concrete: its two lips, or the slab laid over it, in
+      // lengths with a dark joint between them and stained where feet go.
+      if (ariq) {
+        vec3 cast_ = lin(vec3(0.6, 0.59, 0.55)) * (0.86 + 0.22 * n2);
+        if (covered) {
+          float seam = 1.0 - smoothstep(0.0, 0.02, abs(fract(at.x / 1.2 + 0.5) - 0.5) * 1.2);
+          cast_ *= (1.0 - 0.45 * seam * fade) * (0.9 + 0.15 * evoNoise(at.xz * 2.2));
+        } else {
+          // The edge over the water is worn round and dark.
+          float rim = min(abs(past - ARIQ_IN), abs(past - ARIQ_OUT));
+          cast_ *= 0.7 + 0.3 * smoothstep(0.0, 0.025, rim);
+        }
+        color = cast_;
+        gloss = 0.08;
+      }
+      // At the foot of a front, it sees less of the sky.
+      float toFront = PAVEMENT - past;
+      if (toFront < 1.4 && evoFrontAt(at.x, side)) open = mix(0.5, 1.0, smoothstep(0.0, 1.4, toFront));
     }
 
     vec3 normal = normalize(vec3((n2 - 0.5) * 0.1 * (1.0 - gloss), 1.0, (evoNoise(at.xz * 6.0 + 31.0) - 0.5) * 0.1 * (1.0 - gloss)));
-    vec3 view = normalize(at - cameraPosition);
 
     // Daylight, such as there is.
-    vec3 lit = color * (uAmbient + uLight * max(dot(normal, uSunDir), 0.0));
+    vec3 lit = color * (uAmbient * open + uLight * max(dot(normal, uSunDir), 0.0) * seen);
     vec3 hSun = normalize(uSunDir - view);
-    lit += uLight * pow(max(dot(normal, hSun), 0.0), mix(30.0, 300.0, gloss)) * gloss * 0.6;
+    lit += uLight * pow(max(dot(normal, hSun), 0.0), mix(30.0, 300.0, gloss)) * gloss * 0.6 * seen;
 
     // The lamps: the two nearest either side, on both kerbs.
     if (uLamps > 0.001) {
@@ -1004,6 +1228,7 @@ const STREET_FRAG = /* glsl */ `
     #include <colorspace_fragment>
   }
 `
+}
 
 /**
  * The floor of the square: pale stone in big slabs, with a star of darker
@@ -1011,6 +1236,7 @@ const STREET_FRAG = /* glsl */ `
  * mosque upside down in it once it is dark.
  */
 const PLAZA_FRAG = /* glsl */ `
+  #define EVO_FRAGMENT
   uniform float uLamps;
   uniform float uCity;
   uniform vec3 uLight;
@@ -1019,6 +1245,7 @@ const PLAZA_FRAG = /* glsl */ `
   ${EVO_NOISE}
   ${STREET_GLSL}
   ${CITY_LIGHT_GLSL}
+  ${SUN_SHADOW_GLSL}
 
   vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
 
@@ -1074,9 +1301,11 @@ ${LAWNS.map((l) => `    bed = max(bed, min(min(at.x - ${l.x0.toFixed(1)}, ${l.x1
     vec3 view = normalize(at - cameraPosition);
     // Pale stone under an open sky: less of the light comes back off it than
     // off the setts, or at noon it is a sheet of white.
-    vec3 lit = color * 0.45 * (uAmbient + uLight * max(uSunDir.y, 0.0));
+    // The sun, where the mosque and its minarets, the trees and the people do not stand in the way.
+    float seen = uSunDir.y > 0.0 && dot(uLight, vec3(1.0)) > 0.02 ? evoSunSeen(at, normal) : 1.0;
+    vec3 lit = color * 0.45 * (uAmbient + uLight * max(uSunDir.y, 0.0) * seen);
     vec3 hSun = normalize(uSunDir - view);
-    lit += uLight * pow(max(hSun.y, 0.0), 220.0) * gloss * 0.5;
+    lit += uLight * pow(max(hSun.y, 0.0), 220.0) * gloss * 0.5 * seen;
     if (uLamps > 0.001) {
       vec3 glow = evoStreetLight(at, normal, 0.0) + evoLanternLight(at, normal, 0.0);
       // The mosque is floodlit, and the stone in front of it holds some of
@@ -1198,13 +1427,18 @@ export function createCity(air: Air, options: CityOptions): Part {
   const length = STREET_LENGTH
   const streetGeometry = new PlaneGeometry(length, (ROAD + PAVEMENT) * 2, 1, 1)
   streetGeometry.rotateX(-Math.PI / 2)
+  // The ground takes the sun's shadow, and knows where the ariq is bridged and where the fronts stand.
+  const sunShadow = createSunShadow()
   const streetMaterial = new ShaderMaterial({
     uniforms: {
       ...shared,
+      ...sunShadow.uniforms,
       uHaze: air.uHaze,
       uGlow: air.uGlow,
       uSunDir: air.uSunDir,
       uAir: air.uAir,
+      uZenith: air.uZenith,
+      uHorizon: air.uHorizon,
       uLight: { value: new Color() },
       uAmbient: { value: new Color() },
     },
@@ -1217,11 +1451,13 @@ export function createCity(air: Air, options: CityOptions): Part {
         gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
       }
     `,
-    fragmentShader: `${AIR_PARS}\n${STREET_FRAG}`,
+    fragmentShader: `${AIR_PARS}\n${streetFragment(ariqSlabs(blocks), frontsAlong(blocks))}`,
   })
   const street = new Mesh(streetGeometry, streetMaterial)
   street.position.set(PAVED_FROM + length / 2, 0.06, STREET_Z)
   street.frustumCulled = false
+  sunShadow.bind(street)
+  disposers.push(() => sunShadow.dispose())
   root.add(street)
   disposers.push(
     () => streetGeometry.dispose(),
@@ -1235,6 +1471,7 @@ export function createCity(air: Air, options: CityOptions): Part {
     new ShaderMaterial({
       uniforms: {
         ...shared,
+        ...sunShadow.uniforms,
         uHaze: air.uHaze,
         uGlow: air.uGlow,
         uSunDir: air.uSunDir,
@@ -1251,6 +1488,7 @@ export function createCity(air: Air, options: CityOptions): Part {
   const plaza = new Mesh(plazaGeometry, plazaMaterial)
   plaza.position.set((PLAZA.x0 + PLAZA.x1) / 2, 0.065, (PLAZA.front + PLAZA.back) / 2)
   plaza.frustumCulled = false
+  sunShadow.bind(plaza)
   root.add(plaza)
   // Its lanterns: a post, and a globe on it.
   const postGeometry = new CylinderGeometry(0.05, 0.08, LANTERN_HEIGHT, 6)
