@@ -236,6 +236,9 @@ export const en: Dictionary = {
     nav: 'Pages',
     connect: 'Connect',
     preferences: 'Preferences',
+    models: '3D car models',
+    by: 'by',
+    changed: 'simplified, with the badges and number plates taken off',
   },
   theme: {
     label: 'Theme',

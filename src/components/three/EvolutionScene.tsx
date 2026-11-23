@@ -104,7 +104,7 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
       walk.rehearse(() => built.push(gl.compileAsync(object, camera, scene).catch(() => undefined)))
       gl.setRenderTarget(null)
       pending++
-      void Promise.all(built).then(() => {
+      return Promise.all(built).then(() => {
         // Not until the last of them is in: drawing with a program that is
         // still being built is waiting for it, on the main thread.
         if (--pending === 0) warm()

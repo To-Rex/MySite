@@ -59,7 +59,8 @@ export interface Air {
  * it appears, which is a stall in the middle of somebody's scroll.
  */
 export interface Arrivals {
-  arrived?: (object: Object3D) => void
+  /** Compiles what has arrived, where that is done ahead; done when the promise is. */
+  arrived?: (object: Object3D) => Promise<unknown> | void
 }
 
 export function createAir(): Air & Arrivals {

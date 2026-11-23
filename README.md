@@ -872,34 +872,113 @@ on the square, bins, and a low railing down the middle of the road with a gap
 for the crossing. The street's lamps light all of it, worked out from where
 they stand, as they light the ground.
 
-**The traffic** (`evoCarShapes.ts`, `evoTraffic.ts`, `evoCars.ts`) is five
-bodies and a rule for driving them. A body is lofted, not modelled: its side
-view and its plan are a handful of points each, and every cross-section has the same
-thirty points in the same order, so a bonnet is a cabin whose roof has come down
-to its belt line and one function makes a hatchback and a bus. Sections are put
+**The traffic** (`evoCarShapes.ts`, `evoTraffic.ts`, `evoCars.ts`, `evoCarText.ts`,
+`src/content/carModels.ts`, `public/models/cars/`) is what a street in Tashkent is full
+of, in the proportions it is: the tall Cobalt sedan, a quarter of everything; the
+square Nexia; the smooth Gentra; the Matiz; the Damas microvan, half of them
+minibuses on routes with a number card behind the windscreen; the BYD crossovers
+that arrived in 2023; the Malibu; the Zhiguli, twin round lamps or square ones,
+chrome bumpers and fifty summers on the paint; a few other crossovers and the
+city's lime-green buses that run on gas. Six in ten are white. The names are in
+identifiers and comments only: nothing drawn says one — no badges, a plain blank
+where a badge would be, plates with the country's layout and made-up numbers — and
+a test reads every string the traffic draws for them.
+
+A car is one of two things. Where somebody has modelled it well and published the
+model under CC BY 4.0, it is that model: the Nexia, the Damas, the Matiz, the Malibu,
+and the Zhiguli in both its faces, the 2106 and the 2107 — those whose files are in
+`public/models/cars/`. `src/content/carModels.ts` names each one, who made it and
+where it is, and the footer credits them with the licence and what was changed. A
+download is not used as it comes (the six weigh 96 MB as they come): each is
+prepared, outside the site, to one contract, which the walk relies on and
+`tests/unit/carModels.test.ts` reads every file for. The preparing is
+`tools/car-models/` — its own folder with its own dependencies, not part of the
+build — and it is deterministic: run on the same downloads it makes the shipped
+files byte for byte. Its README says where each download is from and how to run it. A gzipped binary glTF; metres;
++x forward, +y up (+z the car's right), the tyres on y = 0, x = 0 at the middle of
+the wheelbase. Four nodes — `body`, `wheel`, `body_far`, `wheel_far` — each with no
+more of a matrix than its quantization's scale and offset; the body a primitive to
+a material, the wheel one wheel about its own axle along z with its face out
+towards +z. Every material says what it is in its extras (`role`): `skin` (a body
+in its own picture, with a mask of where the paint is in its emissive picture and a
+gain that brings the paint's average shade up to one), `paint` (paint with no
+picture), `glass`, `chrome`, `trim`, `lamp_front`, `lamp_rear`, `lamp_turn`,
+`tyre`, `rim`, `wheel`, `cabin` (a dark box where an inside was taken out),
+`detail`. Badges, logos and the number plates gone; where the plates were, and the
+hubs, the wheel's radius, the car's measurements and its credit, in the scene's
+extras, the credit held by the test to the footer's. Under 10,500 triangles close
+up for the body and a wheel, under 2,700 far off; pictures WebP, no more than 512
+pixels a side; positions and normals quantized (`KHR_mesh_quantization`), texture
+coordinates squeezed into [0, 1] (`KHR_texture_transform`). Three reads all of that
+with no decoder — the CSP allows no WebAssembly, so Draco, meshopt compression and
+KTX2 are out. A file is a few hundred kilobytes, gzipped; the test holds each to
+450 kB and all of them to 2.2 MB.
+
+In the walk the models come after everything else: once the walk is made, in time
+the page has nothing else to do, one at a time. Each file is fetched, opened with
+`DecompressionStream` (unless the first two bytes say whatever served it opened it
+already; with no `DecompressionStream`, the walk's own car stays) and read by a
+`GLTFLoader` in a chunk of its own (`vite.config.ts`: in three's, every page with
+anything 3D on it would carry it), imported only by the walk, its pictures decoded
+off the main thread (`ImageBitmap`, which reads each back from a `blob:` URL — hence
+`blob:` in `connect-src`). The walk draws each role with its own material: a skin keeps its
+picture, and where the mask says paint, the picture's shade times the car's colour
+takes its place, so the dust and the rust stay where they are and a white car is
+white (the gain is the picture's, worked out on its stored sRGB values, and so is
+the shade it is multiplied with); lamps keep their pictures and are lit after dark
+and on the brake, the red of a tail lamp only; a wheel, a rim and the odds and ends
+keep theirs; glass the file made see-through stays tinted and see-through, over the
+inside that was kept or the dark box where it was taken out. A file can have thirty
+materials, and the walk draws most of them one way by role, so each node's
+primitives are merged by the material the walk draws them with — through their
+nodes' matrices, into plain metres — and a model is an instanced mesh to each of
+those, near and far, handed its cars each frame like the bodies. A car is put by the
+middle of its body, as the traffic puts it; the plates are ours, where the file says
+the model's were (or where the middle of each end stands furthest out, where it does
+not say); a minibus stands its route card just inside its windscreen; and a wheel on
+the left is the wheel turned round. Each model is built for
+every way the walk is lit and drawn once by the warm-ups while it is still out of
+sight, and only then is each car of its kind — or of its face — swapped for it,
+where nobody is looking: out of shot, or 70 m off. Until then the car's own lofted
+body stands in, and where WebGL is drawn by the CPU, where nothing is built ahead,
+nothing is loaded and it stays.
+
+Where there is no such model — the Cobalt, the Gentra, the BYD, the other
+crossovers, the bus — the body is lofted from photographs. Reference photographs
+come from Wikimedia Commons and stay out of the repository; the camera of each is
+solved from the wheels and the number plate, whose sizes are known, the body's
+points are read off on the car's own plane, and the body is drawn back into the
+photograph from that camera to check. A loft is made to the real car's length,
+width, height and wheelbase: its side view and plan are a handful of points, every
+cross-section has the same thirty points in the same order, and sections are put
 exactly where a window, a pillar or an arch starts and stops, so the edge of the
-glass is the edge of a face; anything smaller than a panel — lamps that come
-round the corners, the grille, the lines the doors shut on, the seats and the
-driver seen through the glass — is drawn on the skin from a few numbers. There
-is nothing for the paint to reflect, so it works out what it would see: the
-sky's gradient over the roofs, the lit shop fronts along each pavement (none
+glass is the edge of a face. Each end is closed by a shallow dome of rings, inside
+the real length, so that a nose runs on into its corners without an edge; a number
+plate goes on the skin where it is, found by casting along the body. It comes twice, as seen from close and with half the
+faces beyond about 25 m; the two meshes of each kind are handed just the cars they
+draw each frame. Anything smaller than a panel is drawn on the skin, from outlines
+read off the same photographs — each car's own lamps, grilles, chrome bumpers,
+rubbing strips, door lines, road dust low down, the seats and the driver seen
+through the glass. There is nothing for the paint to reflect, so it works out what
+it would see: the sky over the roofs, the lit shop fronts along each pavement (none
 where the far side is the square), and the six nearest street lamps from
 `STREET_GLSL`, the numbers the road is lit by, which is what slides a lamp over a
 bonnet and up a windscreen as the car passes under it. Lamps are brighter than
-white for the glow to find; where a frame gets no glow, a halo sees that from
-what it is being drawn into and stays. The plates have the country's layout and
-made-up numbers. The driving (the Intelligent Driver Model; a lane is a ring and
-nothing overtakes) keeps its own time and knows two things about the walk: the
-crossing's lights, from `crossingHeld`, and where the camera is. On amber a car
-that can pull up for the line does; on red nothing crosses it; and because a
-scroll can take the lights from red to "the stripes must be empty" in a tenth of
-a second, whatever is still on them is carried off in step with the change
-rather than left to drive. Nothing comes within 1.5 m of the camera — what is
-coming stops short of it, and a scroll that puts the camera down on a car moves
-the car — and a walk that steps into the road short of the line is waited for
-where it stepped out. `tests/unit/cars.test.ts` measures the bodies and drives
-the street for the best part of half an hour, a step at a time, asking all of
-that at every step.
+white for the glow to find; where a frame gets no glow, a halo sees that from what
+it is being drawn into and stays.
+
+The driving (the Intelligent Driver Model; a lane is a ring and nothing overtakes)
+keeps its own time and knows two things about the walk: the crossing's lights, from
+`crossingHeld`, and where the camera is. On amber a car that can pull up for the
+line does; on red nothing crosses it; and because a scroll can take the lights from
+red to "the stripes must be empty" in a tenth of a second, whatever is still on them
+is carried off in step with the change rather than left to drive. Nothing comes
+within 1.5 m of the camera, and a walk that steps into the road short of the line is
+waited for where it stepped out. Buses and minibuses — nothing else — pull in to the
+kerb at `BUS_STOP`, stand a while and pull out, and what is behind them waits.
+`tests/unit/cars.test.ts` measures every body against the car it is after, puts its
+wheels in its arches, and drives the street for the best part of an hour, a step at
+a time, asking all of that at every step.
 
 **The air** (`evoAir.ts`) has a sun that moves, so nothing about it is a
 constant and nothing is a module-level singleton either: `createAir()` makes

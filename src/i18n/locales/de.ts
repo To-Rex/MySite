@@ -236,6 +236,9 @@ export const de: Dictionary = {
     nav: 'Seiten',
     connect: 'Kontakt',
     preferences: 'Einstellungen',
+    models: '3D-Automodelle',
+    by: 'von',
+    changed: 'vereinfacht, Embleme und Kennzeichen entfernt',
   },
   theme: {
     label: 'Modus',

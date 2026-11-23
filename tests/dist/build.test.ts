@@ -108,7 +108,10 @@ describe('Content-Security-Policy', () => {
   })
 
   it('allows exactly the remote origins the app talks to', () => {
-    expect(directive('connect-src').split(' ').slice(1).sort()).toEqual(["'self'", 'https://api.github.com', 'https://github-contributions-api.jogruber.de'])
+    // blob: is not a remote origin: it is the car models' textures, read back by the model loader to be decoded off the main thread.
+    expect(directive('connect-src').split(' ').slice(1).sort()).toEqual(["'self'", 'blob:', 'https://api.github.com', 'https://github-contributions-api.jogruber.de'])
+    // And no WebAssembly: nothing the site loads needs a decoder.
+    expect(directive('script-src')).not.toContain('wasm-unsafe-eval')
     expect(directive('img-src')).toContain('https://avatars.githubusercontent.com')
     // The meshing worker is a same-origin module.
     expect(directive('worker-src')).toContain("'self'")

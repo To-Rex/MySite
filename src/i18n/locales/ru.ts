@@ -236,6 +236,9 @@ export const ru: Dictionary = {
     nav: 'Разделы',
     connect: 'Связь',
     preferences: 'Настройки',
+    models: '3D-модели автомобилей',
+    by: 'автор',
+    changed: 'упрощены, эмблемы и номерные знаки сняты',
   },
   theme: {
     label: 'Тема',

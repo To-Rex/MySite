@@ -32,6 +32,9 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined
           if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react'
+          // The loader the walk reads its car models with is a chunk of its own, fetched only by a
+          // walk that loads them: in three's chunk, every page with anything 3D on it would carry it.
+          if (id.includes('node_modules/three/examples/jsm/loaders/')) return 'gltf'
           if (id.includes('node_modules/three/')) return 'three'
           if (id.includes('node_modules/motion') || id.includes('framer-motion') || id.includes('motion-dom') || id.includes('motion-utils')) return 'motion'
           return undefined

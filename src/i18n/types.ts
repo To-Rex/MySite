@@ -225,6 +225,10 @@ export interface Dictionary {
     nav: string
     connect: string
     preferences: string
+    /** The credits for the car models other people made: a heading, "by" before an author, and what was changed. */
+    models: string
+    by: string
+    changed: string
   }
   theme: {
     label: string

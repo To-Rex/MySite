@@ -2,6 +2,7 @@ import { useI18n } from '@/i18n/context'
 import { site } from '@/config/site'
 import { NAV_ITEMS } from '@/config/sections'
 import { socials } from '@/content/socials'
+import { CAR_MODELS, CC_BY } from '@/content/carModels'
 import { useScrollTo } from '@/hooks/useScrollTo'
 import { LanguageSwitcher } from './LanguageSwitcher'
 import { ThemeToggle } from './ThemeToggle'
@@ -91,6 +92,27 @@ export function Footer() {
           </div>
         </div>
 
+        {CAR_MODELS.length > 0 && (
+          // The licence the street's car models are under asks for this, where they are used: who made each, where it is, the licence, and what was changed.
+          <p className="mt-10 max-w-[90ch] text-xs leading-relaxed text-fg-3">
+            {t.footer.models}:{' '}
+            {CAR_MODELS.map((model, index) => (
+              <span key={model.file}>
+                {index > 0 && ' · '}
+                <a href={model.url} target="_blank" rel="noopener noreferrer" className="underline decoration-border underline-offset-2 hover:text-fg-2">
+                  {model.title}
+                </a>{' '}
+                {t.footer.by} {model.author} (
+                <a href={CC_BY} target="_blank" rel="noopener noreferrer license" className="underline decoration-border underline-offset-2 hover:text-fg-2">
+                  {model.licence}
+                </a>
+                )
+              </span>
+            ))}
+            {' — '}
+            {t.footer.changed}.
+          </p>
+        )}
         <div className="mt-14 flex flex-col-reverse items-start justify-between gap-6 border-t border-border pt-6 sm:flex-row sm:items-center">
           <p className="font-mono text-[0.7rem] tracking-[0.12em] text-fg-3 uppercase">
             © {year} {site.name}. {t.footer.rights}

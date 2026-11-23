@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { BULGE, PART, VEHICLE_KINDS, VEHICLE_SHAPES, plateAt, vehicleMesh, type VehicleKind } from '@/components/three/evoCarShapes'
-import { CROSSWALK, LANES, ROAD, STREET_LENGTH, STREET_START, STREET_Z, crossingHeld } from '@/components/three/evoStreet'
-import { AMBER, LENS_CLEAR, RED, STRIPES_CLEAR, TRAFFIC_RING, createTraffic, stopLine, type Traffic, type Vehicle } from '@/components/three/evoTraffic'
+import { ARCH_GAP, MAX_DECALS, MAX_OUTLINE, PART, VEHICLE_KINDS, VEHICLE_SHAPES, plateAt, skinAt, vehicleMesh, wheelReach, type VehicleKind } from '@/components/three/evoCarShapes'
+import { carTexts } from '@/components/three/evoCarText'
+import { BUS_STOP, CROSSWALK, LANES, ROAD, STREET_LENGTH, STREET_START, STREET_Z, crossingHeld } from '@/components/three/evoStreet'
+import { AMBER, LENS_CLEAR, MIX, PAINT, PULL_IN, RED, STOP_LANE, STOP_NOSE_X, STRIPES_CLEAR, TRAFFIC_RING, createTraffic, dealKinds, stopLine, type Traffic, type Vehicle } from '@/components/three/evoTraffic'
 import { allFinite, bounds, components, openEdges, volume } from './mesh'
 
 /**
- * The traffic of the long walk: five bodies made out of numbers, and the way
- * they are driven. Neither needs a renderer — a body is typed arrays that can
- * be measured, and the driving is handed time a step at a time — so an hour of
- * a busy street is run here in a blink, and what has to be true of it at every
- * step is asked at every step.
+ * The traffic of the long walk: the bodies of the cars a street in Tashkent
+ * is full of, made out of numbers, and the way they are driven. Neither needs
+ * a renderer — a body is typed arrays that can be measured, and the driving is
+ * handed time a step at a time — so an hour of a busy street is run here in a
+ * blink, and what has to be true of it at every step is asked at every step.
  */
 
 /** A generator of its own, so that a failure is the same failure every run. */
@@ -21,162 +22,205 @@ function dice(seed: number): () => number {
   }
 }
 
+/** The real cars the bodies are after, as published: length, width, height and wheelbase, in metres. */
+const REAL: Partial<Record<VehicleKind, readonly [number, number, number, number]>> = {
+  cobalt: [4.48, 1.735, 1.51, 2.62],
+  nexia: [4.48, 1.66, 1.39, 2.52],
+  gentra: [4.52, 1.725, 1.445, 2.6],
+  damas: [3.49, 1.4, 1.91, 1.84],
+  matiz: [3.5, 1.495, 1.5, 2.34],
+  zhiguli: [4.15, 1.62, 1.44, 2.42],
+  byd: [4.705, 1.89, 1.68, 2.765],
+  malibu: [4.92, 1.855, 1.465, 2.83],
+}
+
 describe('the bodies', () => {
   for (const kind of VEHICLE_KINDS) {
     const shape = VEHICLE_SHAPES[kind]
-    const mesh = vehicleMesh(kind)
+    for (const detail of ['near', 'far'] as const) {
+      const mesh = vehicleMesh(kind, detail)
 
-    it(`${kind}: one closed skin and a mirror either side, right way out`, () => {
-      expect(allFinite(mesh.positions)).toBe(true)
-      // The body, and the two pods of its mirrors: nothing else, and no holes in any of them.
-      expect(components(mesh)).toBe(3)
-      expect(openEdges(mesh)).toBe(0)
-      // Wound to face outwards: a mesh that is inside out encloses less than nothing.
-      const box = shape.length * shape.width * shape.height
-      expect(volume(mesh)).toBeGreaterThan(box * 0.45)
-      expect(volume(mesh)).toBeLessThan(box)
-    })
+      it(`${kind}, ${detail}: one closed skin, right way out, and close up a mirror either side`, () => {
+        expect(allFinite(mesh.positions)).toBe(true)
+        // The body, and the two pods of its mirrors: nothing else, and no holes in any of them.
+        expect(components(mesh)).toBe(detail === 'near' ? 3 : 1)
+        expect(openEdges(mesh)).toBe(0)
+        // Wound to face outwards: a mesh that is inside out encloses less than nothing.
+        const box = shape.length * shape.width * shape.height
+        expect(volume(mesh)).toBeGreaterThan(box * 0.45)
+        expect(volume(mesh)).toBeLessThan(box)
+      })
 
-    it(`${kind}: the size it says it is, standing on its wheels`, () => {
-      const { min, max } = bounds(mesh.positions)
-      // Its length, and the little by which the middle of each end stands proud.
-      expect(max[0] - min[0]).toBeCloseTo(shape.length + BULGE * 2, 2)
-      expect(max[1]).toBeGreaterThan(shape.height - 0.06)
-      expect(max[1]).toBeLessThan(shape.height + 0.02)
-      // Clear of the road by what it says, and of its own wheels where they are.
-      expect(min[1]).toBeGreaterThan(shape.clearance - 0.01)
-      // Mirrors stand out past the body; nothing else does.
-      expect(max[2]).toBeLessThan(shape.width / 2 + 0.35)
-      expect(max[2]).toBeCloseTo(-min[2], 5)
-      // The tyres fit under it and inside its sides.
-      for (const axle of shape.axles) expect(Math.abs(axle)).toBeLessThan(shape.length / 2 - shape.wheel.radius)
-    })
+      it(`${kind}, ${detail}: every face one thing, with a normal that is a normal`, () => {
+        const { position, normal, part, body, index } = mesh.draw
+        const count = position.length / 3
+        expect(normal.length).toBe(count * 3)
+        expect(part.length).toBe(count)
+        expect(body.length).toBe(count * 2)
+        expect(allFinite(position)).toBe(true)
+        let worst = 0
+        for (let v = 0; v < count; v++) worst = Math.max(worst, Math.abs(Math.hypot(normal[v * 3]!, normal[v * 3 + 1]!, normal[v * 3 + 2]!) - 1))
+        expect(worst).toBeLessThan(1e-4)
+        // A triangle's three corners agree about what it is made of, and about whether it is the side of the body
+        // that doors are drawn on: paint, below the glass.
+        const made = new Set<number>()
+        let sides = 0
+        let bad = ''
+        // Nothing of a door above the belt line, wherever along the body that is highest.
+        const beltTop = Math.max(shape.cabin.belt + 0.12, ...shape.belt.map((key) => key[1] + 0.005))
+        for (let t = 0; t < index.length; t += 3) {
+          const a = part[index[t]!]!
+          const side = body[index[t]! * 2]!
+          if (part[index[t + 1]!] !== a || part[index[t + 2]!] !== a) bad ||= `triangle ${t / 3} is two things`
+          if (body[index[t + 1]! * 2] !== side || body[index[t + 2]! * 2] !== side) bad ||= `triangle ${t / 3} is half a door`
+          made.add(a)
+          if (side === 0) continue
+          sides++
+          if (a !== PART.paint) bad ||= `a door of something other than paint`
+          for (const corner of [index[t]!, index[t + 1]!, index[t + 2]!]) {
+            const up = body[corner * 2 + 1]!
+            if (up < 0 || up > 1 || position[corner * 3 + 1]! > beltTop) bad ||= `a door corner at ${up}, ${position[corner * 3 + 1]}`
+          }
+        }
+        expect(bad).toBe('')
+        for (const needed of [PART.paint, PART.glass, PART.trim, PART.under]) expect(made.has(needed), `part ${needed}`).toBe(true)
+        expect(sides).toBeGreaterThan(detail === 'near' ? 100 : 30)
+        // And they face the way the skin does: out, on the whole, from the middle of the car.
+        let out = 0
+        const middle = shape.height * 0.5
+        for (let v = 0; v < count; v++) {
+          const dot = normal[v * 3]! * position[v * 3]! * 0.2 + normal[v * 3 + 1]! * (position[v * 3 + 1]! - middle) + normal[v * 3 + 2]! * position[v * 3 + 2]!
+          if (dot > 0) out++
+        }
+        expect(out / count).toBeGreaterThan(0.9)
+      })
+    }
 
-    it(`${kind}: every face one thing, with a normal that is a normal`, () => {
-      const { position, normal, part, body, index } = mesh.draw
-      const count = position.length / 3
-      expect(normal.length).toBe(count * 3)
-      expect(part.length).toBe(count)
-      expect(body.length).toBe(count * 2)
-      expect(allFinite(position)).toBe(true)
-      let worst = 0
-      for (let v = 0; v < count; v++) worst = Math.max(worst, Math.abs(Math.hypot(normal[v * 3]!, normal[v * 3 + 1]!, normal[v * 3 + 2]!) - 1))
-      expect(worst).toBeLessThan(1e-4)
-      // A triangle's three corners agree about what it is made of.
-      const made = new Set<number>()
-      for (let t = 0; t < index.length; t += 3) {
-        const a = part[index[t]!]!
-        expect(part[index[t + 1]!]).toBe(a)
-        expect(part[index[t + 2]!]).toBe(a)
-        made.add(a)
+    it(`${kind}: the size of the car it is after, standing on its wheels`, () => {
+      const real = REAL[kind]
+      if (real) {
+        const [length, width, height, wheelbase] = real
+        // Within a few per cent of the real thing, every way.
+        expect(Math.abs(shape.length / length - 1)).toBeLessThan(0.03)
+        expect(Math.abs(shape.width / width - 1)).toBeLessThan(0.03)
+        expect(Math.abs(shape.height / height - 1)).toBeLessThan(0.03)
+        expect(Math.abs((shape.axles[0] - shape.axles[1]) / wheelbase - 1)).toBeLessThan(0.03)
       }
-      for (const needed of [PART.paint, PART.glass, PART.trim, PART.under]) expect(made.has(needed), `part ${needed}`).toBe(true)
-      // And about whether it is the side of the body that doors are drawn on: paint, below the glass.
-      let sides = 0
-      for (let t = 0; t < index.length; t += 3) {
-        const side = body[index[t]! * 2]!
-        expect(side === 0 || side === 1).toBe(true)
-        expect(body[index[t + 1]! * 2]).toBe(side)
-        expect(body[index[t + 2]! * 2]).toBe(side)
-        if (side === 0) continue
-        sides++
-        expect(part[index[t]!]).toBe(PART.paint)
-        for (const corner of [index[t]!, index[t + 1]!, index[t + 2]!]) {
-          expect(body[corner * 2 + 1]).toBeGreaterThanOrEqual(0)
-          expect(body[corner * 2 + 1]).toBeLessThanOrEqual(1)
-          expect(position[corner * 3 + 1]).toBeLessThan(shape.cabin.belt + 0.12)
+      // And the mesh is the size the numbers say: its length, domes and all, its height.
+      const { min, max } = bounds(vehicleMesh(kind, 'near').positions)
+      expect(max[0] - min[0]).toBeCloseTo(shape.length, 2)
+      expect(max[1]).toBeGreaterThan(shape.height - 0.02)
+      expect(max[1]).toBeLessThan(shape.height + 0.02)
+      const body = bounds(vehicleMesh(kind, 'far').positions)
+      expect(Math.abs((body.max[2] * 2) / shape.width - 1)).toBeLessThan(0.015)
+      expect(body.max[2]).toBeCloseTo(-body.min[2], 5)
+      // Clear of the road by what it says; mirrors stand out past the body and nothing else does.
+      expect(min[1]).toBeGreaterThan(shape.clearance - 0.01)
+      expect(max[2]).toBeLessThan(shape.width / 2 + 0.35)
+    })
+
+    it(`${kind}: four wheels, each inside its arch`, () => {
+      const { positions } = vehicleMesh(kind, 'near')
+      const { radius, width } = shape.wheel
+      const reach = wheelReach(shape)
+      let bad = ''
+      for (const axle of shape.axles) {
+        for (const side of [1, -1]) {
+          const z = side * reach
+          // Nothing of the body inside the tyre.
+          let over = Infinity
+          let outside = 0
+          for (let v = 0; v < positions.length / 3; v++) {
+            const px = positions[v * 3]!
+            const py = positions[v * 3 + 1]!
+            const pz = positions[v * 3 + 2]!
+            if (Math.abs(px - axle) < radius) outside = Math.max(outside, Math.abs(pz))
+            if (Math.abs(pz - z) > width / 2) continue
+            if (Math.hypot(px - axle, py - radius) < radius - 0.004) bad ||= `${kind}: the body inside the wheel at ${axle}, ${side}`
+            // The arch over it: the lowest of the body straight above the tyre.
+            if (Math.abs(px - axle) < 0.06 && py > radius) over = Math.min(over, py)
+          }
+          // The arch hugs the tyre: not far above it, and not into it.
+          if (!(over > radius * 2 && over < radius * 2 + ARCH_GAP + 0.06)) bad ||= `${kind}: the arch at ${axle} is ${over - radius * 2} above the tyre`
+          // And the tyre's outer face is inside the body's side, give or take its bulge.
+          if (reach + width / 2 > outside + 0.005) bad ||= `${kind}: the wheel at ${axle} stands out of the body by ${reach + width / 2 - outside}`
+          // And it is under the body, not off an end of it.
+          if (Math.abs(axle) + radius > shape.length / 2 - 0.1) bad ||= `${kind}: a wheel off the end`
         }
       }
-      expect(sides).toBeGreaterThan(100)
-      // And they face the way the skin does: out, on the whole, from the middle of the car.
-      let out = 0
-      let all = 0
-      const middle = shape.height * 0.5
-      for (let v = 0; v < count; v++) {
-        const dot = normal[v * 3]! * position[v * 3]! * 0.2 + normal[v * 3 + 1]! * (position[v * 3 + 1]! - middle) + normal[v * 3 + 2]! * position[v * 3 + 2]!
-        if (dot > 0) out++
-        all++
-      }
-      expect(out / all).toBeGreaterThan(0.9)
-    })
-
-    it(`${kind}: glass where the windows are, and none in the doors but a bus's`, () => {
-      const { position, part, index } = mesh.draw
-      let glass = 0
-      let low = 0
-      for (let t = 0; t < index.length; t += 3) {
-        if (part[index[t]!] !== PART.glass) continue
-        glass++
-        const y = (position[index[t]! * 3 + 1]! + position[index[t + 1]! * 3 + 1]! + position[index[t + 2]! * 3 + 1]!) / 3
-        if (y < shape.height * 0.5) low++
-      }
-      expect(glass).toBeGreaterThan(40)
-      if (shape.kerbDoors) expect(low).toBeGreaterThan(0)
-      else expect(low).toBe(0)
+      expect(bad).toBe('')
     })
   }
 
-  it('what is drawn on a body has skin to be drawn on', () => {
+  it('what is drawn on a body has skin to be drawn on, and room in the shader', () => {
     for (const kind of VEHICLE_KINDS) {
       const shape = VEHICLE_SHAPES[kind]
       const { position, part, index } = vehicleMesh(kind).draw
       const half = shape.length / 2
-      /** How many faces of painted skin pass through a box at one end of the body, on its right. */
-      const skin = (end: 1 | -1, depth: number, y: number, tall: number, z: number, wide: number): number => {
+      expect(shape.decals.length, kind).toBeLessThanOrEqual(MAX_DECALS)
+      // A headlamp on the nose and a red lamp on the tail, at least, on every body.
+      expect(shape.decals.some((decal) => decal.end > 0 && decal.kind === 'head'), `${kind} headlamp`).toBe(true)
+      expect(shape.decals.some((decal) => decal.end < 0 && (decal.kind === 'tail' || decal.kind === 'redbar')), `${kind} tail lamp`).toBe(true)
+      for (const decal of shape.decals) {
+        expect(decal.at.length, kind).toBeGreaterThanOrEqual(3)
+        expect(decal.at.length, kind).toBeLessThanOrEqual(MAX_OUTLINE)
+        for (const [u, y] of decal.at) {
+          // On the end, or a little way round its corner (an outline on the middle may reach past it, mirrored); between the road and the roof.
+          expect(u, `${kind} ${decal.kind}`).toBeGreaterThan(-0.2)
+          expect(u, `${kind} ${decal.kind}`).toBeLessThan(shape.width / 2 + 0.55)
+          expect(y, `${kind} ${decal.kind}`).toBeGreaterThan(shape.clearance - 0.02)
+          expect(y, `${kind} ${decal.kind}`).toBeLessThan(shape.height)
+        }
+      }
+      // Every lamp has skin under it: painted faces at its end, at its height.
+      for (const decal of shape.decals.filter((each) => each.kind === 'head' || each.kind === 'tail')) {
+        const ys = decal.at.map((p) => p[1])
+        const lo = Math.min(...ys)
+        const hi = Math.max(...ys)
         let found = 0
         for (let t = 0; t < index.length; t += 3) {
           if (part[index[t]!] !== PART.paint) continue
-          const lo = [Infinity, Infinity, Infinity]
-          const hi = [-Infinity, -Infinity, -Infinity]
-          for (let c = 0; c < 3; c++) {
-            const v = index[t + c]! * 3
-            // How far in from the end, how high, how far out.
-            const at = [half - end * position[v]!, position[v + 1]!, position[v + 2]!]
-            for (let axis = 0; axis < 3; axis++) {
-              lo[axis] = Math.min(lo[axis]!, at[axis]!)
-              hi[axis] = Math.max(hi[axis]!, at[axis]!)
-            }
-          }
-          if (lo[0]! < depth && lo[1]! < y + tall / 2 && hi[1]! > y - tall / 2 && lo[2]! < z + wide / 2 && hi[2]! > z - wide / 2) found++
+          const v = index[t]! * 3
+          if (half - decal.end * position[v]! < 0.5 && position[v + 1]! > lo - 0.03 && position[v + 1]! < hi + 0.03) found++
         }
-        return found
+        expect(found, `${kind} ${decal.kind}`).toBeGreaterThan(4)
       }
-      // A lamp at each corner, where the body comes round it; and where the lamp's own light is put.
-      expect(skin(1, shape.nose + 0.14, shape.head.y, shape.head.tall, shape.head.z, shape.head.wide), `${kind} headlamp`).toBeGreaterThan(4)
-      expect(skin(-1, shape.tail + 0.14, shape.rear.y, shape.rear.tall, shape.rear.z, shape.rear.wide), `${kind} tail lamp`).toBeGreaterThan(4)
-      expect(shape.head.x).toBeGreaterThan(half - 0.2)
-      expect(shape.head.x).toBeLessThan(half + 0.02)
-      expect(shape.rear.x).toBeLessThan(-half + 0.2)
-      expect(shape.rear.x).toBeGreaterThan(-half - 0.02)
-      // A plate on the flat of each end, clear of the skin by a finger and no more, and off the lamps.
-      const { min, max } = bounds(vehicleMesh(kind).positions)
-      expect(plateAt(shape, 1)).toBeGreaterThan(max[0])
-      expect(plateAt(shape, 1)).toBeLessThan(max[0] + 0.03)
-      expect(plateAt(shape, -1)).toBeLessThan(min[0])
-      expect(plateAt(shape, -1)).toBeGreaterThan(min[0] - 0.03)
-      for (const [end, y, lens] of [
-        [1, shape.plates.front, shape.head],
-        [-1, shape.plates.back, shape.rear],
+      // The windows, where they are drawn: inside the body's length, from the belt to under the roof.
+      if (shape.windows) {
+        expect(shape.windows.outline.length).toBeLessThanOrEqual(MAX_OUTLINE)
+        for (const [x, y] of shape.windows.outline) {
+          expect(Math.abs(x), kind).toBeLessThan(half)
+          // (Its top may run past the roof rail: the band it is drawn in is what clips it.)
+          expect(y, kind).toBeGreaterThan(shape.clearance + 0.4)
+          expect(y, kind).toBeLessThan(shape.height + 0.1)
+        }
+        expect(shape.windows.bars.length).toBeLessThanOrEqual(4)
+      }
+      // A plate on each end, clear of the skin all over by a finger and no more in the middle — on
+      // the skin, whatever shape the end is, and never in it.
+      const mesh = vehicleMesh(kind)
+      for (const end of [1, -1] as const) {
+        const x = plateAt(shape, end)
+        const y = end > 0 ? shape.plates.front : shape.plates.back
+        const middle = skinAt(mesh, y, 0, end)
+        expect(end * (x - middle), `${kind} plate off the skin`).toBeGreaterThan(0.005)
+        expect(end * (x - middle), `${kind} plate off the skin`).toBeLessThan(0.02)
+        for (const [dy, dz] of [[-0.056, -0.26], [-0.056, 0.26], [0.056, -0.26], [0.056, 0.26]] as const) {
+          expect(end * (x - skinAt(mesh, y + dy, dz, end)), `${kind} plate's corner in the skin`).toBeGreaterThan(0)
+        }
+      }
+      for (const [end, y] of [
+        [1, shape.plates.front],
+        [-1, shape.plates.back],
       ] as const) {
-        // The flat of an end: from the lowest of its skin to the highest, down the middle of it.
-        let low = Infinity
-        let high = -Infinity
-        for (let v = 0; v < position.length / 3; v++) {
-          if (half - end * position[v * 3]! > 0.011 || Math.abs(position[v * 3 + 2]!) > 0.3) continue
-          low = Math.min(low, position[v * 3 + 1]!)
-          high = Math.max(high, position[v * 3 + 1]!)
+        expect(y - 0.056, `${kind} plate`).toBeGreaterThan(shape.clearance)
+        // Not over a lamp.
+        for (const decal of shape.decals.filter((each) => each.end === end && (each.kind === 'head' || each.kind === 'tail'))) {
+          const us = decal.at.map((p) => p[0])
+          const ys = decal.at.map((p) => p[1])
+          const overlaps = Math.min(...us) < 0.26 && Math.max(...ys) > y - 0.056 && Math.min(...ys) < y + 0.056
+          expect(overlaps, `${kind} plate under a ${decal.kind}`).toBe(false)
         }
-        expect(y - 0.056, `${kind} plate`).toBeGreaterThan(low + 0.02)
-        expect(y + 0.056, `${kind} plate`).toBeLessThan(high - 0.02)
-        const apart = Math.abs(y - lens.y) > (0.112 + lens.tall) / 2 || lens.z - lens.wide / 2 > 0.26
-        expect(apart, `${kind} plate under a lamp`).toBe(true)
-      }
-      // A grille and an intake that fit on the front of it.
-      for (const [y, tall, wide] of [shape.grille, shape.intake]) {
-        if (wide === 0) continue
-        expect(y - tall / 2).toBeGreaterThan(shape.clearance)
-        expect(y + tall / 2).toBeLessThan(shape.cabin.belt)
-        expect(wide / 2).toBeLessThan(shape.width / 2)
       }
       // And an inside that is inside: seats between the screens, glass between belt and roof.
       const cabin = shape.cabin
@@ -190,6 +234,124 @@ describe('the bodies', () => {
         expect(cabin.seats[0]).toBeLessThan(cabin.front - 0.5)
         expect(cabin.seats[1]).toBeLessThan(cabin.seats[0] - 0.6)
         expect(cabin.seats[1]).toBeGreaterThan(cabin.rear + 0.2)
+      }
+      // A route card, where there is one, stands behind the windscreen and inside the cab.
+      if (shape.card) {
+        expect(shape.card.x).toBeLessThan(shape.glass.front[0])
+        expect(shape.card.x).toBeGreaterThan(cabin.seats?.[0] ?? -half)
+        expect(shape.card.y - shape.card.tall / 2).toBeGreaterThan(cabin.belt)
+        expect(Math.abs(shape.card.z) + shape.card.wide / 2).toBeLessThan(cabin.half)
+      }
+    }
+  })
+
+  it('costs, close up, about what a car always has, and far off half of it', () => {
+    for (const kind of VEHICLE_KINDS) {
+      const near = vehicleMesh(kind, 'near').draw.index.length / 3
+      const far = vehicleMesh(kind, 'far').draw.index.length / 3
+      expect(near, kind).toBeLessThan(kind === 'bus' ? 7600 : 8000)
+      expect(far / near, kind).toBeLessThan(0.56)
+    }
+  })
+})
+
+describe('the fleet', () => {
+  it('is mixed as the city is, however few of them there are', () => {
+    const shares = new Map(MIX.map(([kind, share]) => [kind, share]))
+    expect([...shares.values()].reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6)
+    for (const count of [9, 19, 30, 42, 200]) {
+      const kinds = dealKinds(count)
+      for (const [kind, share] of shares) {
+        const dealt = kinds.filter((each) => each === kind).length
+        // Never more than one car off what its share of the street would be.
+        expect(Math.abs(dealt - share * count), `${kind} in ${count}`).toBeLessThan(1)
+      }
+    }
+  })
+
+  it('is mostly white, half the microvans are minibuses on routes, and a few sedans are taxis', () => {
+    for (const count of [10, 20, 32, 44]) {
+      const traffic = createTraffic(count)
+      const cars = traffic.vehicles.filter((vehicle) => vehicle.kind !== 'bus')
+      const white = cars.filter((vehicle) => vehicle.paint === PAINT.white || vehicle.paint === PAINT.cream).length
+      expect(white / cars.length, `${count}`).toBeGreaterThan(0.5)
+      const vans = cars.filter((vehicle) => vehicle.kind === 'damas')
+      const minibuses = vans.filter((vehicle) => vehicle.role === 'minibus')
+      expect(minibuses.length).toBe(Math.ceil(vans.length / 2))
+      for (const minibus of minibuses) {
+        expect(minibus.lane).toBe(STOP_LANE)
+        expect(minibus.look.card).toBeGreaterThanOrEqual(0)
+      }
+      for (const vehicle of traffic.vehicles) if (vehicle.role !== 'minibus') expect(vehicle.look.card).toBe(-1)
+      // Taxis are sedans, and there are a few of them once there is traffic.
+      const taxis = traffic.vehicles.filter((vehicle) => vehicle.role === 'taxi')
+      for (const taxi of taxis) expect(['cobalt', 'nexia', 'gentra']).toContain(taxi.kind)
+      if (count >= 32) expect(taxis.length).toBeGreaterThan(0)
+      // The old Soviet sedans are faded, and wear both their faces.
+      const old = traffic.vehicles.filter((vehicle) => vehicle.kind === 'zhiguli')
+      for (const car of old) expect(car.look.fade).toBeGreaterThan(0.5)
+      if (old.length > 1) expect(new Set(old.map((car) => car.look.variant)).size).toBe(2)
+    }
+  })
+
+  it('draws no name of a maker or a model on anything', () => {
+    const banned = /chevrolet|daewoo|ravon|uzauto|byd|lada|vaz|nexia|cobalt|damas|gentra|lacetti|matiz|spark|malibu|zhiguli|jiguli/i
+    const texts = carTexts()
+    expect(texts.length).toBeGreaterThan(10)
+    for (const text of texts) expect(text, text).not.toMatch(banned)
+  })
+})
+
+describe('the bus stop', () => {
+  it('is where the buses and the minibuses stop, pulled in, for a while; and nothing else stops there', () => {
+    const traffic = createTraffic(44)
+    const lane = LANES[STOP_LANE]!
+    const stoppers = traffic.vehicles.filter((vehicle) => vehicle.stops)
+    expect(stoppers.length).toBeGreaterThan(2)
+    for (const vehicle of stoppers) expect(['bus', 'minibus']).toContain(vehicle.role)
+    const stood = new Map<Vehicle, number[]>()
+    const started = new Map<Vehicle, number>()
+    const all = watch()
+    const dt = 0.05
+    // Twelve minutes of the street, with the crossing held for a minute in every four.
+    for (let step = 0; step < 12 * 60 * 20; step++) {
+      const held = step % 4800 < 1200 ? 1 : 0
+      traffic.step(dt, held)
+      for (const vehicle of traffic.vehicles) {
+        const nose = vehicle.x + (vehicle.going * vehicle.length) / 2
+        if (vehicle.dwell > 0) {
+          all.check(vehicle.stops && vehicle.lane === STOP_LANE, () => `step ${step}: a ${vehicle.kind} (${vehicle.role}) stopping at the shelter`)
+          all.check(Math.abs(nose - STOP_NOSE_X) < 0.7, () => `step ${step}: a ${vehicle.role} standing at the stop with its nose at ${nose.toFixed(2)}`)
+          all.check(vehicle.v === 0, () => `step ${step}: a ${vehicle.role} moving while it stands at the stop`)
+          // Its doors to the kerb: pulled over that way, all of it inside the bay.
+          all.check(lane.z - vehicle.z > PULL_IN * 0.6, () => `step ${step}: a ${vehicle.role} at the stop not pulled in (${(lane.z - vehicle.z).toFixed(2)})`)
+          const tail = vehicle.x - (vehicle.going * vehicle.length) / 2
+          all.check(Math.max(nose, tail) < BUS_STOP.x + BUS_STOP.bay / 2 + 0.01 && Math.min(nose, tail) > BUS_STOP.x - BUS_STOP.bay / 2 - 0.01, () => `step ${step}: a ${vehicle.role} sticking out of the bay`)
+          if (!started.has(vehicle)) started.set(vehicle, step)
+        } else if (started.has(vehicle)) {
+          const list = stood.get(vehicle) ?? []
+          list.push((step - started.get(vehicle)!) * dt)
+          stood.set(vehicle, list)
+          started.delete(vehicle)
+        }
+        // Nothing but what stops there is ever off the middle of its lane.
+        if (!(vehicle.stops && vehicle.lane === STOP_LANE)) all.check(vehicle.z === LANES[vehicle.lane]!.z, () => `step ${step}: a ${vehicle.kind} off the middle of its lane`)
+        // And nothing else stands in the bay unless it is queueing behind something that does.
+        if (!vehicle.stops && vehicle.lane === STOP_LANE && vehicle.shown && vehicle.v < 0.05 && Math.abs(nose - BUS_STOP.x) < BUS_STOP.bay / 2) {
+          const ahead = traffic.vehicles.filter((other) => other.lane === STOP_LANE && other !== vehicle && other.shown && (vehicle.x - other.x) * -vehicle.going < 0)
+          const gap = Math.min(...ahead.map((other) => Math.abs(other.x - vehicle.x) - (other.length + vehicle.length) / 2))
+          all.check(gap < 6 || held > 0, () => `step ${step}: a ${vehicle.kind} standing at the stop with ${gap.toFixed(1)} m of road ahead of it`)
+        }
+      }
+    }
+    all.done()
+    // Every one of them stopped there, again and again, for as long as it should.
+    for (const vehicle of stoppers.filter((each) => each.lane === STOP_LANE)) {
+      const times = stood.get(vehicle) ?? []
+      expect(times.length, `${vehicle.role}`).toBeGreaterThan(2)
+      for (const time of times) {
+        expect(time).toBeGreaterThan(vehicle.role === 'bus' ? 7.9 : 4.9)
+        expect(time).toBeLessThan(vehicle.role === 'bus' ? 12.1 : 8.1)
       }
     }
   })
@@ -323,7 +485,10 @@ describe('the traffic', () => {
     for (let step = 0; step < 3000; step++) {
       traffic.step(0.04, 0)
       for (const vehicle of traffic.vehicles) {
-        all.check(vehicle.z === LANES[vehicle.lane]!.z && vehicle.going === LANES[vehicle.lane]!.going, () => `step ${step}: a ${vehicle.kind} out of its lane`)
+        // (What stops at the shelter pulls over towards that kerb, a little, and only that way.)
+        const off = LANES[vehicle.lane]!.z - vehicle.z
+        const kept = vehicle.stops && vehicle.lane === STOP_LANE ? off >= -1e-9 && off <= PULL_IN + 1e-9 : off === 0
+        all.check(kept && vehicle.going === LANES[vehicle.lane]!.going, () => `step ${step}: a ${vehicle.kind} out of its lane`)
         if (!vehicle.shown) {
           hidden++
           continue
@@ -344,12 +509,13 @@ describe('the traffic', () => {
     for (let step = 0; step < 600; step++) traffic.step(0.04, 0)
     // Who is short of their line when it changes, and could still pull up.
     const before = new Map(traffic.vehicles.map((vehicle) => [vehicle, vehicle.s + vehicle.length / 2]))
-    for (let step = 0; step < 1500; step++) traffic.step(0.04, 1)
+    // (A minute and a half: a bus that was standing at its stop when the lights changed has the whole lap still to come.)
+    for (let step = 0; step < 2250; step++) traffic.step(0.04, 1)
     const from = CROSSWALK.x - CROSSWALK.half
     const until = CROSSWALK.x + CROSSWALK.half
     let waiting = 0
     for (const vehicle of traffic.vehicles) {
-      // A minute on, everything has stopped.
+      // A minute and a half on, everything has stopped.
       expect(vehicle.v).toBeLessThan(0.05)
       // Nothing is standing on the crossing.
       if (vehicle.shown) expect(vehicle.x + vehicle.length / 2 < from || vehicle.x - vehicle.length / 2 > until, `${vehicle.kind} at ${vehicle.x}`).toBe(true)
@@ -541,7 +707,8 @@ describe('the traffic', () => {
       }
       all.done()
       // A queue short of where it stepped out, brake lights on; and on the far side one at that side's own line.
-      const waiting = traffic.vehicles.filter((vehicle) => vehicle.shown && vehicle.v < 0.05)
+      // (Not counting what is standing at the bus stop further down, or queueing behind something that is: that is waiting for something else.)
+      const waiting = traffic.vehicles.filter((vehicle) => vehicle.shown && vehicle.v < 0.05 && !(vehicle.lane === STOP_LANE && vehicle.x < CROSSWALK.x - 30))
       const mine = waiting.filter((vehicle) => near.includes(vehicle.z))
       expect(mine.length, `seed ${seed}`).toBeGreaterThan(3)
       expect(waiting.length - mine.length, `seed ${seed}`).toBeGreaterThan(3)

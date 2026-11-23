@@ -2,7 +2,9 @@
 
 Personal brand site of Dilshodjon Haydarov (To-Rex), live at https://torexdev.uz on Netlify (repo `To-Rex/MySite`).
 React 19 · Vite 7 · TypeScript strict · Tailwind 4 · three.js / R3F / drei · motion · lenis.
-Everything 3D is procedural, and so is all the sound: there are no model, texture or audio files anywhere.
+Everything 3D is procedural, and so is all the sound, with one exception: some of the long walk's cars are
+CC BY models other people made, prepared to a contract into `public/models/cars/` and credited in
+`src/content/carModels.ts` (README → The long walk → The traffic). There are no other model, texture or audio files.
 
 ## Commands
 
@@ -43,7 +45,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 | `Spectacle.tsx`, `stage.ts`, `mascots.ts`, `lib/spectacle.ts` | The hero's easter egg |
 | `Cameo.tsx`, `useCameoDirector.ts` | Cameos |
 | `ReadingTrail.tsx`, `ScrollSky.tsx`, `Marquee.tsx`, `ProjectGallery.tsx`, `lib/scroll.ts`, `universeFlight.ts` | Scroll |
-| `Evolution.tsx`, `EvolutionScene.tsx`, `evo*.ts`, `lib/evolution.ts` | The long walk |
+| `Evolution.tsx`, `EvolutionScene.tsx`, `evo*.ts`, `lib/evolution.ts`, `carModels.ts`, `public/models/` | The long walk (cars: The traffic) |
 | `Valley.tsx`, `ValleyScene.tsx`, `valley*.ts(x)`, `lib/valley.ts`, `glowPass.ts` | The extinction cinematic (The cast, The crater, The fire, The meadow, The ranges, What it costs, Quality, Sound) |
 | `404.html`, `NotFound*.tsx`, `notFound*.ts`, `lib/notFound.ts` | The 404 page |
 | `src/features/sound/*` | The 404 page → Sound · The extinction cinematic → Sound |

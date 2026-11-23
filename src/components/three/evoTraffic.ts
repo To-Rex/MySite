@@ -1,5 +1,5 @@
 import { VEHICLE_SHAPES, type VehicleKind } from './evoCarShapes'
-import { CROSSWALK, LANES, ROAD, STREET_LENGTH, STREET_START, STREET_Z } from './evoStreet'
+import { BUS_STOP, CROSSWALK, LANES, ROAD, STREET_LENGTH, STREET_START, STREET_Z } from './evoStreet'
 
 /**
  * How the traffic of the long walk moves.
@@ -34,6 +34,11 @@ import { CROSSWALK, LANES, ROAD, STREET_LENGTH, STREET_START, STREET_Z } from '.
  * the line — a driver gives way to who is in front of the car, wherever the
  * paint is — and once a queue has formed there it stays there.
  *
+ * Buses and the minibuses that run fixed routes stop at the shelter on the
+ * far pavement: each pulls in towards the kerb as it slows, stands a while
+ * with its doors to the shelter, and pulls out again; whatever is behind it
+ * waits, since nothing here changes lanes. Nothing else stops there.
+ *
  * No three.js and no clock of its own: it is handed time a step at a time,
  * which is what lets a test run an hour of it.
  */
@@ -64,6 +69,18 @@ export const STRIPES_CLEAR = 0.9
 const WILLING = 6
 const STRIPES_MARGIN = 0.3
 
+/**
+ * The stop: which lane passes it (the far kerb's), where in that lane a nose
+ * stops — just inside the front of the bay, which puts a bus's middle doors at
+ * the shelter — how far over towards the kerb whatever stops there pulls, and
+ * from how far back it starts to.
+ */
+export const STOP_LANE = LANES.reduce((best, lane, index) => (lane.z < LANES[best]!.z ? index : best), 0)
+const STOP_SIDE = -1
+export const STOP_NOSE_X = BUS_STOP.x - BUS_STOP.bay / 2 + 1
+export const PULL_IN = 0.45
+const PULL_FROM = 28
+
 /** Driving: how hard it pulls away, brakes when it sees it coming, and brakes when it did not. */
 const PULL = 1.5
 const EASE = 2.3
@@ -72,10 +89,29 @@ const HARD = 7.5
 const HEADWAY = 1.25
 const STANDING = 2.1
 
+/** What a vehicle is on the road, beyond its body. */
+export type Role = 'car' | 'bus' | 'minibus' | 'taxi'
+
+/** How a vehicle looks beyond its body and its paint. */
+export interface Look {
+  /** Which of its body's faces, where it has two: the later lamps and grille on the old Soviet sedan, the route card on a minibus. */
+  variant: number
+  /** Road dust on the lower body, 0 to 1. */
+  dust: number
+  /** How far its paint has gone chalky in the sun, 0 to 1. */
+  fade: number
+  /** Which route card a minibus carries, or -1. */
+  card: number
+  /** A roof rack. */
+  rack: boolean
+}
+
 export interface Vehicle {
   kind: VehicleKind
+  role: Role
   /** Which paint, as an index the scene has colours for. */
   paint: number
+  look: Look
   lane: number
   length: number
   width: number
@@ -94,6 +130,12 @@ export interface Vehicle {
   z: number
   going: 1 | -1
   shown: boolean
+  /** For what stops at the shelter: whether it does, how long it stands there, how long it has left, whether it has on this lap, and how far over it has pulled (0 to 1). */
+  stops: boolean
+  pause: number
+  dwell: number
+  served: boolean
+  pull: number
 }
 
 export interface Traffic {
@@ -130,28 +172,98 @@ function mulberry(seed: number): () => number {
 }
 
 /**
- * What is on the street: mostly saloons and small hatchbacks, a few of the
- * rest. Dealt in this order over and over, so that ten cars are as mixed as
- * forty: a street of nothing but saloons is a roll of the dice away otherwise.
+ * What is on the street, and how much of it: the tall sedan is a quarter of
+ * everything; the eighties three-box, the smooth sedan, the tiny hatchback a
+ * tenth or more each; the microvans, half of them minibuses on routes; the
+ * electric crossovers that came in 2023; the long sedan; the old Soviet sedan,
+ * still going; and a few other crossovers.
  */
-const DEAL: readonly VehicleKind[] = ['saloon', 'hatch', 'crossover', 'saloon', 'van', 'hatch', 'saloon', 'crossover', 'saloon', 'hatch']
-/**
- * And what colour: most of them white, which is the first thing anyone who
- * has stood on a street in Tashkent would say about it. The numbers are
- * indices into the scene's paints: 0 is white.
- */
-const PAINTS: readonly [number, number][] = [
-  [0, 0.6],
-  [1, 0.13],
-  [2, 0.1],
-  [3, 0.08],
-  [4, 0.03],
-  [5, 0.03],
-  [6, 0.03],
+export const MIX: readonly (readonly [Exclude<VehicleKind, 'bus'>, number])[] = [
+  ['cobalt', 0.24],
+  ['nexia', 0.12],
+  ['gentra', 0.12],
+  ['matiz', 0.12],
+  ['damas', 0.1],
+  ['byd', 0.1],
+  ['crossover', 0.08],
+  ['malibu', 0.06],
+  ['zhiguli', 0.06],
 ]
+
+/**
+ * The kinds of `count` cars, dealt so that every run of them is as near the mix
+ * as whole cars can be: ten are as mixed as forty, and a street of nothing but
+ * one kind is not a roll of the dice away.
+ */
+export function dealKinds(count: number): Exclude<VehicleKind, 'bus'>[] {
+  const dealt = MIX.map(() => 0)
+  const out: Exclude<VehicleKind, 'bus'>[] = []
+  for (let i = 0; i < count; i++) {
+    let best = 0
+    let most = -Infinity
+    MIX.forEach(([, share], k) => {
+      const owed = share * (i + 1) - dealt[k]!
+      if (owed > most + 1e-9) {
+        most = owed
+        best = k
+      }
+    })
+    dealt[best]!++
+    out.push(MIX[best]![0])
+  }
+  return out
+}
+
+/**
+ * The paints, as indices the scene has colours for, and what each kind is
+ * painted: most of everything white — the first thing anyone who has stood on
+ * a street in Tashkent would say about it — then silver, grey and black and a
+ * few colours; the old Soviet sedans in the faded colours they came in.
+ */
+export const PAINT = { white: 0, silver: 1, grey: 2, black: 3, blue: 4, cherry: 5, beige: 6, bus: 7, cream: 8, sand: 9, paleBlue: 10, oldCherry: 11, red: 12, sky: 13, lime: 14 } as const
+export const PAINT_COUNT = 15
 /** A bus is the one colour buses are. */
-export const BUS_PAINT = 7
-export const PAINT_COUNT = 8
+export const BUS_PAINT = PAINT.bus
+const COMMON: readonly [number, number][] = [
+  [PAINT.white, 0.6],
+  [PAINT.silver, 0.13],
+  [PAINT.grey, 0.1],
+  [PAINT.black, 0.08],
+  [PAINT.blue, 0.03],
+  [PAINT.cherry, 0.03],
+  [PAINT.beige, 0.03],
+]
+const PAINTS_BY_KIND: Partial<Record<VehicleKind, readonly [number, number][]>> = {
+  damas: [
+    [PAINT.white, 0.86],
+    [PAINT.silver, 0.08],
+    [PAINT.sky, 0.06],
+  ],
+  matiz: [
+    [PAINT.white, 0.42],
+    [PAINT.silver, 0.14],
+    [PAINT.red, 0.14],
+    [PAINT.sky, 0.1],
+    [PAINT.lime, 0.1],
+    [PAINT.beige, 0.1],
+  ],
+  zhiguli: [
+    [PAINT.cream, 0.3],
+    [PAINT.white, 0.2],
+    [PAINT.paleBlue, 0.2],
+    [PAINT.oldCherry, 0.2],
+    [PAINT.sand, 0.1],
+  ],
+  byd: [
+    [PAINT.white, 0.46],
+    [PAINT.grey, 0.2],
+    [PAINT.black, 0.2],
+    [PAINT.blue, 0.14],
+  ],
+}
+
+/** How many route cards there are for the minibuses to carry. */
+export const CARD_COUNT = 4
 
 function pick<T>(table: readonly (readonly [T, number])[], roll: number): T {
   let sum = 0
@@ -180,16 +292,57 @@ export function createTraffic(count: number, seed = 20261123): Traffic {
   const random = mulberry(seed)
   const lanes: Vehicle[][] = LANES.map(() => [])
   const total = Math.max(0, Math.floor(count))
-  // Buses keep to the kerb: one in the near kerb lane, and with enough traffic one in the far.
-  const kerbs = [LANES.length - 1, 0]
+  // Buses keep to the kerb: the first in the lane that passes the stop, and with enough traffic one in the near kerb lane.
+  const kerbs = [STOP_LANE, LANES.length - 1 === STOP_LANE ? 0 : LANES.length - 1]
   const buses = total >= 28 ? 2 : total >= 8 ? 1 : 0
 
-  const make = (kind: VehicleKind, lane: number, paint: number): Vehicle => {
+  const cruiseOf: Record<VehicleKind, readonly [number, number]> = {
+    bus: [8.5, 10],
+    damas: [9, 11.5],
+    zhiguli: [9, 12],
+    matiz: [9.5, 12.5],
+    nexia: [10, 13.5],
+    cobalt: [10, 14],
+    gentra: [10, 14],
+    crossover: [10, 14],
+    byd: [10.5, 14.5],
+    malibu: [10.5, 14.5],
+  }
+  let damases = 0
+  let sedans = 0
+  let zhigulis = 0
+  let cards = 0
+  const make = (kind: VehicleKind, lane: number): Vehicle => {
     const shape = VEHICLE_SHAPES[kind]
-    const cruise = kind === 'bus' ? 8.5 + random() * 1.5 : kind === 'van' ? 9 + random() * 2.5 : 10 + random() * 4.5
+    const [slow, fast] = cruiseOf[kind]
+    const cruise = slow + random() * (fast - slow)
+    let role: Role = kind === 'bus' ? 'bus' : 'car'
+    const look: Look = { variant: 0, dust: 0.15 + random() * 0.45, fade: random() * 0.12, card: -1, rack: false }
+    if (kind === 'damas') {
+      // Every other one is a minibus on a route, with its number in the windscreen.
+      if (damases++ % 2 === 0) {
+        role = 'minibus'
+        look.variant = 1
+        look.card = cards++ % CARD_COUNT
+      }
+      look.dust += 0.2
+    } else if (kind === 'zhiguli') {
+      // The two faces alternate; a roof rack on one in three; and fifty summers on the paint.
+      look.variant = zhigulis % 2
+      look.rack = zhigulis % 3 === 1
+      look.fade = 0.55 + random() * 0.4
+      look.dust += 0.2
+      zhigulis++
+    } else if (kind === 'cobalt' || kind === 'nexia' || kind === 'gentra') {
+      // One in nine of the sedans is a taxi.
+      if (sedans++ % 9 === 4) role = 'taxi'
+    }
+    const paint = kind === 'bus' ? BUS_PAINT : pick(PAINTS_BY_KIND[kind] ?? COMMON, random())
     return {
       kind,
+      role,
       paint,
+      look,
       lane,
       length: shape.length,
       width: shape.width,
@@ -203,17 +356,28 @@ export function createTraffic(count: number, seed = 20261123): Traffic {
       z: LANES[lane]!.z,
       going: LANES[lane]!.going,
       shown: false,
+      stops: role === 'bus' || role === 'minibus',
+      pause: role === 'bus' ? 8 + random() * 4 : 5 + random() * 3,
+      dwell: 0,
+      served: false,
+      pull: 0,
     }
   }
-  for (let b = 0; b < buses; b++) lanes[kerbs[b]!]!.push(make('bus', kerbs[b]!, BUS_PAINT))
-  for (let i = buses; i < total; i++) {
-    // Dealt out lane by lane, so that no lane is empty while another is full.
-    const lane = (i * 3 + 1) % LANES.length
-    const kind = DEAL[(i - buses) % DEAL.length]!
-    // A van is a working thing: white, nearly always.
-    const paint = kind === 'van' && random() < 0.8 ? 0 : pick(PAINTS, random())
-    lanes[lane]!.push(make(kind, lane, paint))
-  }
+  for (let b = 0; b < buses; b++) lanes[kerbs[b]!]!.push(make('bus', kerbs[b]!))
+  const kinds = dealKinds(total - buses)
+  kinds.forEach((kind, k) => {
+    const i = k + buses
+    // Dealt out lane by lane, so that no lane is empty while another is full; but a minibus keeps to the lane its stop is in.
+    let lane = (i * 3 + 1) % LANES.length
+    const vehicle = make(kind, lane)
+    if (vehicle.role === 'minibus') {
+      lane = STOP_LANE
+      vehicle.lane = lane
+      vehicle.z = LANES[lane]!.z
+      vehicle.going = LANES[lane]!.going
+    }
+    lanes[lane]!.push(vehicle)
+  })
   // Spread round each ring, in the order they will keep: nothing overtakes.
   for (const lane of lanes) {
     const n = lane.length
@@ -276,6 +440,9 @@ export function createTraffic(count: number, seed = 20261123): Traffic {
     return true
   }
 
+  /** Where, in the stop's lane, a nose stops at the shelter; and how far before it a driver starts to think about it. */
+  const stopNose = along(STOP_LANE, STOP_NOSE_X)
+
   function advance(dt: number, held: number, lens?: { x: number; y: number; z: number } | null): void {
     const against = held > AMBER
     const red = held >= RED
@@ -291,7 +458,8 @@ export function createTraffic(count: number, seed = 20261123): Traffic {
         widest = Math.max(widest, lane[k]!.width)
         tallest = Math.max(tallest, lane[k]!.height)
       }
-      const blocked = lensZone(laneIndex, lens, widest, tallest)
+      // (What has pulled in to the stop stands a little nearer that kerb than its lane does.)
+      const blocked = lensZone(laneIndex, lens, widest + (laneIndex === STOP_LANE ? PULL_IN * 2 : 0), tallest)
       const line = lines[laneIndex]!
       if (against) {
         // Someone in the road, on foot, with the line inside what the lens keeps clear, or beyond it:
@@ -328,6 +496,36 @@ export function createTraffic(count: number, seed = 20261123): Traffic {
             barred = red
           }
         }
+        // The stop, for what stops there: a wall at its mark until it has stood there its while.
+        if (me.stops && laneIndex === STOP_LANE) {
+          const room = stopNose - nose
+          if (me.served && room > 120) me.served = false
+          if (me.dwell > 0) {
+            me.dwell = Math.max(0, me.dwell - dt)
+            a = -HARD
+            stopping = true
+            if (me.dwell === 0) me.served = true
+          } else if (!me.served) {
+            if (room < -0.6) me.served = true
+            else if (room < 60) {
+              if ((me.v * me.v) / (2 * Math.max(room, 0.05)) <= WILLING || room > 14) {
+                a = Math.min(a, follow(me.v, me.cruise, Math.max(room, 0), me.v, 0.1))
+                stopping = true
+                if (room < 0.6 && me.v < 0.2) {
+                  me.dwell = me.pause
+                  me.v = 0
+                }
+              } else {
+                // Too fast to stop there this time: round again.
+                me.served = true
+              }
+            }
+          }
+          // Over towards the kerb on the way in, and out again on the way out.
+          const want = me.dwell > 0 || (!me.served && room < PULL_FROM && room > -0.6) ? 1 : 0
+          me.pull += (want - me.pull) * Math.min(1, dt * (want > me.pull ? 0.9 : 0.6))
+          me.z = LANES[laneIndex]!.z + STOP_SIDE * PULL_IN * me.pull
+        }
         // The lens: a wall nothing gets a say about.
         if (blocked && nose <= zone.from + 0.05) {
           a = Math.min(a, follow(me.v, me.cruise, zone.from - nose, me.v, 0.25))
@@ -335,7 +533,7 @@ export function createTraffic(count: number, seed = 20261123): Traffic {
         }
         a = Math.max(-HARD, Math.min(PULL, finite(a)))
         const before = me.v
-        me.v = Math.max(0, Math.min(me.cruise * 1.05, me.v + a * dt))
+        me.v = me.dwell > 0 ? 0 : Math.max(0, Math.min(me.cruise * 1.05, me.v + a * dt))
         let moved = ((before + me.v) / 2) * dt
         // On red the line is not crossed: what braking could not stop in time, the line does.
         if (barred && moved > Math.max(0, wall - nose)) {

@@ -60,7 +60,8 @@ const csp = [
   `img-src 'self' data: blob: ${GITHUB_AVATARS}`,
   // Vite inlines the small cyrillic-ext font subsets as data: URIs, so they must be allowed.
   `font-src 'self' data:`,
-  `connect-src 'self' ${GITHUB_API} ${CONTRIB_API}`,
+  // blob: for the car models' textures, which the model loader reads back with fetch() to decode them off the main thread.
+  `connect-src 'self' blob: ${GITHUB_API} ${CONTRIB_API}`,
   `worker-src 'self' blob:`,
   `manifest-src 'self'`,
   `object-src 'none'`,

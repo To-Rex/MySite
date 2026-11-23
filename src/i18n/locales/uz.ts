@@ -237,6 +237,9 @@ export const uz: Dictionary = {
     nav: 'Sahifalar',
     connect: 'Aloqa',
     preferences: 'Sozlamalar',
+    models: '3D avtomobil modellari',
+    by: 'muallif',
+    changed: 'soddalashtirilgan, nishonlar va davlat raqamlari olib tashlangan',
   },
   theme: {
     label: 'Rejim',
