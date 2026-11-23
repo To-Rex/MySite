@@ -13,3 +13,8 @@ test-results
 playwright-report
 .DS_Store
 *.log
+
+# The car models pipeline: its downloads, its output and its own dependencies (tools/car-models/README.md).
+tools/car-models/raw/
+tools/car-models/out/
+tools/car-models/node_modules/

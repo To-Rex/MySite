@@ -1,0 +1,17 @@
+{
+  "name": "car-models",
+  "private": true,
+  "type": "module",
+  "description": "Turns the downloaded car models into public/models/cars/*.glb.gz. Not part of the site build.",
+  "scripts": {
+    "build": "node process.mjs --all"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "gl-matrix": "3.4.4",
+    "meshoptimizer": "1.3.0",
+    "sharp": "0.35.5"
+  }
+}
