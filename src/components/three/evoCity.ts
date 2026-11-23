@@ -30,6 +30,7 @@ import {
   LANTERN_HEIGHT,
   LAWNS,
   MOSQUE,
+  PAVED_FROM,
   PAVEMENT,
   PLAZA,
   ROAD,
@@ -1164,7 +1165,7 @@ export function createCity(air: Air, options: CityOptions): Part {
     fragmentShader: `${AIR_PARS}\n${STREET_FRAG}`,
   })
   const street = new Mesh(streetGeometry, streetMaterial)
-  street.position.set(CITY.from + length / 2 - 12, 0.06, STREET_Z)
+  street.position.set(PAVED_FROM + length / 2, 0.06, STREET_Z)
   street.frustumCulled = false
   root.add(street)
   disposers.push(

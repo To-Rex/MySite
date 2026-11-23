@@ -28,6 +28,8 @@ export const FRONT_NEAR = STREET_Z + ROAD + PAVEMENT
 /** The length of what is paved: a little before the first front to a little past the last. */
 export const STREET_LENGTH = CITY_UNTIL - CITY_FROM + 30
 export const STREET_START = CITY_FROM - 8
+/** Where the paving itself begins: the west end of the street's ground. */
+export const PAVED_FROM = CITY_FROM - 12
 
 /** Lamps: how far apart along a kerb, and how high. The two kerbs' lamps are staggered by half a gap. */
 export const LAMP_GAP = 26

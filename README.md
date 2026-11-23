@@ -882,7 +882,12 @@ of them — they are shuffled when they are grown, so any first part of the list
 is the whole coat thinned out. And the meadow is trodden down for a few paces
 round the lens (`uNear` in `evoGrass.ts`): the hunt is followed from low in the
 grass, where a blade a pace from the camera is a green wall across the frame
-and, drawn over and over at that size, was most of what the frame cost.
+and, drawn over and over at that size, was most of what the frame cost. And a
+blade that cannot grow — where the city has taken the ground, or outside its
+window — is put away before any of the work of growing it. Over the city that
+is nearly every blade in the window, and when each was still grown in full,
+wind and all, only to be folded away under the ground, the first look down the
+avenue was where a Retina screen gave up its resolution.
 
 It is built ahead of being seen — the chunk is fetched and the scene mounted,
 parked, three seconds after the intro, or as soon as a reader has been near it
