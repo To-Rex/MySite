@@ -200,6 +200,19 @@ thread only turns the returned typed arrays into a `BufferGeometry`. Results are
 cached per (creature, quality tier) and shared by every instance, and the hero
 simply renders nothing until its geometry arrives.
 
+**And kept between visits.** The same kind at the same detail meshes to the same
+bytes every time, so the worker keeps what it makes in IndexedDB
+(`meshCache.ts`) and the next visit reads it back instead of meshing it again:
+the same mesh to the last bit, in tens of milliseconds instead of up to two
+seconds of a core each (more on a phone). The version is the hash in the worker's own
+file name, which covers everything it is built from: a change to any of the
+meshing is a new name, and what the old one kept is cleared out the first time
+the new one keeps anything. The dev server's worker has no hash and keeps
+nothing. None of it can stop a mesh being made — no database, a refusal, a full
+disk, or a database that has not answered within 1.5 s all read as nothing kept,
+and the worker meshes as before. `meshCache.ts` is worker-side, so it stays as
+free of packages as the rest of the worker.
+
 ### The scroll companion
 
 Past the hero, one turtle follows the reader down the page. It cannot live in

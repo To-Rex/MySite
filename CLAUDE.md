@@ -40,7 +40,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 
 | Touching | README section |
 | --- | --- |
-| `creatures.ts`, `sdf.ts`, `skinMaterial.tsx`, `creatureRig.ts`, `HeroScene.tsx` | The hero creatures |
+| `creatures.ts`, `sdf.ts`, `skinMaterial.tsx`, `creatureRig.ts`, `HeroScene.tsx`, `meshCache.ts` | The hero creatures |
 | `Companion.tsx`, `CompanionTurtle.tsx`, `useCreature.ts` | The scroll companion |
 | `Spectacle.tsx`, `stage.ts`, `mascots.ts`, `lib/spectacle.ts` | The hero's easter egg |
 | `Cameo.tsx`, `useCameoDirector.ts` | Cameos |
@@ -78,8 +78,8 @@ Each of these was a debugging round the first time. The README section explains 
    app shell must not import `three` or `@react-three/*` at runtime (`import type` is fine).
    3D enters only through `lazy()` / dynamic `import()`. One static import moved the entry
    bundle from 136 kB to 372 kB.
-2. **`sdf.ts`, `creatures.ts`, `mascots.ts`, `evoFigures.ts`, `evoCoat.ts` stay three-free** so the meshing
-   worker does not bundle a second copy of three.
+2. **`sdf.ts`, `creatures.ts`, `mascots.ts`, `evoFigures.ts`, `evoCoat.ts`, `meshCache.ts` stay three-free** so the
+   meshing worker does not bundle a second copy of three.
 3. **Never pose from `state.clock`.** Canvases are parked with `frameloop="never"` and R3F
    resets or corrupts that clock. Accumulate clamped frame deltas (cap 0.25 s). The valley
    timeline is the one deliberate exception: it runs on a wall clock.
