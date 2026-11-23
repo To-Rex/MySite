@@ -81,6 +81,14 @@ afterEach(() => {
 })
 
 describe('the meshing workers', () => {
+  it('are one where WebGL is drawn by the CPU', async () => {
+    vi.doMock('@/hooks/useDeviceTier', () => ({ gpuClass: () => 'software' }))
+    const { requestCreature } = await load(8)
+    for (const kind of ['dino', 'turtle', 'crag', 'early'] as const) void requestCreature(kind, 'low')
+    expect(FakeWorker.made).toHaveLength(1)
+    vi.doUnmock('@/hooks/useDeviceTier')
+  })
+
   it('are half the cores, never fewer than two nor more than three', async () => {
     for (const [cores, pool] of [
       [1, 2],

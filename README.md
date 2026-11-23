@@ -294,7 +294,8 @@ with nothing in the console to explain it. A worker that dies now hands its queu
 back to the main thread, and every request carries a four-second patience for the
 other failure mode: a reply that never comes — counted from when a worker starts
 on it, not from when it was asked for, since a mesh that is only waiting its
-turn is not stuck. There are two or three workers (half the cores, `POOL`) and
+turn is not stuck. There are two or three workers (half the cores, `poolSize`;
+one where WebGL is drawn by the CPU, where the cores are what draws the page) and
 one queue, in order of how soon each mesh is wanted (`PRIORITY`): the hero's
 own creatures, then the start of the long walk, then the rest of it, and last
 the extinction cinematic's warm-up.

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BufferAttribute, BufferGeometry } from 'three'
+import { gpuClass } from '@/hooks/useDeviceTier'
 import type { CreatureDetail, CreaturePayload } from './creatures'
 import { createAnything, type AnyCreatureKind, type AnyKind } from './mascots'
 import type { CreatureRequest, CreatureResponse } from './creatures.worker'
@@ -74,11 +75,19 @@ export interface RequestOptions {
  * were the first people of the walk arriving three seconds after its cave.
  * As many as half the machine's cores, never fewer than two and never more
  * than three: more than that and they take the cores the page is drawn with.
+ *
+ * One, where WebGL is drawn by the CPU. There the cores are what draws the
+ * page, nothing of the walk is built ahead to be in a hurry for, and a second
+ * worker meshing the hero's creatures alongside the first on every page load
+ * was enough to put the browser tests on a CI runner past their time.
  */
-const POOL = (() => {
+let pool = 0
+function poolSize(): number {
+  if (pool > 0) return pool
   const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2
-  return Math.min(3, Math.max(2, Math.floor(cores / 2)))
-})()
+  pool = gpuClass() === 'software' ? 1 : Math.min(3, Math.max(2, Math.floor(cores / 2)))
+  return pool
+}
 
 interface Job {
   id: number
@@ -120,7 +129,7 @@ function abandonWorkers(): void {
 }
 
 function spawn(): Worker | null {
-  if (workerFailed || spawned >= POOL) return null
+  if (workerFailed || spawned >= poolSize()) return null
   try {
     const worker = new Worker(new URL('./creatures.worker.ts', import.meta.url), { type: 'module' })
     spawned++
