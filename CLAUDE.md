@@ -51,6 +51,7 @@ by `tests/unit/architecture.test.ts`; if one fails, fix the code, not the test. 
 | `src/features/sound/*` | The 404 page → Sound · The extinction cinematic → Sound |
 | any `<Canvas>` | Canvases and the pointer · Parked canvases and the clock |
 | layout, breakpoints | Responsive |
+| `useRestingAnimations.ts`, looping CSS animations | Performance |
 | `scripts/`, `netlify.toml`, `site.ts` | Deployment |
 | `index.html` head, `Seo.tsx` | Deployment → Link previews |
 | `src/i18n/*`, `newLatin.ts`, locale files | Languages |

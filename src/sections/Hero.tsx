@@ -158,11 +158,9 @@ export function Hero() {
             aria-label={t.hero.scrollHint}
           >
             <span className="relative flex h-9 w-5 items-start justify-center rounded-full border border-border-2 p-1" aria-hidden>
-              <motion.span
-                className="block h-1.5 w-0.5 rounded-full bg-fg-2"
-                animate={reduced ? undefined : { y: [0, 14, 0], opacity: [1, 0.2, 1] }}
-                transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-              />
+              {/* Falls and fades for as long as the page is open: a CSS animation, which the
+                  compositor runs, rather than one the main thread writes out every frame. */}
+              <span className="scroll-hint-dot block h-1.5 w-0.5 rounded-full bg-fg-2" />
             </span>
             {t.hero.scrollHint}
             <ArrowDown size={12} />

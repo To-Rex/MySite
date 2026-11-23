@@ -6,6 +6,7 @@ import { useI18n } from '@/i18n/context'
 import { IntroContext } from './intro'
 import { installPointerTracking } from '@/lib/pointer'
 import { useReducedMotion } from '@/hooks/useReducedMotion'
+import { useRestingAnimations } from '@/hooks/useRestingAnimations'
 import { Seo } from '@/components/seo/Seo'
 import { Navigation } from '@/components/layout/Navigation'
 import { Footer } from '@/components/layout/Footer'
@@ -33,6 +34,7 @@ function Shell() {
   const release = useCallback(() => setIntroDone(true), [])
 
   useEffect(() => installPointerTracking(), [])
+  useRestingAnimations()
 
   return (
     <IntroContext.Provider value={introDone}>

@@ -1889,6 +1889,7 @@ its box and targets too small for a thumb — turned up, and what changed:
 
 - The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only (~140 kB, 42 kB gzipped).
 - Scenes render only while on screen (`frameloop="never"` off-screen), DPR adapts via `PerformanceMonitor`, and a device-tier estimate (`useDeviceTier`) scales geometry/particles; WebGL-less browsers get a designed 2D fallback.
+- Looping CSS animations rest while their part of the page is more than a screen away (`useRestingAnimations`, `[data-asleep]`): they go on from where they stopped as it comes back within a screen, before it is seen. The hero's scroll hint is a CSS animation, not a motion one the main thread writes out every frame. With the long walk on screen the main thread's frame went from 2.9 ms to 2.3 (style 0.37 → 0.12, layerize 0.32 → 0) on an M2.
 - `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor, turns the projects row back into a grid, stops the sky from drifting and its sun and moon from travelling, shows the GitHub numbers and graph already arrived, and changes language at once instead of letter by letter.
 
 ## Testing

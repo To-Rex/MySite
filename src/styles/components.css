@@ -194,6 +194,38 @@
 :root[data-theme='light'] .tone-stone { --c1: #ffffff; --c2: #e6e4dd; --c3: #d3d0c6; }
 :root[data-theme='light'] .tone-ash { --c1: #ffffff; --c2: #e4e4e4; --c3: #d0d0d0; }
 
+/* The hero's scroll hint: the dot in the mouse, falling and fading, again and again —
+   the keyframes and the ease (motion's easeInOut) of the motion animation it was. */
+.scroll-hint-dot {
+  animation: scroll-hint 1.8s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+}
+@keyframes scroll-hint {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(14px);
+    opacity: 0.2;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scroll-hint-dot {
+    animation: none;
+  }
+}
+
+/* Asleep: a part of the page more than a screen away from what is shown keeps its
+   looping animations where they are until it comes back (useRestingAnimations). Nothing
+   asleep is on screen, so nothing that is on screen changes; the main thread and the
+   compositor stop working out frames of breathing bars and floating tiles nobody sees. */
+[data-asleep] *,
+[data-asleep] *::before,
+[data-asleep] *::after {
+  animation-play-state: paused !important;
+}
+
 /* "Currently building" signal bars */
 .signal-bar {
   display: block;
