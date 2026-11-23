@@ -371,7 +371,9 @@ const BUILDING_FRAG_PARS = /* glsl */ `
 
   // The steel grilles over the windows of the lowest floors, all over
   // Tashkent: uprights, two rails, and a sun of bars rising from the sill.
-  // 'p' is in metres from the window's bottom left, 'size' its size.
+  // 'p' is in metres from the window's bottom left, 'size' its size. (Only
+  // asked from close enough to see one: from further off its bars are less
+  // than a pixel, what is left of them under the half a bar needs.)
   float evoGrille(vec2 p, vec2 size, float aa) {
     float bars = evoBar(p.x, 0.13, 0.016, aa);
     bars = max(bars, evoBar(p.y - size.y * 0.33, size.y * 2.0, 0.03, aa));
@@ -532,9 +534,10 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     evoWallHeight = 1.0 - joint;
     evoWallGlow = evoWash(wall, f.v);
     if (!grid) return wall;
-    {
+    if (f.aa < 0.25) {
       // Rain down from every sill, and from under every cooler the water it
-      // drips, a dark tongue over the floor below.
+      // drips, a dark tongue over the floor below. (Not from far off, where a
+      // pixel is more than a quarter of a metre and none of it would show.)
       float kindHere = evoHash(vec2(column, 3.0) + f.seed * 41.0);
       float streaks = 0.5 + 0.5 * evoNoise(vec2(f.u * 9.0, f.seed * 40.0));
       if (kindHere >= 0.64) {
@@ -601,7 +604,7 @@ const BUILDING_FRAG_PARS = /* glsl */ `
       }
       vec2 open = vec2(at.x, (at.y - RAIL) / (1.0 - RAIL));
       vec2 opening = vec2(BAY * 0.9, STOREY * 0.865 * (1.0 - RAIL));
-      if (level < 1.5 && evoHash(id + 31.0) < 0.5 && evoGrille(open * opening, opening, f.aa) > 0.5) {
+      if (level < 1.5 && f.aa < 0.3 && evoHash(id + 31.0) < 0.5 && evoGrille(open * opening, opening, f.aa) > 0.5) {
         vec3 steel = evoLin(vec3(0.16, 0.17, 0.18));
         evoWallGlow = evoWash(steel, f.v);
         evoWallRough = 0.45;
@@ -653,7 +656,7 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     vec2 at = (cell - vec2(0.2, 0.2)) / vec2(0.6, 0.58);
     if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) return wall;
     // The two lowest floors have grilles over most of their windows.
-    if (level < 1.5 && evoHash(id + 31.0) < 0.6 && evoGrille(at * vec2(BAY * 0.6, STOREY * 0.58), vec2(BAY * 0.6, STOREY * 0.58), f.aa) > 0.5) {
+    if (level < 1.5 && f.aa < 0.3 && evoHash(id + 31.0) < 0.6 && evoGrille(at * vec2(BAY * 0.6, STOREY * 0.58), vec2(BAY * 0.6, STOREY * 0.58), f.aa) > 0.5) {
       vec3 steel = evoLin(vec3(0.16, 0.17, 0.18));
       evoWallGlow = evoWash(steel, f.v);
       evoWallRough = 0.45;
@@ -722,7 +725,7 @@ const BUILDING_FRAG_PARS = /* glsl */ `
       return stone;
     }
     vec2 bid = vec2(floor(bu), floor(fv)) + f.seed * 57.0;
-    if (floor(fv) < 0.5 && evoHash(bid + 31.0) < 0.6 && evoGrille(at * vec2(BAY * 0.46, STOREY * 0.71), vec2(BAY * 0.46, STOREY * 0.71), f.aa) > 0.5) {
+    if (floor(fv) < 0.5 && f.aa < 0.3 && evoHash(bid + 31.0) < 0.6 && evoGrille(at * vec2(BAY * 0.46, STOREY * 0.71), vec2(BAY * 0.46, STOREY * 0.71), f.aa) > 0.5) {
       vec3 steel = evoLin(vec3(0.16, 0.17, 0.18));
       evoWallGlow = evoWash(steel, f.v);
       return steel;
@@ -1578,6 +1581,8 @@ export function createCity(air: Air, options: CityOptions): Part {
     shared.uCity.value = beat.stage.city
     shared.uLamps.value = beat.lamps
     shared.uTime.value = beat.t
+    // The relief's shadows are the sun's; the moon's would be lost in the dark.
+    relief.castShadows(beat.sky.elevation > -2)
     const uniforms = streetMaterial.uniforms as { uLight: { value: Color }; uAmbient: { value: Color } }
     uniforms.uLight.value.copy(beat.light)
     uniforms.uAmbient.value.copy(beat.ambient)

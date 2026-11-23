@@ -215,7 +215,18 @@ function withRise(material: Material, shared: Shared, key: string): void {
 
 const KINDS: Record<Piece['kind'], number> = { cooler: 0, meter: 1, masonry: 2, sign: 3, pipe: 4, mast: 4, dish: 5, awning: 6 }
 
-export function createRelief(blocks: readonly Tower[], shared: Shared, air: Air, options: ReliefOptions): { object: Group; dispose: () => void } {
+export interface Relief {
+  object: Group
+  /**
+   * Whether the pieces cast shadows now. By moonlight a cooler's shadow is
+   * not to be seen, and drawing all of them into the shadow map anyway is
+   * a share of every night frame for nothing.
+   */
+  castShadows(on: boolean): void
+  dispose(): void
+}
+
+export function createRelief(blocks: readonly Tower[], shared: Shared, air: Air, options: ReliefOptions): Relief {
   const root = new Group()
   const disposers: (() => void)[] = []
   const pieces = reliefOf(blocks, options.signGrid.x * options.signGrid.y)
@@ -327,8 +338,13 @@ export function createRelief(blocks: readonly Tower[], shared: Shared, air: Air,
     },
   )
 
+  const casting = root.children.filter((child): child is InstancedMesh => child instanceof InstancedMesh)
   return {
     object: root,
+    castShadows(on: boolean) {
+      const cast = on && options.shadows
+      for (const mesh of casting) mesh.castShadow = cast
+    },
     dispose: () => {
       for (const dispose of disposers) dispose()
     },
