@@ -304,3 +304,12 @@ export const CITY_LIGHT_GLSL = /* glsl */ `
     return vec3(1.0, 0.86, 0.66) * sum * 16.0;
   }
 `
+
+// ------------------------------------------------------------- the bus stop
+
+/**
+ * Where the buses and the minibuses stop: a shelter on the far pavement,
+ * between the far kerb's tree at 273 and its lamp at 286, and the length of
+ * kerb in front of it that is kept clear for them to pull in to.
+ */
+export const BUS_STOP = { x: 279.5, half: 3.2, side: 'far', bay: 16 } as const
