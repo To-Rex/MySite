@@ -6,6 +6,8 @@ import { walkProgress } from '@/lib/evolution'
 import type { ValleyQuality } from '@/lib/valley'
 import type { Theme } from '@/theme/context'
 import { createPost, type Post } from './evoPost'
+import { DEPTH } from './evoScript'
+import { leanShadowMaps } from './leanShadow'
 import { WALK_QUALITY, createWalk, type Walk } from './evoWalk'
 
 /**
@@ -67,6 +69,9 @@ function Stage({ quality, theme, wrapperRef, onSlow }: StageProps) {
   useEffect(() => {
     const post = WALK_QUALITY[quality].glow ? createPost(4) : null
     const walk = createWalk(quality)
+    // The sun's and the fire's maps, before three makes its own with a colour
+    // texture nothing reads (`leanShadow.ts`).
+    leanShadowMaps(walk.root, gl)
     let gone = false
     let pending = 0
     const queue: (() => void)[] = []
@@ -295,7 +300,7 @@ export default function EvolutionScene({ quality, theme, wrapperRef, active }: E
       // The frameloop is a prop and nothing else, the way the hero's is: set
       // from inside the scene it does not survive the canvas's next render.
       frameloop={active ? 'always' : 'never'}
-      camera={{ position: [-23, 1, -2], fov: 42, near: 0.3, far: 4200 }}
+      camera={{ position: [-23, 1, -2], fov: 42, near: DEPTH.near, far: DEPTH.far }}
       gl={{ antialias: !q.glow, alpha: false, powerPreference: 'high-performance', stencil: false }}
       data-quality={steps ? `${quality}:dpr${steps}` : quality}
       // Full-bleed and pinned: R3F's own wrapper would otherwise take the

@@ -193,9 +193,12 @@ export function createWalk(quality: ValleyQuality): Walk {
   const parts: Part[] = []
 
   // ---- sky -----------------------------------------------------------------
+  // Drawn after everything solid, and only where nothing solid is (see
+  // `makeSkyMaterial`): the cave, the city and the studio cover most of the
+  // frame, and a card that draws in order shades the sky there for nothing.
   const dome = new Mesh(new SphereGeometry(1, 48, 24), makeSkyMaterial(air))
   dome.frustumCulled = false
-  dome.renderOrder = -1000
+  dome.renderOrder = 1000
   root.add(dome)
 
   // ---- land ----------------------------------------------------------------

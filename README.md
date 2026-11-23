@@ -1052,6 +1052,36 @@ is nearly every blade in the window, and when each was still grown in full,
 wind and all, only to be folded away under the ground, the first look down the
 avenue was where a Retina screen gave up its resolution.
 
+**And what a frame spent on what nobody sees.** Each of these leaves every
+pixel as it was. Read back from the canvas with the walk's clock stopped, the
+frame is the same to the last bit with and without them in the cave, the meadow
+and the studio; the city's frames differ a little from one to the next even
+with the clock stopped, and there the difference with them is the same as
+without.
+- The sky (`makeSkyMaterial`) was drawn first and covered by everything else.
+  It sits on the far plane, writes no depth, and is now drawn last of what is
+  solid, with the depth test on: a pixel is shaded as sky only where nothing
+  nearer was drawn, which is what was shown before, sample for sample. That
+  needs nothing to share the far plane's depth (the ranges end two kilometres
+  out; the far plane is past four) and nothing solid to write no depth;
+  `walk-sky.test.ts` holds both. Apple's graphics hide covered pixels by
+  themselves; every other card shaded the sky across the cave, the city and the
+  studio for nothing.
+- The glow's frame is multisampled, and three resolved its depth along with its
+  colour every frame, into a buffer nothing reads (`resolveDepthBuffer: false`).
+- Three's shadow map carries a full RGBA colour texture beside the depth it
+  reads, cleared and written back every frame. `leanShadow.ts` makes the sun's
+  and the fire's maps before three does, with one 8-bit channel instead: 52 MB
+  less on the card at ultra, 13 MB at high.
+- A blade of grass the camera cannot see any of is put away before it is grown
+  (`evoUnseen`): the ball tested is the most its noise, the wind and every foot
+  near it could make of it. The grass is almost all vertex work — every blade
+  grown once for each of its points — and half of the window is off to the
+  sides of the view or behind it.
+
+Measured on an M2 at the walk's full resolution, back to back: the cave from 47
+frames a second to 59.5, and the hunt from 33 to 36 for the grass alone.
+
 It is built ahead of being seen, in three steps after the intro.
 `evoPrefetch.ts` asks the workers for its meshes the moment the intro is over:
 the rock of the cave and its people first, then the herd and the people of the

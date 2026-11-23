@@ -361,7 +361,16 @@ const SKY_FRAG = /* glsl */ `
   }
 `
 
-/** The dome. Drawn first, without depth, so everything else simply covers it. */
+/**
+ * The dome. It sits on the far plane and writes no depth, and it is drawn
+ * after everything solid (the walk gives it the last place among them) with
+ * the depth test on: so a pixel is shaded as sky only where nothing solid was
+ * drawn, which is what drawing it first and covering it used to show, sample
+ * for sample. Nothing in the walk is far enough off to share the far plane's
+ * depth with it — the ranges end two kilometres out and the far plane is past
+ * four — and everything solid in it writes depth (`walk-sky.test.ts`).
+ * Anything see-through still comes after, over the sky as before.
+ */
 export function makeSkyMaterial(air: Air): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: airUniforms(air),
@@ -369,7 +378,7 @@ export function makeSkyMaterial(air: Air): ShaderMaterial {
     fragmentShader: SKY_FRAG,
     side: BackSide,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     fog: false,
   })
 }

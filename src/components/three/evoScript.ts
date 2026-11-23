@@ -79,6 +79,14 @@ export function track(keys: readonly Key[]): (at: number, out: number[]) => numb
 
 // ------------------------------------------------------------------ camera
 
+/**
+ * How near and how far the camera sees, in metres. The far plane is well past
+ * anything there is to see — the ranges end about two kilometres out — which
+ * the sky relies on: it is drawn on the far plane itself, last, and only where
+ * nothing nearer was (`makeSkyMaterial`).
+ */
+export const DEPTH = { near: 0.3, far: 4200 } as const
+
 export interface Shot {
   x: number
   y: number

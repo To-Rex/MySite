@@ -54,7 +54,11 @@ export function createPost(samples: number): Post {
   const stage = new Scene()
   stage.add(quad)
 
-  const frame = new WebGLRenderTarget(2, 2, { type: HalfFloatType, minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, samples })
+  // Only the colour is read after the scene is drawn into it: three would
+  // otherwise resolve the multisampled depth too, a full-screen pass over
+  // every sample of it each frame, into a buffer nothing looks at. Unresolved,
+  // the driver is also told it can drop the samples' depth rather than keep it.
+  const frame = new WebGLRenderTarget(2, 2, { type: HalfFloatType, minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, samples, resolveDepthBuffer: false })
   const level = () => new WebGLRenderTarget(2, 2, { type: HalfFloatType, minFilter: LinearFilter, magFilter: LinearFilter, generateMipmaps: false, depthBuffer: false })
   const pyramid = Array.from({ length: LEVELS }, level)
   // A level cannot be read and written in the same pass, so each has a twin

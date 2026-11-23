@@ -144,6 +144,53 @@ const GRASS_VERT_PARS = /* glsl */ `
     vBlade = vec3(0.0);
   }
 
+  // Whether the camera could see nothing at all of a blade rooted at root, on
+  // ground that high: the whole of the ball that holds the blade, whatever its
+  // hashes, noise, wind and treads turn out to be, lies outside one of the
+  // sides of the view or behind its near end. Every bound is the most the
+  // growing below can give (the most it can lean: its own way, a gust at its
+  // fullest, the flutter, every foot near it pushing at once), so a blade put
+  // away here is one that would have drawn nothing.
+  bool evoUnseen(vec2 root, float ground) {
+    float push = 0.0;
+    float squash = 1.0;
+    // A foot that pushed hard enough would turn a blade over, down into the ground.
+    float over = 0.0;
+    for (int i = 0; i < ${TREADS}; i++) {
+      float p = (1.0 - smoothstep(uTread[i].z * 0.35, uTread[i].z, length(root - uTread[i].xy))) * uTread[i].w;
+      push += abs(p);
+      squash *= max(1.0, abs(1.0 - p * 0.3));
+      if (1.0 - p * 0.3 < 0.0) over = 1.0;
+    }
+    float wind = length(uWind.xy);
+    float lean = 0.3 + wind * (0.12 + 0.62 * abs(uWind.w)) + wind * 0.06 + push * 0.95;
+    float tall = 0.72 * 1.25 * abs(uLayer.w) * squash;
+    float width = max(abs(uLayer.z) * 1.3, uPixel * length(vec3(root.x, ground, root.y) - cameraPosition));
+    float reach = lean * tall + width;
+    // Up its height and down by however far a lean that strong bends it back
+    // under its root; turned over, as far either way.
+    float swing = tall * max(1.0, 0.32 * lean * lean - 1.0);
+    float up = over > 0.5 ? swing : tall;
+    float down = max(0.2, over > 0.5 ? swing : tall * (0.32 * lean * lean - 1.0));
+    vec4 centre = modelViewMatrix * vec4(root.x, ground + 0.5 * (up - down), root.y, 1.0);
+    float radius = length(vec2(reach, 0.5 * (up + down))) + 0.01;
+    mat4 m = projectionMatrix;
+    vec4 r0 = vec4(m[0][0], m[1][0], m[2][0], m[3][0]);
+    vec4 r1 = vec4(m[0][1], m[1][1], m[2][1], m[3][1]);
+    vec4 r2 = vec4(m[0][2], m[1][2], m[2][2], m[3][2]);
+    vec4 r3 = vec4(m[0][3], m[1][3], m[2][3], m[3][3]);
+    vec4 sides[5];
+    sides[0] = r3 + r0;
+    sides[1] = r3 - r0;
+    sides[2] = r3 + r1;
+    sides[3] = r3 - r1;
+    sides[4] = r3 + r2;
+    for (int i = 0; i < 5; i++) {
+      if (dot(sides[i], centre) < -radius * length(sides[i].xyz)) return true;
+    }
+    return false;
+  }
+
   void evoBlade() {
     float side = uLayer.x;
     float cell = uLayer.y / side;
@@ -168,10 +215,16 @@ const GRASS_VERT_PARS = /* glsl */ `
       evoNoBlade(root);
       return;
     }
+    vec4 land = texture2D(uLand, (root - uLandBox.xy) / uLandBox.zw);
+    // Out of shot, and so put away before any of the work too: off to the
+    // sides of the window and behind the lens is most of it.
+    if (evoUnseen(root, land.r)) {
+      evoNoBlade(root);
+      return;
+    }
     float h3 = evoHash(g + 41.0);
     float h4 = evoHash(g + 73.0);
 
-    vec4 land = texture2D(uLand, (root - uLandBox.xy) / uLandBox.zw);
     // Clumps: thick here, thin there, and nothing where nothing grows.
     float clump = evoNoise(root * 0.21) * 0.6 + evoNoise(root * 0.9) * 0.4;
     float grows = land.g * (1.0 - taken);
