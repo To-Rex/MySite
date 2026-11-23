@@ -581,8 +581,8 @@ everything else is a family of `evo*` files under `components/three/`.
 | `fire` | 0 | Embers at the back of a cave; the fire catches; three of the four people round it get up and go |
 | `hunt` | 0.2 | Out of the mouth into the sunrise; a herd at the water; stalking up close through the grass, one spear, the herd gone and a run after it |
 | `field` | 0.47 | The camera climbs; three days and nights go by; roofs, ploughed strips, a track |
-| `city` | 0.645 | Blocks rise out of the ground one at a time; dusk in a street; lamps and windows come on |
-| `now` | 0.905 | Across the road, through the glass, over a shoulder, into the monitor |
+| `city` | 0.645 | Tashkent rises out of the ground one block at a time; across a square, a white mosque and the television tower against the sunset; lamps and windows come on |
+| `now` | 0.905 | Over the road on the crossing, through the glass, over a shoulder, into the monitor |
 
 **The whole walk is a function of one number** (`evoScript.ts`): how far the page
 has been scrolled through it. Where the camera is and what lens it has, where
@@ -724,16 +724,59 @@ camera that stays put, and this camera travels half a kilometre. Here every
 instance has a cell of a grid that covers the whole country and draws the blade
 of whichever cell of its row and column is nearest the camera, so blades that
 fall off the back of the window turn up at the front as the blades that were
-always going to be there. Whatever walks through it parts it.
+always going to be there. Whatever walks through it parts it. Where the city
+comes it thins by degrees — except on the street and the square, where it is
+gone the moment they are laid: paving is paving from the day it goes down.
 
-**The city** (`evoCity.ts`) is one instanced box, and everything that makes it
-buildings is in the fragment shader. A wall is divided into bays and floors;
-each window is a room, and the room is *drawn* — the ray from the eye is carried
-on through the glass to whichever of the room's five inside faces it meets — so
-walking past a lit front, the back walls slide behind the frames the way they
-do. By day the glass shows the sky and at the right moment the sun. The street
-is a shader too: lamp pools and what a wet patch throws back of them are worked
-out from where the lamps are, with no lights in the scene.
+**The city** (`evoCity.ts`) is Tashkent, and it is still one instanced box.
+The layout is that city's: four to nine floors along a street and nine to
+sixteen behind, the few glass towers all together at the far end of the avenue,
+a hotel that is a long slab faced with a lattice, and on the far side of the
+road a square with nothing built on it. Everything that makes a box a building
+is in the fragment shader, by kind: panel blocks with loggias — some glazed in,
+each by its own household — cast sun-screens over the stairs and a mosaic on
+the blind end wall; yellow brick with pilasters and a cornice; rendered blocks
+with glass balconies; curtain wall. An opening is not painted on. The ray from
+the eye is carried on through it (`evoInto`) to whichever inside face it meets
+— the back of a room, the side wall of a loggia, the shelves of a shop — so
+walking past a lit front, what is inside slides behind the frames the way it
+does. By day the glass shows the sky and at the right moment the sun. Ground
+floors on the street are shops, and their signs are words drawn into a canvas
+(`evoSigns.ts`): what each one sells, in Uzbek, and never a name. The street is
+a shader too: asphalt and its paint, a zebra crossing where the walk goes over,
+setts with a red band along the kerb, a square of earth round every tree, and
+lamp pools — and what a wet patch throws back of them — worked out from where
+the lamps are, with no lights in the scene. `evoStreet.ts` is where the kerbs,
+the lanes, the lamps, the crossing and the square are written down once,
+three-free, for the city, the traffic, the trees and the tests to agree about.
+
+**What makes it Tashkent** (`evoTashkent.ts`) stands on that square and over
+it: a white mosque with a turquoise dome and two minarets, after the one on the
+Anhor; the flag; a fountain; the country's name on the roof of the hotel; and
+seven hundred metres off, the television tower on its three legs. It is a
+Tashkent put together out of its landmarks, not a map of it — they do not stand
+this close to one another. Everything that stands still is one mesh and one
+program. Each vertex carries what kind of surface it is on and where on that
+surface it is, in metres, and the fragment shader draws marble in courses,
+tilework, pierced lattices, a carved door and lit windows from that, the same
+way a block of flats is drawn from a box. None of it takes one of three's
+lights: the sun, the sky, the street's lamps, the square's lanterns and the
+floodlights are all worked out in the shader, so there is one program however
+the walk is lit and nothing to rehearse.
+
+The tower is where it is for three reasons, and each of them is a test. It
+stands on the plain: the ranges begin a little further out, and a tower on a
+mountainside is not this one — which is also why it is seven hundred metres off
+and not the kilometre and more it was first put at. It is under where the sun
+goes down, so the last of the daylight is behind it. And nothing is built on
+the lines from the near pavement to it (`beforeTheTower`), so across the square
+it is seen whole, legs and all, between the minaret and the corner of the
+studio's building. The flag is drawn to its own measure — three bands and two
+red lines in 80 : 5 : 80 : 5 : 80, a crescent and twelve stars in rows of three,
+four and five — and stands at the corner of the square the walk reaches first,
+where from across the road its pole goes up beside the dome and the cloth is in
+the sky above it. The lights at the crossing hang on two lamp posts that were
+already there and turn with `crossingHeld`: the walk is what they change for.
 
 **The air** (`evoAir.ts`) has a sun that moves, so nothing about it is a
 constant and nothing is a module-level singleton either: `createAir()` makes

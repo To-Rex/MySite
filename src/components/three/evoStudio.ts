@@ -110,7 +110,20 @@ export function createStudio(air: Air & Arrivals, detail: CreatureDetail, bump: 
   rug.rotation.x = -Math.PI / 2
   // What is left of the building's ground floor either side, and the beam over the glass.
   const home = towers().find((tower) => tower.base > 0)
-  const stone = solid('#3a3835', 0.9, 'stone')
+  // The same concrete as the block above it, and lit by the street as that is:
+  // left dark, the one lit window was a hole in a black wall.
+  const lamps = { value: 0 }
+  const stone = keep(
+    inAir(new MeshStandardMaterial({ color: '#8f897d', roughness: 0.9, metalness: 0 }), air, 'studio:stone', (shader) => {
+      shader.uniforms.uLamps = lamps
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uLamps;')
+        .replace(
+          '#include <emissivemap_fragment>',
+          '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.74, 0.46) * uLamps * (exp(-vEvoWorld.y / 6.5) * 0.5 + 0.018);',
+        )
+    }),
+  )
   if (home) {
     const left = home.x - home.w / 2
     const right = home.x + home.w / 2
@@ -227,6 +240,7 @@ export function createStudio(air: Air & Arrivals, detail: CreatureDetail, bump: 
       if (!seen) return
       const on = beat.lamps
       lamp.intensity = 2 + 13 * on
+      lamps.value = on
       shadeMaterial.color.setRGB(1, 0.82, 0.6).multiplyScalar(0.6 + 3.2 * on)
       glow.color.copy(screenTint)
       glow.intensity = 0.5 + 1.1 * on

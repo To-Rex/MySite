@@ -92,7 +92,9 @@ for (const viewport of VIEWPORTS) {
           [0.2, 'mouth'],
           [0.41, 'hunt'],
           [0.56, 'field'],
+          [0.7, 'square'],
           [0.76, 'city'],
+          [0.885, 'crossing'],
           [0.93, 'now'],
         ] as const) {
           await page.evaluate((p) => {

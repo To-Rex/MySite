@@ -5,8 +5,8 @@ import { PLACE } from './evoLand'
  *
  * Several files stand things on it — the buildings, the lamps, the traffic,
  * the trees, the people on the pavement — and they have to agree about where
- * the kerb is. This is where it is written down, once. No three.js: the tests
- * read it too.
+ * the kerb is. This is where it is written down, once: plain numbers, and the
+ * GLSL that repeats them, so the tests read the same street the scene draws.
  *
  * The street runs along +x. "Far" is the side across the road from the walk
  * (towards -z), "near" the side the walk comes down.
@@ -61,9 +61,10 @@ export const LANES: readonly { z: number; going: 1 | -1 }[] = [
 
 /**
  * Where the walk crosses the road, to the lit window on the other side: a
- * zebra crossing, with a stop line a few metres back from it either way.
+ * zebra crossing straight in front of that window, with a stop line a few
+ * metres back from it either way.
  */
-export const CROSSWALK = { x: 389.5, half: 3, stop: 2.2 } as const
+export const CROSSWALK = { x: 393.5, half: 3, stop: 2.2 } as const
 
 /**
  * How far the traffic is held at the crossing, 0 to 1, at a point of the walk:
@@ -77,3 +78,159 @@ export function crossingHeld(progress: number): number {
   }
   return ramp(0.842, 0.856, progress) * (1 - ramp(0.935, 0.95, progress))
 }
+
+// ---------------------------------------------------------------- Tashkent
+
+/**
+ * The square across the road from the walk. Nothing is built on it but what
+ * it is for; from the pavement opposite it is the one place the sky comes
+ * down to the ground, which is why the tower is where it is.
+ */
+export const PLAZA = { x0: 302, x1: 388, front: FRONT_FAR, back: FRONT_FAR - 66 } as const
+
+/**
+ * The mosque at the back of the square, after the white one on the Anhor: a
+ * marble hall with a tall portal towards the street, a turquoise dome on a
+ * drum, a low arcaded wing either side and a minaret at each front corner.
+ */
+export const MOSQUE = {
+  x: 345,
+  z: -60,
+  /** The step it all stands on. */
+  step: 0.6,
+  /** The hall: how wide (it is square), and how high its walls. */
+  hall: 24,
+  wall: 11,
+  /** The portal: how wide, how high, and how far it stands out from the hall. */
+  portal: { width: 10.4, height: 15.6, depth: 2.4 },
+  /** The wings: how far each runs out from the hall, how deep, how high. */
+  wing: { width: 11, depth: 14, height: 6.2 },
+  /** The dome: the radius at its widest and its height, on a drum of this radius and height. */
+  dome: { r: 8.6, height: 11, drum: 7.9, drumHeight: 4.2 },
+  minaret: 31.4,
+  minarets: [
+    [329, -45.5],
+    [361, -45.5],
+  ],
+} as const
+
+export const FOUNTAIN = { x: 345, z: -30, r: 5.5 } as const
+
+/**
+ * Grass on the square, each bed behind a kerb with flowers along it: a strip
+ * across the back and one down each side. Trees stand in the back one and in
+ * the one the walk reaches first; the other is kept low, for the tower is
+ * looked at over it.
+ */
+export const LAWNS = [
+  { x0: PLAZA.x0 + 1.5, x1: PLAZA.x1 - 1.5, z0: PLAZA.back + 1.5, z1: PLAZA.back + 8 },
+  { x0: PLAZA.x0 + 1.5, x1: PLAZA.x0 + 11, z0: PLAZA.back + 11, z1: PLAZA.front - 13 },
+  { x0: PLAZA.x1 - 11, x1: PLAZA.x1 - 1.5, z0: PLAZA.back + 11, z1: PLAZA.front - 13 },
+] as const
+/**
+ * The flag: its pole and how high. At the corner of the square the walk
+ * reaches first, where from across the road it flies above the dome and not
+ * in front of it.
+ */
+export const FLAG = { x: 305, z: -22.5, pole: 22, length: 6.6 } as const
+
+/**
+ * The television tower: three legs, a shaft with two pods on it and a mast,
+ * 375 metres of it. Seven hundred metres off over the square, which is as far
+ * as the plain goes before the ranges begin — and under where the sun goes
+ * down, so that for the last of the daylight it stands in front of it.
+ */
+export const TV_TOWER = { x: 918, z: -306, height: 375 } as const
+
+/**
+ * From where on the near pavement the tower is looked at: between coming down
+ * to it and the studio's building getting in the way. Nothing is built on the
+ * lines from there to the tower.
+ */
+export const TOWER_SEEN_FROM = { x0: 262, x1: 312, z: 3.5 } as const
+
+/** The hotel on the far side past the studio: a long slab bent a little towards the street, faced with a lattice. */
+export const HOTEL = { x: 456, z: FRONT_FAR - 11, length: 60, height: 58, depth: 15, bend: 0.2 } as const
+
+/** Where the cross streets are: gaps in the fronts. */
+export const CROSSINGS = [331, 413, 492, 571] as const
+
+// ------------------------------------------------------------------- trees
+
+/** How far in from its kerb a street tree stands. */
+export const TREE_INSET = 0.6
+/** Where the near kerb's trees begin. */
+export const NEAR_TREES_FROM = 320
+/**
+ * A plane tree's crown, in metres: how far it reaches along the street and
+ * across it (the fronts are close, so it is narrower that way), how high its
+ * underside is and how high its top, and how far it leans out over the road.
+ */
+export const TREE_CROWN = { along: 4.6, across: 3.4, from: 4.6, top: 14, lean: 0.5 } as const
+
+/**
+ * Where the plane trees stand along a kerb: between the lamps, never where
+ * the walk crosses the road or a side street comes in, and on the far side
+ * not along the front of the square, which is left open to be looked across.
+ */
+export function treesAlong(side: 'far' | 'near'): number[] {
+  const out: number[] = []
+  // The far kerb has a tree between every two lamps; the near one, which the
+  // walk goes down a pace from, one in four.
+  const gap = side === 'far' ? LAMP_GAP : LAMP_GAP * 2
+  const first = side === 'far' ? LAMP_GAP / 2 : LAMP_GAP
+  for (let x = Math.ceil((CITY_FROM + 6 - first) / gap) * gap + first; x < CITY_UNTIL - 6; x += gap) {
+    if (Math.abs(x - CROSSWALK.x) < CROSSWALK.half + 5) continue
+    if (CROSSINGS.some((c) => Math.abs(x - c) < 9)) continue
+    if (side === 'far' && x > PLAZA.x0 + 4 && x < PLAZA.x1 - 2) continue
+    // And none on the near side until the walk is down on the pavement and has
+    // looked across the square: the camera comes down through where the first
+    // of them would be, and the next would stand in front of the tower.
+    if (side === 'near' && x < NEAR_TREES_FROM) continue
+    out.push(x)
+  }
+  return out
+}
+
+/**
+ * The lanterns of the square: two rows from the street to the mosque's door,
+ * this far either side of the line between them — outside the fountain, and
+ * inside the minarets.
+ */
+export const LANTERN_ROW = 10.5
+export const LANTERNS: readonly (readonly [number, number])[] = [-1, 1].flatMap((side) =>
+  [0, 1, 2, 3].map((i) => [MOSQUE.x + side * LANTERN_ROW, FRONT_FAR - 5.5 - i * 7.2] as const),
+)
+export const LANTERN_HEIGHT = 3.4
+
+/**
+ * The city's lamps, for anything that stands under them: what the street's
+ * own throw on a surface, and what the lanterns of the square do. Needs
+ * `STREET_GLSL` before it. Warm, and in the same measure the road is lit in.
+ */
+export const CITY_LIGHT_GLSL = /* glsl */ `
+  // What falls on a surface at 'at', facing 'n', from the street's lamps: the
+  // two nearest either way along each kerb. 'wrap' lets it round a little, for leaves.
+  vec3 evoStreetLight(vec3 at, vec3 n, float wrap) {
+    vec3 sum = vec3(0.0);
+    float nearest = floor(at.x / LAMP_GAP + 0.5) * LAMP_GAP;
+    for (int i = -1; i <= 1; i++) {
+      float lx = nearest + float(i) * LAMP_GAP;
+      vec3 a = vec3(lx, LAMP_HEIGHT, STREET_Z - ROAD + LAMP_REACH) - at;
+      vec3 b = vec3(lx + LAMP_GAP * 0.5, LAMP_HEIGHT, STREET_Z + ROAD - LAMP_REACH) - at;
+      sum += max((dot(n, normalize(a)) + wrap) / (1.0 + wrap), 0.0) / max(dot(a, a), 1.0);
+      sum += max((dot(n, normalize(b)) + wrap) / (1.0 + wrap), 0.0) / max(dot(b, b), 1.0);
+    }
+    return vec3(1.0, 0.78, 0.5) * sum * 62.0;
+  }
+  vec3 evoLanternLight(vec3 at, vec3 n, float wrap) {
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+      for (int s = -1; s <= 1; s += 2) {
+        vec3 to = vec3(${MOSQUE.x.toFixed(1)} + float(s) * ${LANTERN_ROW.toFixed(1)}, ${LANTERN_HEIGHT.toFixed(1)}, ${(FRONT_FAR - 5.5).toFixed(2)} - float(i) * 7.2) - at;
+        sum += max((dot(n, normalize(to)) + wrap) / (1.0 + wrap), 0.0) / max(dot(to, to), 0.6);
+      }
+    }
+    return vec3(1.0, 0.86, 0.66) * sum * 16.0;
+  }
+`

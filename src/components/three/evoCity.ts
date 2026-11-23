@@ -12,11 +12,36 @@ import {
   PlaneGeometry,
   ShaderMaterial,
   SphereGeometry,
+  Vector2,
 } from 'three'
 import { AIR_PARS, EVO_NOISE, PARS_HERE, inAir, ownShadow, type Air } from './evoAir'
 import { PLACE, hash2 } from './evoLand'
-import { FRONT_FAR, FRONT_NEAR, LAMP_GAP, LAMP_HEIGHT, PAVEMENT, ROAD, STREET_LENGTH, STREET_Z } from './evoStreet'
+import {
+  CITY_LIGHT_GLSL,
+  CROSSINGS,
+  CROSSWALK,
+  FOUNTAIN,
+  FRONT_FAR,
+  FRONT_NEAR,
+  HOTEL,
+  LAMP_GAP,
+  LAMP_HEIGHT,
+  LANTERNS,
+  LANTERN_HEIGHT,
+  LAWNS,
+  MOSQUE,
+  PAVEMENT,
+  PLAZA,
+  ROAD,
+  STREET_GLSL,
+  STREET_LENGTH,
+  STREET_Z,
+  TOWER_SEEN_FROM,
+  TREE_INSET,
+  TV_TOWER,
+} from './evoStreet'
 import { BUMP, LIN } from './evoMaterials'
+import { SIGN_GRID, makeSigns } from './evoSigns'
 import type { Beat, Part } from './evoWalk'
 
 /**
@@ -37,6 +62,22 @@ import type { Beat, Part } from './evoWalk'
 
 const CITY = PLACE.city
 
+/** What a building is faced with: the shader has a wall for each. */
+export const STYLE = {
+  /** Concrete panels, with loggias and cast screens: most of what was built after the earthquake. */
+  panel: 0,
+  /** Yellow brick, four or five floors, arched at the top: the 1950s. */
+  brick: 1,
+  /** A curtain of glass. */
+  glass: 2,
+  /** Painted render and big windows: what has gone up since. */
+  render: 3,
+  /** Glass, with its top drawn in: the tallest of the towers at the end of the avenue. */
+  crown: 4,
+  /** A deep lattice of concrete over every window: the hotel. */
+  lattice: 5,
+} as const
+
 export interface Tower {
   x: number
   z: number
@@ -44,65 +85,149 @@ export interface Tower {
   d: number
   h: number
   seed: number
-  /** 0 concrete, 1 brick, 2 glass. */
+  /** One of `STYLE`. */
   style: number
   /** When in the building of the city this one starts to go up, 0 to 1. */
   delay: number
   /** Metres its base is lifted off the ground: the studio's building has no ground floor of its own. */
   base: number
+  /** Turned about its own middle, radians. Only the hotel's wings are. */
+  yaw: number
+  /** Whether its ground floor is shops: the fronts on the street. */
+  shops: boolean
+  /** What it is part of, for the few that are one thing made of several boxes. */
+  part?: 'hotel'
 }
 
-/** Cross streets: gaps in the fronts. */
-const CROSSINGS = [331, 413, 492, 571] as const
 const inCrossing = (x: number) => CROSSINGS.some((c) => Math.abs(x - c) < 7)
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+/**
+ * Whether a block would stand between the near pavement and the tower: the
+ * square is there to be looked across, and what is looked at across it is the
+ * tower, legs and all.
+ */
+export function beforeTheTower(x: number, z: number, reach: number): boolean {
+  for (const from of [TOWER_SEEN_FROM.x0, (TOWER_SEEN_FROM.x0 + TOWER_SEEN_FROM.x1) / 2, TOWER_SEEN_FROM.x1]) {
+    const ax = TV_TOWER.x - from
+    const az = TV_TOWER.z - TOWER_SEEN_FROM.z
+    const length = Math.hypot(ax, az)
+    const along = ((x - from) * ax + (z - TOWER_SEEN_FROM.z) * az) / length
+    if (along <= 0 || along >= length) continue
+    const aside = Math.abs((x - from) * az - (z - TOWER_SEEN_FROM.z) * ax) / length
+    // The tower's legs stand wide: a twentieth of the way to it either side.
+    if (aside < reach + 4 + along * 0.062) return true
+  }
+  return false
+}
 
 /** The city's blocks, the same every visit. */
 export function towers(): Tower[] {
   const out: Tower[] = []
-  const tall = (x: number) => {
-    const t = Math.min(1, Math.max(0, (x - CITY.from) / 190))
-    return 11 + 58 * t * t * (3 - 2 * t)
+  const delayAt = (x: number, n: number, salt: number) =>
+    0.05 + 0.6 * clamp01((x - CITY.from) / 330) * (0.6 + 0.4 * hash2(n, salt + 23)) + 0.12 * hash2(n, salt + 29)
+
+  // Tashkent is not a tall city: four to nine floors on a street, nine to
+  // sixteen behind, and its towers all in one place.
+  const heightOf = (style: number, pick: number, back: boolean): number => {
+    if (style === STYLE.brick) return 4.6 + (back ? 5 : 4 + Math.floor(pick * 2)) * 3.5 + 1.8
+    if (style === STYLE.render) return 4.4 + (back ? 12 + Math.floor(pick * 5) : 9 + Math.floor(pick * 4)) * 3.0 + 1.4
+    return 4.4 + (back ? 9 + Math.floor(pick * 4) : pick < 0.55 ? 5 : 9) * 2.9 + 1.2
   }
-  const row = (front: number, side: 1 | -1, depthFrom: number, depthTo: number, scale: number, gapChance: number, salt: number) => {
+
+  const row = (front: number, side: 1 | -1, depthFrom: number, depthTo: number, back: boolean, gapChance: number, salt: number, kept: readonly (readonly [number, number])[]) => {
     let x = CITY.from + 5
     let n = 0
     while (x < CITY.until - 20) {
       const seed = hash2(n * 7 + salt, salt * 13 + 1)
-      let w = 13 + hash2(n, salt + 3) * 15
-      const d = depthFrom + hash2(n, salt + 5) * (depthTo - depthFrom)
+      let w = 14 + hash2(n, salt + 3) * 16
+      let d = depthFrom + hash2(n, salt + 5) * (depthTo - depthFrom)
+      // Stepped past whatever ground is kept clear: the square, the hotel.
+      const clear = kept.find(([a, b]) => x < b && x + w > a)
+      if (clear) {
+        x = clear[1] + 1
+        continue
+      }
       // The studio's building is placed, not rolled: its window has to be where the walk ends.
       const studio = salt === 1 && x <= PLACE.studio.x - 6 && x + w >= PLACE.studio.x - 6
       if (studio) {
         w = PLACE.studio.x + 9 - x
+        // No deeper than it has to be: its back corner is what the tower goes behind.
+        d = depthFrom
       }
       if (inCrossing(x) || inCrossing(x + w)) {
         x += 3
         continue
       }
       if (hash2(n, salt + 9) < gapChance || studio) {
-        const h = tall(x + w / 2) * scale * (0.55 + 0.95 * hash2(n, salt + 11))
+        const roll = hash2(n, salt + 17)
+        const style = studio ? STYLE.panel : back ? (roll < 0.55 ? STYLE.panel : STYLE.render) : roll < 0.46 ? STYLE.panel : roll < 0.78 ? STYLE.brick : STYLE.render
+        const z = front + (side * d) / 2
+        const h = heightOf(style, hash2(n, salt + 11), back)
+        if (back && side < 0 && beforeTheTower(x + w / 2, z, Math.hypot(w, d) / 2)) {
+          x += w
+          n++
+          continue
+        }
         out.push({
           x: x + w / 2,
-          z: front + (side * d) / 2,
+          z,
           w: w - 0.6,
           d,
-          h: studio ? Math.max(26, h) : h,
+          h: studio ? Math.max(30, h) : h,
           seed,
-          style: hash2(n, salt + 17) < 0.36 ? 2 : hash2(n, salt + 19) < 0.45 ? 1 : 0,
-          delay: 0.05 + 0.6 * Math.min(1, Math.max(0, (x - CITY.from) / 330)) * (0.6 + 0.4 * hash2(n, salt + 23)) + 0.12 * hash2(n, salt + 29),
+          style,
+          delay: delayAt(x, n, salt),
           base: studio ? STUDIO.height + 0.35 : 0,
+          yaw: 0,
+          shops: !back,
         })
       }
       x += w + (hash2(n, salt + 31) < 0.16 ? 4 : 0)
       n++
     }
   }
-  // The fronts on the street, then two ranks behind each, taller and thinner.
-  row(FRONT_FAR, -1, 15, 22, 1, 1, 1)
-  row(FRONT_NEAR, 1, 15, 22, 0.95, 1, 2)
-  row(FRONT_FAR - 30, -1, 18, 26, 1.75, 0.72, 3)
-  row(FRONT_FAR - 66, -1, 20, 30, 2.5, 0.55, 4)
-  row(FRONT_NEAR + 30, 1, 18, 26, 1.6, 0.6, 5)
+
+  const square: readonly [number, number] = [PLAZA.x0 - 1.5, PLAZA.x1 + 1.5]
+  const hotel: readonly [number, number] = [HOTEL.x - HOTEL.length / 2 - 4, HOTEL.x + HOTEL.length / 2 + 4]
+  // The fronts on the street, then a rank behind each, taller.
+  row(FRONT_FAR, -1, 15, 22, false, 1, 1, [square, hotel])
+  row(FRONT_NEAR, 1, 15, 22, false, 1, 2, [])
+  row(FRONT_FAR - 34, -1, 16, 24, true, 0.7, 3, [[square[0] - 10, square[1] + 10]])
+  row(FRONT_NEAR + 34, 1, 16, 24, true, 0.62, 5, [])
+
+  // The hotel: a middle and two wings, each turned a little further in.
+  for (const k of [-1, 0, 1]) {
+    const third = HOTEL.length / 3
+    out.push({
+      x: HOTEL.x + k * third * Math.cos(HOTEL.bend * 0.5),
+      z: HOTEL.z + Math.abs(k) * third * Math.sin(HOTEL.bend) * 0.5,
+      w: third + (k === 0 ? 0 : 0.8),
+      d: HOTEL.depth,
+      h: HOTEL.height,
+      seed: 0.37,
+      style: STYLE.lattice,
+      delay: 0.52,
+      base: 0,
+      yaw: -k * HOTEL.bend,
+      shops: false,
+      part: 'hotel',
+    })
+  }
+
+  // The towers, all together at the far end of the avenue.
+  const glass: readonly [number, number, number, number, number, number][] = [
+    [640, -50, 30, 30, 128, STYLE.glass],
+    [676, 40, 34, 28, 150, STYLE.glass],
+    [800, -44, 38, 38, 215, STYLE.crown],
+    [742, 46, 28, 30, 104, STYLE.glass],
+    [860, 34, 30, 40, 168, STYLE.glass],
+    [704, -92, 26, 26, 92, STYLE.render],
+    [628, 92, 26, 26, 84, STYLE.render],
+  ]
+  glass.forEach(([x, z, w, d, h, style], n) => {
+    out.push({ x, z, w, d, h, seed: hash2(n, 91), style, delay: 0.5 + 0.3 * hash2(n, 93), base: 0, yaw: 0, shops: false })
+  })
   return out
 }
 
@@ -112,13 +237,23 @@ export const STUDIO = { width: 7.6, height: 3.5, depth: 5.2 } as const
 const BUILDING_VERT_PARS = /* glsl */ `
   attribute vec3 aSize;
   attribute vec4 aLook;
+  attribute vec2 aMore;
   uniform float uCity;
   varying vec3 vFacade;
   varying vec3 vFaceNormal;
   varying vec4 vLook;
   varying vec3 vSize;
+  varying vec2 vMore;
 `
 
+/**
+ * The walls. A building is a box, and everything that makes it a building of
+ * a particular kind is worked out for each pixel of it from where on the box
+ * the pixel is: which bay and which floor, and what a block of that kind has
+ * there. Openings are not painted on — the ray from the eye is carried on
+ * through them (\`evoInto\`) to whatever it would meet inside: the back of a
+ * room, the side wall of a loggia, the dark behind a cast screen.
+ */
 const BUILDING_FRAG_PARS = /* glsl */ `
   uniform float uLamps;
   uniform float uTime;
@@ -127,36 +262,92 @@ const BUILDING_FRAG_PARS = /* glsl */ `
   uniform vec3 uSunColor;
   uniform float uSunUp;
   uniform float uBump;
+  uniform sampler2D uSigns;
+  uniform vec2 uSignGrid;
   varying vec3 vFacade;
   varying vec3 vFaceNormal;
   varying vec4 vLook;
   varying vec3 vSize;
+  varying vec2 vMore;
   ${EVO_NOISE}
   ${LIN}
   ${BUMP}
+  ${STREET_GLSL}
 
   float evoWallRough;
   float evoWallHeight;
   vec3 evoWallGlow;
 
-  // The inside of a room, from outside it: the ray that reached the glass at
-  // 'at' (0..1 across the window) is carried on to whichever inside face it
-  // meets first. 'dir' is the view direction with z going into the wall.
-  vec3 evoRoom(vec2 at, vec3 dir, vec3 extent, float seed, out float lamp) {
+  // One side of a building, where this pixel is on it, and how it is seen.
+  struct EvoFace {
+    // Metres along the wall and up it; how long the wall is, and how high.
+    float u;
+    float v;
+    float span;
+    float top;
+    // The view, with z going into the wall; the wall's own normal; the view and the place in the world.
+    vec3 dir;
+    vec3 n;
+    vec3 view;
+    vec3 world;
+    float seed;
+    // Whether it faces the street, is a short end of its block, and runs right to left as it is read.
+    bool street;
+    bool end;
+    bool flip;
+    // How much of the wall a pixel covers here, for whatever is drawn finer than that.
+    float aa;
+  };
+
+  vec3 evoSkyIn(vec3 dir) {
+    vec3 sky = mix(uHorizon, uZenith, clamp(dir.y * 1.4 + 0.15, 0.0, 1.0));
+    return sky + uSunColor * pow(max(dot(dir, uSunDir), 0.0), 90.0) * 6.0 * uSunUp;
+  }
+
+  // After dark the street lights the bottom of every wall, and less of it higher up.
+  vec3 evoWash(vec3 wall, float v) {
+    return wall * vec3(1.0, 0.74, 0.46) * uLamps * (exp(-v / 6.5) * 0.5 + 0.018);
+  }
+
+  // Glass: what is behind it, and over that what it shows of the sky — more
+  // the more it is seen edge-on. Whatever is glowing behind it is dimmed to match.
+  vec3 evoGlassOf(EvoFace f, vec3 behind, float mirror) {
+    float fresnel = 0.05 + 0.95 * pow(1.0 - clamp(dot(-f.view, f.n), 0.0, 1.0), 4.0);
+    float shown = clamp(fresnel * 0.85 + mirror, 0.0, 1.0);
+    evoWallGlow *= 1.0 - shown * 0.5;
+    evoWallRough = 0.08;
+    evoWallHeight = 0.0;
+    return mix(behind, evoSkyIn(reflect(f.view, f.n)), shown);
+  }
+  vec3 evoGlass(EvoFace f, vec3 behind) {
+    return evoGlassOf(f, behind, 0.1);
+  }
+
+  // Through an opening and on into the box behind it: 'at' is where on the
+  // opening (0..1), 'extent' the box's half sizes. Gives where the ray ends
+  // (-1..1 each way, z from the opening to the back) and on which face.
+  void evoInto(vec2 at, vec3 dir, vec3 extent, out vec3 p, out float back, out float updown) {
     vec3 o = vec3(at * 2.0 - 1.0, -1.0);
     vec3 d = dir / extent;
     vec3 inv = 1.0 / (d + vec3(1e-5));
     vec3 k = abs(inv) - o * inv;
     float t = min(min(k.x, k.y), k.z);
-    vec3 p = o + d * t;
-    float back = step(k.z, min(k.x, k.y));
-    float updown = step(k.y, min(k.x, k.z)) * (1.0 - back);
-    // A wall colour, a darker floor, a pale ceiling with the light on it.
+    p = o + d * t;
+    back = step(k.z, min(k.x, k.y));
+    updown = step(k.y, min(k.x, k.z)) * (1.0 - back);
+  }
+
+  // The inside of a room, from outside it: a wall colour, a darker floor, a
+  // pale ceiling with the light on it, something on the back wall.
+  vec3 evoRoom(vec2 at, vec3 dir, vec3 extent, float seed, out float lamp) {
+    vec3 p;
+    float back;
+    float updown;
+    evoInto(at, dir, extent, p, back, updown);
     vec3 wall = mix(vec3(0.62, 0.56, 0.46), vec3(0.42, 0.5, 0.58), step(0.6, fract(seed * 7.3)));
     wall = mix(wall, vec3(0.66, 0.42, 0.34), step(0.82, fract(seed * 3.1)));
     vec3 color = wall * (0.55 + 0.25 * back);
     color = mix(color, p.y > 0.0 ? vec3(0.86, 0.84, 0.8) : vec3(0.2, 0.16, 0.13), updown);
-    // Something on the back wall, and something standing in front of it.
     float thing = step(0.5, evoHash(floor(p.xy * vec2(2.0, 1.5)) + seed * 91.0)) * back * step(p.y, 0.25);
     color = mix(color, color * 0.45, thing);
     float depth = clamp((p.z + 1.0) * 0.5, 0.0, 1.0);
@@ -164,100 +355,495 @@ const BUILDING_FRAG_PARS = /* glsl */ `
     return color;
   }
 
+  // Whether the lights are on in the room with this number, by now: they come
+  // on one at a time as it gets dark, and some never do.
+  float evoLit(vec2 id, float share) {
+    return step(evoHash(id + 13.0) * 0.92 + 0.04, uLamps) * step(evoHash(id), share);
+  }
+
+  // The colour of a lamp behind a window: most of them warm.
+  vec3 evoBulb(float pick) {
+    vec3 tint = mix(vec3(1.0, 0.72, 0.42), vec3(0.72, 0.84, 1.0), step(0.78, fract(pick * 9.1)));
+    return mix(tint, vec3(1.0, 0.86, 0.66), step(0.55, fract(pick * 4.3)));
+  }
+
+  // The colour a block's balconies are painted: every block its own, out of a
+  // handful the city uses.
+  vec3 evoAccent(float seed) {
+    float k = fract(seed * 13.7) * 6.0;
+    vec3 c = k < 1.0 ? vec3(0.13, 0.5, 0.55) : k < 2.0 ? vec3(0.3, 0.5, 0.72) : k < 3.0 ? vec3(0.78, 0.72, 0.55) : k < 4.0 ? vec3(0.42, 0.6, 0.48) : k < 5.0 ? vec3(0.68, 0.4, 0.28) : vec3(0.82, 0.82, 0.8);
+    return evoLin(c);
+  }
+
+  // A screen of concrete cast in a pattern, of the kind that stands in front
+  // of a stair or a balcony all over Tashkent: how much of this spot is concrete.
+  float evoScreen(vec2 p, float kind, float aa) {
+    vec2 q = abs(fract(p) - 0.5);
+    float d = kind < 0.5
+      ? min(abs(q.x + q.y - 0.5), abs(max(q.x, q.y) - 0.2)) - 0.055
+      : min(abs(max(q.x, q.y) - 0.33), abs((q.x + q.y) * 0.7071 - 0.33)) - 0.05;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+
+  // A wall of small tiles: the mosaics on the ends of the blocks. 'p' is in
+  // metres from the middle of a panel 'size' across.
+  vec3 evoMosaic(vec2 p, vec2 size, float seed, float aa) {
+    const float TILE = 0.12;
+    vec2 t = floor(p / TILE);
+    float jitter = evoHash(t + seed * 17.0);
+    // One colour to a tile: the pattern is asked at the tile's own middle.
+    vec2 c = (t + 0.5) * TILE;
+    float r = length(c * vec2(1.0, 0.86));
+    float a = atan(c.y, c.x);
+    vec3 turq = vec3(0.07, 0.5, 0.56);
+    vec3 blue = vec3(0.07, 0.14, 0.46);
+    vec3 white = vec3(0.86, 0.84, 0.76);
+    vec3 ochre = vec3(0.72, 0.47, 0.12);
+    vec3 clay = vec3(0.6, 0.24, 0.13);
+    vec3 col;
+    if (fract(seed * 3.3) < 0.5) {
+      // A sun: rings, with rays between them.
+      float ring = r / (min(size.x, size.y) * 0.46);
+      col = ring < 0.2 ? ochre : ring < 0.3 ? white : ring < 0.62 ? (cos(a * 12.0) > 0.0 ? turq : blue) : ring < 0.72 ? white : ring < 1.0 ? (cos(a * 24.0 + 1.0) > 0.2 ? clay : ochre) : blue;
+    } else {
+      // Stars set in a net.
+      vec2 g = abs(fract(c / 2.6) - 0.5);
+      float star = min(max(g.x, g.y), (g.x + g.y) * 0.7071);
+      col = star < 0.12 ? ochre : star < 0.2 ? white : star < 0.3 ? turq : (abs(g.x - g.y) < 0.05 ? white : blue);
+    }
+    float grout = max(step(0.9, fract(p.x / TILE)), step(0.9, fract(p.y / TILE))) * (1.0 - smoothstep(0.03, 0.1, aa));
+    return evoLin(col) * (0.8 + 0.35 * jitter) * (1.0 - 0.3 * grout);
+  }
+
+  // A shop front: a board over a door and two windows, and the shop behind the glass.
+  vec3 evoShop(EvoFace f, vec3 wall) {
+    const float WIDE = 6.4;
+    float su = f.u / WIDE;
+    float shop = floor(su);
+    float sx = fract(su);
+    float pick = evoHash(vec2(shop, 7.0) + f.seed * 23.0);
+    evoWallGlow = evoWash(wall, f.v);
+    // The pier between one shop and the next, and the step under the glass.
+    if (sx < 0.035 || sx > 0.965 || f.v < 0.32) return wall * 0.85;
+    if (f.v > 3.28) {
+      // The board, lit from inside once it is dusk.
+      vec2 suv = vec2((sx - 0.06) / 0.88, (f.v - 3.36) / 0.84);
+      if (suv.x > 0.0 && suv.x < 1.0 && suv.y > 0.0 && suv.y < 1.0) {
+        if (f.flip) suv.x = 1.0 - suv.x;
+        float which = floor(pick * uSignGrid.x * uSignGrid.y);
+        vec2 cell = vec2(mod(which, uSignGrid.x), uSignGrid.y - 1.0 - floor(which / uSignGrid.x));
+        vec3 board = texture2D(uSigns, (cell + suv) / uSignGrid).rgb;
+        evoWallGlow = board * (0.1 + 2.3 * smoothstep(0.05, 0.3, uLamps));
+        evoWallRough = 0.5;
+        return board * 0.7;
+      }
+      return wall * 0.8;
+    }
+    // A door in the middle and a window either side, in their frames.
+    bool door = sx > 0.41 && sx < 0.59;
+    vec2 at = vec2(door ? (sx - 0.41) / 0.18 : sx < 0.41 ? (sx - 0.035) / 0.375 : (sx - 0.59) / 0.375, (f.v - 0.32) / 2.96);
+    if (at.x < 0.04 || at.x > 0.96 || at.y > 0.97 || (door && abs(at.x - 0.5) < 0.025)) {
+      evoWallGlow = vec3(0.0);
+      evoWallRough = 0.4;
+      return vec3(0.03);
+    }
+    // The shop itself: shelves of whatever it sells along the back and the
+    // sides, a bright ceiling, a pale floor.
+    vec3 p;
+    float back;
+    float updown;
+    evoInto(at, f.dir, vec3(door ? 0.58 : 1.2, 1.48, 3.6), p, back, updown);
+    float depth = clamp(p.z * 0.5 + 0.5, 0.0, 1.0);
+    vec3 shell = mix(vec3(0.72, 0.68, 0.6), vec3(0.6, 0.66, 0.7), step(0.5, fract(pick * 5.3)));
+    vec3 room = shell * (0.6 + 0.25 * back);
+    if (updown > 0.5) {
+      // Strip lights across the ceiling; tiles on the floor.
+      room = p.y > 0.0 ? mix(vec3(0.8), vec3(2.2), step(0.8, fract(p.z * 2.0 + 0.4))) : vec3(0.45, 0.43, 0.4) * (0.85 + 0.15 * step(0.5, fract(p.x * 2.0)) * step(0.5, fract(p.z * 3.0)));
+    } else {
+      // Shelves: rows of things, each its own colour, with the shelf's shadow under each row.
+      vec2 on = back > 0.5 ? p.xy : vec2(p.z, p.y);
+      vec2 g = vec2(on.x * (back > 0.5 ? 7.0 : 16.0), on.y * 4.0 + 4.0);
+      float row = fract(g.y);
+      float thing = evoHash(floor(g) + pick * 91.0 + back * 7.0);
+      vec3 goods = 0.35 + 0.55 * vec3(fract(thing * 3.1 + pick), fract(thing * 5.7 + pick * 2.0), fract(thing * 7.9));
+      float shelved = step(-0.72, on.y) * step(on.y, 0.55) * step(0.12, row) * step(row, 0.82 - 0.3 * fract(thing * 11.0)) * step(0.1, fract(g.x)) ;
+      room = mix(room, goods, shelved);
+      room *= 1.0 - 0.35 * step(row, 0.12) * step(-0.72, on.y) * step(on.y, 0.55);
+    }
+    float lamp = (1.0 - 0.4 * depth) * (0.8 + 0.4 * smoothstep(-1.0, 1.0, p.y));
+    vec3 tint = mix(vec3(1.0, 0.9, 0.76), vec3(0.86, 0.93, 1.0), step(0.6, fract(pick * 2.7)));
+    evoWallGlow = room * tint * lamp * 1.55 * smoothstep(0.08, 0.3, uLamps);
+    return evoGlass(f, room * 0.07 * (0.4 + 0.6 * dot(uHorizon, vec3(0.33))));
+  }
+
+  // An ordinary window, set flat in a wall: a frame, a bar down the middle, a room.
+  vec3 evoWindow(EvoFace f, vec2 at, vec3 extent, vec2 id, float share, vec3 frame) {
+    if (at.x < 0.05 || at.x > 0.95 || at.y < 0.04 || at.y > 0.96 || abs(at.x - 0.5) < 0.03) {
+      evoWallGlow = evoWash(frame, f.v);
+      evoWallRough = 0.5;
+      return frame;
+    }
+    float pick = evoHash(id);
+    float lamp;
+    vec3 room = evoRoom(at, f.dir, extent, pick + f.seed, lamp);
+    // Curtains part of the way across some of them.
+    float drawn = 0.45 + 0.55 * step(fract(pick * 6.7) * 0.8, abs(at.x - 0.5) * 2.0 + 0.25 * step(0.5, fract(pick * 2.3)));
+    evoWallGlow = room * evoBulb(pick) * lamp * (1.3 + 1.3 * fract(pick * 3.7)) * drawn * evoLit(id, share);
+    return evoGlass(f, room * 0.05 * (0.4 + 0.6 * dot(uHorizon, vec3(0.33))));
+  }
+
+  // ---- concrete panels: what most of the city was rebuilt in ----------------
+  vec3 evoPanel(EvoFace f) {
+    const float BAY = 3.2;
+    const float STOREY = 2.9;
+    const float GROUND = 4.4;
+    vec3 concrete = mix(evoLin(vec3(0.6, 0.58, 0.54)), evoLin(vec3(0.74, 0.7, 0.62)), fract(f.seed * 5.7));
+    concrete *= (0.9 + 0.2 * evoNoise(f.world.xy * 0.6 + f.world.z * 0.6)) * (0.82 + 0.18 * evoNoise(vec2(f.u * 0.9 + f.seed * 9.0, f.v * 0.12)));
+    bool shops = f.street && vMore.y > 0.5 && vLook.w < 0.5;
+    if (shops && f.v < GROUND) return evoShop(f, concrete);
+    // (A block lifted off the ground starts its floors above whatever it is lifted over.)
+    float foot = shops ? GROUND : vLook.w + 0.7;
+    float bays = max(1.0, floor(f.span / BAY));
+    float bu = (f.u - (f.span - bays * BAY) * 0.5) / BAY;
+    float fv = (f.v - foot) / STOREY;
+    vec2 cell = vec2(fract(bu), fract(fv));
+    float column = floor(bu);
+    float level = floor(fv);
+    bool grid = bu >= 0.0 && bu < bays && fv >= 0.0 && f.v < f.top - 1.1;
+    // Panels: a joint every bay and every floor.
+    float joint = min(1.0, max(step(0.985, cell.x) + step(cell.x, 0.015), step(0.975, cell.y)));
+    vec3 wall = concrete * (1.0 - 0.3 * joint);
+    evoWallHeight = 1.0 - joint;
+    evoWallGlow = evoWash(wall, f.v);
+    if (!grid) return wall;
+
+    if (f.end) {
+      // The end of a block has no flats looking out of it. On some of them
+      // there is a mosaic the height of the building.
+      vec2 size = vec2(f.span * 0.76, (f.top - foot) * 0.8);
+      vec2 p = vec2(f.u - f.span * 0.5, f.v - foot - (f.top - foot) * 0.5);
+      if (fract(f.seed * 7.9) < 0.62 && abs(p.x) < size.x * 0.5 && abs(p.y) < size.y * 0.5) {
+        vec3 tiles = evoMosaic(p, size, f.seed, f.aa);
+        evoWallGlow = evoWash(tiles, f.v) * 1.5;
+        evoWallRough = 0.45;
+        evoWallHeight = 0.0;
+        return tiles;
+      }
+      return wall;
+    }
+
+    float kind = evoHash(vec2(column, 3.0) + f.seed * 41.0);
+    vec2 id = vec2(column, level) + f.seed * 57.0;
+    float pick = evoHash(id);
+
+    if (kind < 0.15) {
+      // A stair, behind a screen cast in a pattern from the bottom of the
+      // block to the top. What shows through it after dark is the stair's
+      // own cold light: a strip of it up every block.
+      vec2 q = vec2(f.u, f.v) / 0.8;
+      float pattern = step(0.5, fract(f.seed * 2.9));
+      float bar = evoScreen(q, pattern, f.aa / 0.8);
+      float deep = evoScreen(q + f.dir.xy / max(f.dir.z, 0.2) * 0.28, pattern, f.aa / 0.8);
+      float on = step(0.2, uLamps) * step(evoHash(vec2(column, 5.0) + f.seed), 0.88) * (0.75 + 0.5 * evoHash(vec2(level, column)));
+      vec3 slab = evoLin(vec3(0.8, 0.78, 0.72)) * (0.92 + 0.12 * evoNoise(q * 3.0));
+      vec3 behind = mix(vec3(0.02), slab * 0.42, deep);
+      evoWallGlow = mix(vec3(0.85, 0.93, 1.0) * on * mix(1.0, 0.22, deep), evoWash(slab, f.v), bar);
+      evoWallHeight = bar;
+      evoWallRough = 0.85;
+      return mix(behind, slab, bar);
+    }
+
+    if (kind < 0.64) {
+      // A loggia: a balcony let into the block.
+      vec2 at = (cell - vec2(0.05, 0.035)) / vec2(0.9, 0.865);
+      if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) return wall;
+      const float RAIL = 0.38;
+      if (at.y < RAIL) {
+        // Its front: a panel painted the block's own colour, and a rail along the top.
+        vec3 front = mix(evoAccent(f.seed) * (0.82 + 0.22 * evoNoise(vec2(f.u * 3.0, f.v * 0.7))), concrete * 0.7, step(RAIL - 0.045, at.y));
+        front *= 0.9 + 0.1 * step(0.5, fract(at.x * 5.0));
+        evoWallGlow = evoWash(front, f.v);
+        evoWallHeight = 0.6;
+        return front;
+      }
+      vec2 open = vec2(at.x, (at.y - RAIL) / (1.0 - RAIL));
+      float lit = evoLit(id, 0.62);
+      vec3 bulb = evoBulb(pick);
+      if (evoHash(id + 5.0) < 0.36) {
+        // Closed in with glass, as every other one has been since.
+        if (abs(fract(open.x * 3.0) - 0.5) > 0.455 || open.y > 0.96) {
+          vec3 sash = evoLin(vec3(0.82, 0.8, 0.76)) * 0.8;
+          evoWallGlow = evoWash(sash, f.v);
+          return sash;
+        }
+        float lamp;
+        vec3 room = evoRoom(open, f.dir, vec3(BAY * 0.45, STOREY * 0.27, 2.6), pick + f.seed, lamp);
+        evoWallGlow = room * bulb * lamp * (1.0 + 1.2 * fract(pick * 3.7)) * lit * (0.55 + 0.45 * evoNoise(vec2(open.x * 2.0 + pick * 9.0, f.seed)));
+        return evoGlass(f, room * 0.04);
+      }
+      // Open: the eye goes on in, to a side wall, the ceiling, or the wall at
+      // the back with a window and a door in it.
+      vec3 p;
+      float back;
+      float updown;
+      evoInto(open, f.dir, vec3(BAY * 0.45, STOREY * 0.27, 0.6), p, back, updown);
+      vec3 inner = concrete * (0.38 + 0.26 * (1.0 - clamp(p.z * 0.5 + 0.5, 0.0, 1.0)));
+      evoWallHeight = 0.0;
+      if (back > 0.5) {
+        vec2 b = p.xy * 0.5 + 0.5;
+        bool pane = (b.x > 0.08 && b.x < 0.6 && b.y > 0.3 && b.y < 0.93) || (b.x > 0.66 && b.x < 0.93 && b.y < 0.93);
+        if (pane) {
+          evoWallGlow = bulb * lit * (1.1 + 1.0 * fract(pick * 3.7)) * (0.6 + 0.4 * evoNoise(b * vec2(9.0, 1.0) + pick * 30.0));
+          evoWallRough = 0.1;
+          return vec3(0.015);
+        }
+        evoWallGlow = inner * bulb * lit * 0.35;
+        return inner;
+      }
+      evoWallGlow = inner * bulb * lit * 0.5;
+      return inner;
+    }
+
+    // A window, with a cooler on a bracket under one in three.
+    if (evoHash(id + 9.0) < 0.32 && cell.x > 0.6 && cell.x < 0.8 && cell.y > 0.05 && cell.y < 0.17) {
+      vec3 box = vec3(0.5) * (0.7 + 0.3 * step(0.5, fract(cell.x * 40.0)));
+      evoWallGlow = evoWash(box, f.v);
+      return box;
+    }
+    vec2 at = (cell - vec2(0.2, 0.2)) / vec2(0.6, 0.58);
+    if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) return wall;
+    return evoWindow(f, at, vec3(BAY * 0.3, STOREY * 0.29, 3.2), id, 0.66, evoLin(vec3(0.8, 0.78, 0.74)) * 0.8);
+  }
+
+  // ---- yellow brick: four or five floors, and an arch to every top window ----
+  vec3 evoBrick(EvoFace f) {
+    const float BAY = 2.9;
+    const float STOREY = 3.5;
+    const float GROUND = 4.6;
+    vec2 b = vec2(f.u * 4.2 + floor(f.v * 13.0) * 0.5, f.v * 13.0);
+    float mortar = max(step(0.93, fract(b.x)), step(0.86, fract(b.y))) * (1.0 - smoothstep(0.02, 0.07, f.aa));
+    vec3 clay = mix(evoLin(vec3(0.7, 0.58, 0.36)), evoLin(vec3(0.8, 0.68, 0.45)), evoHash(floor(b) + f.seed * 31.0));
+    vec3 wall = mix(clay, evoLin(vec3(0.74, 0.7, 0.6)), mortar) * (0.85 + 0.3 * evoNoise(f.world.xy * 0.4 + f.world.z * 0.4));
+    wall *= 0.84 + 0.16 * evoNoise(vec2(f.u * 0.9 + f.seed * 9.0, f.v * 0.12));
+    vec3 stone = evoLin(vec3(0.82, 0.78, 0.68)) * (0.9 + 0.15 * evoNoise(vec2(f.u, f.v) * 2.0));
+    bool shops = f.street && vMore.y > 0.5;
+    if (shops && f.v < GROUND) return evoShop(f, stone);
+    if (f.v > f.top - 1.5) {
+      // The cornice, with a row of teeth along it.
+      vec3 c = stone * (0.9 - 0.25 * step(0.5, fract(f.u * 2.4)) * step(f.v, f.top - 1.0));
+      evoWallGlow = evoWash(c, f.v);
+      return c;
+    }
+    float foot = shops ? GROUND : 0.9;
+    if (f.v < foot) {
+      float groove = step(0.9, fract(f.v * 2.2));
+      vec3 c = stone * (0.85 - 0.3 * groove);
+      evoWallGlow = evoWash(c, f.v);
+      evoWallHeight = 1.0 - groove;
+      return c;
+    }
+    float bays = max(1.0, floor(f.span / BAY));
+    float bu = (f.u - (f.span - bays * BAY) * 0.5) / BAY;
+    float fv = (f.v - foot) / STOREY;
+    float storeys = floor((f.top - 1.5 - foot) / STOREY);
+    vec2 cell = vec2(fract(bu), fract(fv));
+    evoWallHeight = 1.0 - mortar;
+    evoWallGlow = evoWash(wall, f.v);
+    if (bu < 0.0 || bu >= bays || fv >= storeys) return wall;
+    // Flat pillars of stone between the bays.
+    if (cell.x < 0.07 || cell.x > 0.93) {
+      evoWallGlow = evoWash(stone, f.v);
+      evoWallHeight = 0.0;
+      return stone;
+    }
+    vec2 lo = vec2(0.27, 0.13);
+    vec2 size = vec2(0.46, 0.71);
+    vec2 at = (cell - lo) / size;
+    vec2 wide = (cell - lo + 0.055) / (size + 0.11);
+    bool inside = at.x > 0.0 && at.x < 1.0 && at.y > 0.0 && at.y < 1.0;
+    bool surround = wide.x > 0.0 && wide.x < 1.0 && wide.y > 0.0 && wide.y < 1.0;
+    if (floor(fv) > storeys - 1.5 && at.y > 0.66) {
+      // The top floor's windows are arched.
+      float r = length(vec2((at.x - 0.5) / 0.5, (at.y - 0.66) / 0.34));
+      inside = inside && r < 1.0;
+      surround = surround && r < 1.24;
+    }
+    if (!inside) {
+      if (!surround) return wall;
+      evoWallGlow = evoWash(stone, f.v);
+      evoWallHeight = 0.0;
+      return stone;
+    }
+    return evoWindow(f, at, vec3(BAY * 0.23, STOREY * 0.36, 3.4), vec2(floor(bu), floor(fv)) + f.seed * 57.0, 0.6, evoLin(vec3(0.85, 0.83, 0.78)) * 0.8);
+  }
+
+  // ---- painted render and glass balconies: what has gone up since -----------
+  vec3 evoRender(EvoFace f) {
+    const float BAY = 3.4;
+    const float STOREY = 3.0;
+    const float GROUND = 4.4;
+    vec3 paint = mix(evoLin(vec3(0.86, 0.84, 0.78)), evoLin(vec3(0.78, 0.76, 0.72)), fract(f.seed * 6.1)) * (0.92 + 0.12 * evoNoise(f.world.xy * 0.3 + f.world.z * 0.3));
+    vec3 other = mix(evoAccent(f.seed), evoLin(vec3(0.2, 0.21, 0.23)), step(0.5, fract(f.seed * 4.7)));
+    bool shops = f.street && vMore.y > 0.5;
+    if (shops && f.v < GROUND) return evoShop(f, paint);
+    float foot = shops ? GROUND : 0.6;
+    float bays = max(1.0, floor(f.span / BAY));
+    float bu = (f.u - (f.span - bays * BAY) * 0.5) / BAY;
+    float fv = (f.v - foot) / STOREY;
+    vec2 cell = vec2(fract(bu), fract(fv));
+    float column = floor(bu);
+    bool grid = bu >= 0.0 && bu < bays && fv >= 0.0 && f.v < f.top - 1.3;
+    // A stripe of the other colour up some of the columns, and a line at each floor.
+    vec3 wall = (evoHash(vec2(column, 21.0) + f.seed * 13.0) < 0.3 ? other : paint) * (1.0 - 0.18 * step(0.97, cell.y));
+    evoWallGlow = evoWash(wall, f.v);
+    evoWallRough = 0.85;
+    if (!grid) return wall;
+    vec2 id = vec2(column, floor(fv)) + f.seed * 57.0;
+    float pick = evoHash(id);
+    vec2 at = (cell - vec2(0.1, 0.1)) / vec2(0.8, 0.76);
+    if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) return wall;
+    if (!f.end && evoHash(vec2(column, 33.0) + f.seed * 3.0) < 0.45) {
+      // A balcony let into the wall, with a rail of glass.
+      if (at.y < 0.36) {
+        evoWallGlow = vec3(0.0);
+        return evoGlass(f, vec3(0.03, 0.04, 0.04)) * vec3(0.86, 1.0, 0.96);
+      }
+      vec3 p;
+      float back;
+      float updown;
+      evoInto(vec2(at.x, (at.y - 0.36) / 0.64), f.dir, vec3(BAY * 0.4, STOREY * 0.24, 0.45), p, back, updown);
+      float lit = evoLit(id, 0.6);
+      vec3 inner = paint * (0.4 + 0.25 * (1.0 - clamp(p.z * 0.5 + 0.5, 0.0, 1.0)));
+      if (back > 0.5 && abs(p.x) > 0.04 && abs(p.x) < 0.92) {
+        evoWallGlow = evoBulb(pick) * lit * (1.2 + 1.0 * fract(pick * 3.7)) * (0.6 + 0.4 * evoNoise(p.xy * vec2(5.0, 0.5) + pick * 30.0));
+        evoWallRough = 0.1;
+        return vec3(0.015);
+      }
+      evoWallGlow = inner * evoBulb(pick) * lit * 0.45;
+      return inner;
+    }
+    return evoWindow(f, at, vec3(BAY * 0.4, STOREY * 0.38, 3.6), id, 0.6, evoLin(vec3(0.16, 0.17, 0.19)));
+  }
+
+  // ---- a curtain of glass: the towers at the end of the avenue ---------------
+  vec3 evoCurtain(EvoFace f, bool crowned) {
+    const float BAY = 1.9;
+    const float STOREY = 3.6;
+    vec3 tint = mix(vec3(0.72, 0.9, 1.0), vec3(0.7, 1.0, 0.94), fract(f.seed * 3.9));
+    float bays = max(1.0, floor(f.span / BAY));
+    float bu = (f.u - (f.span - bays * BAY) * 0.5) / BAY;
+    float fv = f.v / STOREY;
+    vec2 cell = vec2(fract(bu), fract(fv));
+    if (f.v > f.top - 2.4) {
+      // A line of light round the top, after dark.
+      evoWallGlow = vec3(0.72, 0.9, 1.0) * uLamps * (crowned ? 4.5 : 2.6);
+      evoWallRough = 0.4;
+      return evoLin(vec3(0.55, 0.57, 0.6));
+    }
+    vec2 id = vec2(floor(bu), floor(fv)) + f.seed * 57.0;
+    float pick = evoHash(id);
+    // Offices: whole floors are lit, or none of one is.
+    float floorLit = step(evoHash(vec2(floor(fv), 2.0) + f.seed * 5.0), 0.42) * step(evoHash(vec2(floor(fv), 4.0) + f.seed) * 0.8 + 0.1, uLamps);
+    float on = max(evoLit(id, 0.22), floorLit * step(evoHash(id + 3.0), 0.86));
+    if (bu < 0.0 || bu >= bays || cell.x < 0.035 || cell.x > 0.965 || cell.y > 0.8) {
+      // The band of panel at each floor, and the fin between one bay and the next.
+      evoWallGlow = vec3(0.0);
+      evoWallRough = 0.25;
+      vec3 panel = evoLin(vec3(0.07, 0.085, 0.1));
+      return mix(panel, evoSkyIn(reflect(f.view, f.n)) * tint, 0.22);
+    }
+    float lamp;
+    vec3 room = evoRoom(vec2((cell.x - 0.035) / 0.93, cell.y / 0.8), f.dir, vec3(BAY * 0.5, STOREY * 0.4, 5.0), pick + f.seed, lamp);
+    evoWallGlow = room * mix(vec3(0.82, 0.9, 1.0), evoBulb(pick), 0.3) * lamp * 1.25 * on;
+    // Coated glass: a mirror to the sky from any angle.
+    return evoGlassOf(f, room * 0.05 * (0.4 + 0.6 * dot(uHorizon, vec3(0.33))), 0.5) * tint;
+  }
+
+  // ---- the hotel: every window at the back of a deep cell of concrete --------
+  vec3 evoLattice(EvoFace f) {
+    const float BAY = 3.1;
+    const float STOREY = 3.2;
+    const float GROUND = 6.2;
+    vec3 concrete = evoLin(vec3(0.8, 0.76, 0.68)) * (0.9 + 0.14 * evoNoise(f.world.xy * 0.5 + f.world.z * 0.5)) * (0.86 + 0.14 * evoNoise(vec2(f.u * 0.7, f.v * 0.1)));
+    evoWallGlow = evoWash(concrete, f.v);
+    if (f.end || f.v > f.top - 2.0) return concrete;
+    float bu = f.u / BAY;
+    if (f.v < GROUND) {
+      // The lobby: piers, and glass the height of two floors between them.
+      if (fract(bu) < 0.13) return concrete;
+      evoWallGlow = vec3(1.0, 0.82, 0.56) * 1.8 * smoothstep(0.05, 0.25, uLamps) * (0.6 + 0.4 * evoNoise(vec2(f.u * 0.4, 3.0)));
+      return evoGlass(f, vec3(0.03, 0.028, 0.024));
+    }
+    float fv = (f.v - GROUND) / STOREY;
+    vec2 cell = vec2(fract(bu), fract(fv));
+    vec2 at = (cell - 0.085) / 0.83;
+    // The lattice itself: its face.
+    if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) {
+      evoWallHeight = 1.0;
+      return concrete;
+    }
+    vec2 id = vec2(floor(bu), floor(fv)) + f.seed * 57.0;
+    float pick = evoHash(id);
+    vec3 p;
+    float back;
+    float updown;
+    evoInto(at, f.dir, vec3(BAY * 0.415, STOREY * 0.415, 0.55), p, back, updown);
+    float lit = evoLit(id, 0.62);
+    vec3 bulb = evoBulb(pick);
+    if (back > 0.5) {
+      // A room, with its curtains.
+      evoWallGlow = bulb * lit * (1.0 + 0.9 * fract(pick * 3.7)) * (0.5 + 0.5 * evoNoise(vec2(p.x * 4.0 + pick * 20.0, 1.0)));
+      evoWallRough = 0.1;
+      return vec3(0.02);
+    }
+    vec3 inner = concrete * (0.42 + 0.3 * (1.0 - clamp(p.z * 0.5 + 0.5, 0.0, 1.0)));
+    evoWallGlow = inner * bulb * lit * 0.55 + evoWash(inner, f.v) * 0.5;
+    return inner;
+  }
+
   vec3 evoWall(vec3 world, vec3 n, vec3 view) {
     float style = vLook.y;
-    float seed = vLook.x;
     evoWallGlow = vec3(0.0);
     evoWallHeight = 0.0;
-    vec3 concrete = mix(evoLin(vec3(0.55, 0.54, 0.52)), evoLin(vec3(0.72, 0.69, 0.63)), fract(seed * 5.7)) * (0.9 + 0.2 * evoNoise(world.xy * 0.6 + world.z * 0.6));
+    evoWallRough = 0.9;
     if (n.y > 0.5) {
       // The roof.
       evoWallRough = 0.95;
       return evoLin(vec3(0.17, 0.17, 0.18)) * (0.8 + 0.4 * evoNoise(world.xz * 0.8));
     }
-    // Along the wall and up it, in metres, and which way is into the building.
+    // A building that has been turned is looked at in its own frame.
+    float turnC = cos(vMore.x);
+    float turnS = sin(vMore.x);
+    vec3 local = vec3(view.x * turnC - view.z * turnS, view.y, view.x * turnS + view.z * turnC);
     bool alongX = abs(n.z) > 0.5;
-    float u = alongX ? vFacade.x + vSize.x * 0.5 : vFacade.z + vSize.z * 0.5;
-    float v = vFacade.y;
-    float span = alongX ? vSize.x : vSize.z;
-    vec3 dir = alongX ? vec3(view.x, view.y, -view.z * sign(n.z)) : vec3(view.z, view.y, -view.x * sign(n.x));
-
-    bool glassy = style > 1.5;
-    bool brick = style > 0.5 && !glassy;
-    float bay = glassy ? 1.9 : brick ? 2.9 : 3.3;
-    float storey = glassy ? 3.6 : 3.2;
-    float ground = 4.6;
-    // Bays are centred, so no wall ends in half a window.
-    float bays = max(1.0, floor(span / bay));
-    float bu = (u - (span - bays * bay) * 0.5) / bay;
-    float column = floor(bu);
-    bool street = v < ground;
-    float fv = street ? v / ground : (v - ground) / storey;
-    float floorId = street ? -1.0 : floor(fv);
-    vec2 cell = vec2(fract(bu), fract(fv));
-    bool onWall = bu >= 0.0 && bu < bays && v < vSize.y - 0.9;
-
-    // The frame of the window within its bay.
-    vec2 lo = glassy ? vec2(0.035, 0.05) : street ? vec2(0.07, 0.07) : brick ? vec2(0.24, 0.2) : vec2(0.15, 0.17);
-    vec2 hi = glassy ? vec2(0.965, 0.93) : street ? vec2(0.93, 0.8) : brick ? vec2(0.76, 0.84) : vec2(0.85, 0.8);
-    vec2 inWindow = (cell - lo) / (hi - lo);
-    float window = step(0.0, inWindow.x) * step(inWindow.x, 1.0) * step(0.0, inWindow.y) * step(inWindow.y, 1.0);
-    window *= onWall ? 1.0 : 0.0;
-
-    // The wall itself.
-    vec3 wall = concrete;
-    evoWallRough = 0.9;
-    if (brick) {
-      vec2 b = vec2(u * 4.2 + floor(v * 13.0) * 0.5, v * 13.0);
-      float mortar = max(step(0.93, fract(b.x)), step(0.86, fract(b.y)));
-      vec3 clay = mix(evoLin(vec3(0.47, 0.22, 0.16)), evoLin(vec3(0.6, 0.33, 0.22)), evoHash(floor(b) + seed * 31.0));
-      wall = mix(clay, evoLin(vec3(0.62, 0.59, 0.53)), mortar) * (0.85 + 0.3 * evoNoise(world.xy * 0.4 + world.z * 0.4));
-      evoWallHeight = 1.0 - mortar;
-    } else if (glassy) {
-      wall = evoLin(vec3(0.1, 0.11, 0.13));
-      evoWallRough = 0.5;
-    } else {
-      // Panels: a joint every bay and every floor.
-      float joint = max(step(0.985, cell.x) + step(cell.x, 0.015), step(0.975, cell.y));
-      wall *= 1.0 - 0.3 * min(joint, 1.0);
-      evoWallHeight = 1.0 - min(joint, 1.0);
-    }
-    // Rain has run down it for years.
-    wall *= 0.82 + 0.18 * evoNoise(vec2(u * 0.9 + seed * 9.0, v * 0.12));
-    // After dark the street lights the bottom of every wall, and less of it higher up.
-    evoWallGlow = wall * vec3(1.0, 0.74, 0.46) * uLamps * (exp(-v / 6.5) * 0.5 + 0.018);
-    if (window < 0.5) return wall;
-
-    // ---- a window ----------------------------------------------------------
-    vec2 id = vec2(column, floorId) + seed * 57.0;
-    float pick = evoHash(id);
-    float when = evoHash(id + 13.0);
-    // Shop fronts are all lit once it is dusk; upstairs, some never are.
-    float on = street ? smoothstep(0.08, 0.3, uLamps) : step(when * 0.92 + 0.04, uLamps) * step(pick, glassy ? 0.5 : 0.66);
-    float lamp;
-    vec3 room = evoRoom(inWindow, dir, vec3(bay * 0.5, (street ? ground : storey) * 0.5, street ? 4.5 : 3.2), pick + seed, lamp);
-    vec3 tint = mix(vec3(1.0, 0.72, 0.42), vec3(0.72, 0.84, 1.0), step(0.78, fract(pick * 9.1)));
-    tint = mix(tint, vec3(1.0, 0.86, 0.66), step(0.55, fract(pick * 4.3)));
-    if (street) tint = mix(tint, vec3(0.5 + 0.5 * fract(pick * 2.7), 0.5 + 0.5 * fract(pick * 5.9), 0.6 + 0.4 * fract(pick * 8.3)), 0.45);
-    // Blinds part of the way down some of them.
-    float blind = step(inWindow.y, 1.0 - fract(pick * 6.7) * 0.7 * step(0.5, fract(pick * 2.3))) ;
-    float strength = (street ? 2.6 : 1.5 + 1.4 * fract(pick * 3.7)) * (0.35 + 0.65 * blind);
-    // Mullions on a glass front.
-    float bars = glassy ? step(0.04, fract(inWindow.x * 2.0)) * step(0.05, fract(inWindow.y * 1.0 + 0.5)) : 1.0;
-
-    // What the glass shows of the sky, more the more it is seen edge-on.
-    vec3 bounce = reflect(view, n);
-    float fresnel = 0.05 + 0.95 * pow(1.0 - clamp(dot(-view, n), 0.0, 1.0), 4.0);
-    vec3 sky = mix(uHorizon, uZenith, clamp(bounce.y * 1.4 + 0.15, 0.0, 1.0));
-    sky += uSunColor * pow(max(dot(bounce, uSunDir), 0.0), 90.0) * 6.0 * uSunUp;
-    vec3 dark = room * 0.05 * (0.4 + 0.6 * dot(uHorizon, vec3(0.33)));
-    evoWallGlow = room * tint * lamp * strength * on * bars * (1.0 - fresnel * 0.5);
-    evoWallRough = 0.08;
-    evoWallHeight = 0.0;
-    return mix(dark, sky, clamp(fresnel * 0.85 + 0.1, 0.0, 1.0)) * mix(0.12, 1.0, bars);
+    EvoFace f;
+    f.u = alongX ? vFacade.x + vSize.x * 0.5 : vFacade.z + vSize.z * 0.5;
+    f.v = vFacade.y;
+    f.span = alongX ? vSize.x : vSize.z;
+    f.top = vSize.y;
+    f.dir = alongX ? vec3(local.x, local.y, -local.z * sign(n.z)) : vec3(local.z, local.y, -local.x * sign(n.x));
+    f.n = vec3(n.x * turnC + n.z * turnS, n.y, -n.x * turnS + n.z * turnC);
+    f.view = view;
+    f.world = world;
+    f.seed = vLook.x;
+    f.street = alongX && n.z * (STREET_Z - world.z) > 0.0;
+    f.end = !alongX;
+    f.flip = alongX ? n.z < 0.0 : n.x > 0.0;
+    f.aa = fwidth(f.u) + fwidth(f.v);
+    if (style < 0.5) return evoPanel(f);
+    if (style < 1.5) return evoBrick(f);
+    if (style < 2.5) return evoCurtain(f, false);
+    if (style < 3.5) return evoRender(f);
+    if (style < 4.5) return evoCurtain(f, true);
+    return evoLattice(f);
   }
 `
 
+/**
+ * The ground of the street: the road with its paint and its crossing, and the
+ * pavements either side in the small grey setts the city lays, with a band of
+ * red ones along the kerb and a square of earth round every tree.
+ */
 const STREET_FRAG = /* glsl */ `
   uniform float uLamps;
   uniform float uCity;
@@ -266,12 +852,13 @@ const STREET_FRAG = /* glsl */ `
   uniform float uTime;
   varying vec3 vWorld;
   ${EVO_NOISE}
+  ${STREET_GLSL}
 
-  const float STREET_Z = ${STREET_Z.toFixed(2)};
-  const float ROAD = ${ROAD.toFixed(2)};
-  const float PAVEMENT = ${PAVEMENT.toFixed(2)};
-  const float GAP = ${LAMP_GAP.toFixed(2)};
-  const float HIGH = ${LAMP_HEIGHT.toFixed(2)};
+  const float CROSS_X = ${CROSSWALK.x.toFixed(2)};
+  const float CROSS_HALF = ${CROSSWALK.half.toFixed(2)};
+  const float CROSS_STOP = ${CROSSWALK.stop.toFixed(2)};
+  const float TREE_INSET = ${TREE_INSET.toFixed(2)};
+  const vec2 PLAZA_X = vec2(${PLAZA.x0.toFixed(1)}, ${PLAZA.x1.toFixed(1)});
 
   vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
 
@@ -295,6 +882,7 @@ const STREET_FRAG = /* glsl */ `
     float n2 = evoNoise(at.xz * 6.0);
     float n3 = evoFbm(at.xz * 0.11);
     bool road = abs(across) < ROAD;
+    float far = length(at - cameraPosition);
 
     vec3 color;
     float gloss;
@@ -303,21 +891,46 @@ const STREET_FRAG = /* glsl */ `
       color = lin(vec3(0.25, 0.25, 0.265)) * (0.8 + 0.3 * n2 + 0.25 * n1);
       float lane = abs(fract(across / 3.5) - 0.5) * 3.5;
       color *= 1.0 + 0.2 * smoothstep(1.3, 0.4, abs(lane - 0.85));
+      float along = at.x - CROSS_X;
+      float clear = step(CROSS_HALF + 0.5, abs(along));
       float dash = step(0.55, fract(at.x / 9.0));
       float centre = 1.0 - smoothstep(0.07, 0.11, abs(abs(across) - 0.16));
       float between = (1.0 - smoothstep(0.06, 0.1, abs(abs(across) - 3.5))) * dash;
       float edge = 1.0 - smoothstep(0.07, 0.11, abs(abs(across) - (ROAD - 0.45)));
-      float paint = max(max(centre, between), edge) * (0.55 + 0.45 * n2);
-      color = mix(color, lin(vec3(0.74, 0.72, 0.64)), paint * 0.85);
+      float paint = max(max(centre, between), edge) * clear;
+      // The crossing: bars the way the road runs, kerb to kerb, and a line
+      // for each direction to stop at before it.
+      float zebra = step(abs(along), CROSS_HALF) * step(0.5, fract(across / 1.0 + 0.25)) * step(abs(across), ROAD - 0.35);
+      float halt = (1.0 - smoothstep(0.16, 0.2, abs(along + sign(across) * (CROSS_HALF + CROSS_STOP)))) * step(abs(across), ROAD - 0.4);
+      paint = max(paint, max(zebra, halt)) * (0.55 + 0.45 * n2);
+      color = mix(color, lin(vec3(0.76, 0.75, 0.7)), paint * 0.88);
       // Puddles in the low places.
       gloss = smoothstep(0.52, 0.72, n3 + n1 * 0.12) * 0.9 + 0.12;
     } else {
-      // Paving: slabs, with a kerb where it meets the road.
-      vec2 slab = at.xz / vec2(0.9, 0.6);
-      float joint = max(step(0.955, fract(slab.x + floor(slab.y) * 0.5)), step(0.94, fract(slab.y)));
-      color = lin(vec3(0.36, 0.35, 0.34)) * (0.82 + 0.3 * evoHash(floor(vec2(slab.x + floor(slab.y) * 0.5, slab.y)))) * (1.0 - 0.35 * joint);
-      float kerb = 1.0 - smoothstep(0.0, 0.32, abs(across) - ROAD);
-      color = mix(color, lin(vec3(0.5, 0.5, 0.48)), kerb);
+      // Setts, laid in courses a hand long: grey, and red in a band along the kerb.
+      float past = abs(across) - ROAD;
+      vec2 sett = at.xz / vec2(0.2, 0.1);
+      sett.x += floor(sett.y) * 0.5;
+      float fade = 1.0 - smoothstep(9.0, 26.0, far);
+      float joint = max(step(0.93, fract(sett.x)), step(0.88, fract(sett.y))) * fade;
+      float each = evoHash(floor(sett));
+      float band = step(0.5, past) * step(past, 0.95);
+      vec3 grey = lin(vec3(0.42, 0.41, 0.4)) * (0.8 + 0.3 * mix(0.5, each, fade));
+      vec3 red = lin(vec3(0.44, 0.27, 0.22)) * (0.8 + 0.35 * mix(0.5, each, fade));
+      color = mix(grey, red, band) * (1.0 - 0.3 * joint) * (0.9 + 0.2 * n1);
+      // The kerb: a line of stone, a little higher than the road.
+      color = mix(color, lin(vec3(0.56, 0.55, 0.52)), 1.0 - smoothstep(0.0, 0.3, past));
+      // Earth round each tree, in a square with a rim.
+      bool farSide = across < 0.0;
+      float gap = farSide ? LAMP_GAP : LAMP_GAP * 2.0;
+      float first = farSide ? LAMP_GAP * 0.5 : LAMP_GAP;
+      float tx = (floor((at.x - first) / gap + 0.5)) * gap + first;
+      bool open = farSide && tx > PLAZA_X.x + 4.0 && tx < PLAZA_X.y - 2.0;
+      vec2 pit = abs(vec2(at.x - tx, past - TREE_INSET));
+      float m = max(pit.x, pit.y);
+      if (m < 0.75 && abs(tx - CROSS_X) > CROSS_HALF + 5.0 && !open) {
+        color = m < 0.66 ? lin(vec3(0.13, 0.1, 0.08)) * (0.7 + 0.6 * n2) : lin(vec3(0.5, 0.49, 0.46));
+      }
       gloss = smoothstep(0.6, 0.8, n3) * 0.5 + 0.05;
     }
 
@@ -332,18 +945,111 @@ const STREET_FRAG = /* glsl */ `
     // The lamps: the two nearest either side, on both kerbs.
     if (uLamps > 0.001) {
       vec3 glow = vec3(0.0);
-      float nearest = floor(at.x / GAP + 0.5) * GAP;
+      float nearest = floor(at.x / LAMP_GAP + 0.5) * LAMP_GAP;
       for (int i = -1; i <= 1; i++) {
-        float lx = nearest + float(i) * GAP;
-        glow += lampOn(at, normal, view, vec3(lx, HIGH, STREET_Z - ROAD + 0.9), gloss);
-        glow += lampOn(at, normal, view, vec3(lx + GAP * 0.5, HIGH, STREET_Z + ROAD - 0.9), gloss);
+        float lx = nearest + float(i) * LAMP_GAP;
+        glow += lampOn(at, normal, view, vec3(lx, LAMP_HEIGHT, STREET_Z - ROAD + LAMP_REACH), gloss);
+        glow += lampOn(at, normal, view, vec3(lx + LAMP_GAP * 0.5, LAMP_HEIGHT, STREET_Z + ROAD - LAMP_REACH), gloss);
       }
       // And what spills out of the shop fronts onto the pavement.
       float spill = (1.0 - smoothstep(0.0, 3.8, ROAD + PAVEMENT - abs(across))) * (0.6 + 0.4 * evoNoise(vec2(at.x * 0.16, sign(across) * 7.0)));
+      spill *= across < 0.0 && at.x > PLAZA_X.x && at.x < PLAZA_X.y ? 0.0 : 1.0;
       glow += vec3(1.0, 0.8, 0.58) * spill * 0.5;
       lit += color * glow * uLamps * 0.42 + glow * gloss * uLamps * 0.012;
     }
 
+    gl_FragColor = vec4(evoAir(lit), 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`
+
+/**
+ * The floor of the square: pale stone in big slabs, with a star of darker
+ * stone let into it round the fountain, polished enough to hold the lit
+ * mosque upside down in it once it is dark.
+ */
+const PLAZA_FRAG = /* glsl */ `
+  uniform float uLamps;
+  uniform float uCity;
+  uniform vec3 uLight;
+  uniform vec3 uAmbient;
+  varying vec3 vWorld;
+  ${EVO_NOISE}
+  ${STREET_GLSL}
+  ${CITY_LIGHT_GLSL}
+
+  vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
+
+  void main() {
+    vec3 at = vWorld;
+    // It is laid when the square is: late, and all at once from the street back.
+    if (uCity < 0.62 + 0.25 * clamp((${PLAZA.front.toFixed(1)} - at.z) / 66.0, 0.0, 1.0)) discard;
+    float far = length(at - cameraPosition);
+    float fade = 1.0 - smoothstep(14.0, 50.0, far);
+    vec2 slab = at.xz / 1.2;
+    float joint = max(step(0.975, fract(slab.x)), step(0.975, fract(slab.y))) * fade;
+    float each = evoHash(floor(slab));
+    vec3 pale = lin(vec3(0.66, 0.63, 0.57)) * (0.86 + 0.2 * mix(0.5, each, fade));
+    vec3 dark = lin(vec3(0.34, 0.3, 0.27)) * (0.86 + 0.2 * mix(0.5, each, fade));
+    vec3 blue = lin(vec3(0.12, 0.36, 0.44));
+    // A star of sixteen points round the fountain, and rings round that.
+    vec2 c = at.xz - vec2(${FOUNTAIN.x.toFixed(1)}, ${FOUNTAIN.z.toFixed(1)});
+    float r = length(c);
+    float a = atan(c.y, c.x);
+    float star = r - (11.0 + 3.2 * abs(fract(a * 16.0 / 6.2831853) - 0.5) * 2.0);
+    vec3 color = pale;
+    color = mix(color, dark, 1.0 - smoothstep(0.0, 0.12, abs(star) - 0.28));
+    color = mix(color, dark, step(r, 9.0) * step(0.5, fract(a * 16.0 / 6.2831853 + step(4.0, mod(r, 8.0)) * 0.5)) * 0.6);
+    color = mix(color, blue, 1.0 - smoothstep(0.0, 0.1, abs(r - 17.5) - 0.22));
+    // A border in the darker stone all round the square.
+    vec2 edge = min(vec2(at.x - ${PLAZA.x0.toFixed(1)}, ${PLAZA.front.toFixed(1)} - at.z), vec2(${PLAZA.x1.toFixed(1)} - at.x, at.z - ${PLAZA.back.toFixed(1)}));
+    color = mix(color, dark, step(min(edge.x, edge.y), 1.2) * 0.8);
+    color *= (1.0 - 0.28 * joint) * (0.92 + 0.14 * evoNoise(at.xz * 0.5));
+    float gloss = 0.55 + 0.25 * evoNoise(at.xz * 0.23);
+    // The beds: a kerb, a band of flowers inside it, and grass.
+    float bed = -1.0;
+${LAWNS.map((l) => `    bed = max(bed, min(min(at.x - ${l.x0.toFixed(1)}, ${l.x1.toFixed(1)} - at.x), min(at.z - (${l.z0.toFixed(1)}), ${l.z1.toFixed(1)} - at.z)));`).join('\n')}
+    if (bed > 0.0) {
+      vec3 grass = lin(vec3(0.2, 0.37, 0.12)) * (0.82 + 0.3 * evoNoise(at.xz * 1.3) + 0.12 * step(0.5, fract(at.x / 1.6)));
+      if (bed < 0.26) {
+        color = lin(vec3(0.6, 0.59, 0.55));
+      } else if (bed < 1.35) {
+        // Planted close: every hand's width a flower, in four colours.
+        vec2 cell = at.xz / 0.24;
+        float each = evoHash(floor(cell));
+        float head = 1.0 - smoothstep(0.26, 0.36, length(fract(cell) - 0.5));
+        vec3 petal = each < 0.4 ? vec3(0.78, 0.06, 0.07) : each < 0.62 ? vec3(0.9, 0.36, 0.5) : each < 0.84 ? vec3(0.95, 0.72, 0.1) : vec3(0.92, 0.9, 0.86);
+        vec3 planted = mix(lin(vec3(0.13, 0.25, 0.09)), lin(petal), head * step(0.12, each));
+        // Too far to count them: the bed is the colour they come to.
+        color = mix(lin(vec3(0.52, 0.2, 0.17)), planted, fade);
+      } else {
+        color = grass;
+      }
+      gloss = 0.03;
+    }
+
+    vec3 normal = vec3(0.0, 1.0, 0.0);
+    vec3 view = normalize(at - cameraPosition);
+    // Pale stone under an open sky: less of the light comes back off it than
+    // off the setts, or at noon it is a sheet of white.
+    vec3 lit = color * 0.45 * (uAmbient + uLight * max(uSunDir.y, 0.0));
+    vec3 hSun = normalize(uSunDir - view);
+    lit += uLight * pow(max(hSun.y, 0.0), 220.0) * gloss * 0.5;
+    if (uLamps > 0.001) {
+      vec3 glow = evoStreetLight(at, normal, 0.0) + evoLanternLight(at, normal, 0.0);
+      // The mosque is floodlit, and the stone in front of it holds some of
+      // that; and the square has light of its own, thinner towards its edges.
+      vec2 toDoor = at.xz - vec2(${MOSQUE.x.toFixed(1)}, ${(MOSQUE.z + MOSQUE.hall / 2).toFixed(1)});
+      float wash = exp(-dot(toDoor, toDoor) / 260.0);
+      glow += vec3(1.0, 0.9, 0.74) * (wash * 0.7 + 0.2 + 0.8 * exp(-dot(toDoor, toDoor) / 2400.0));
+      lit += color * glow * uLamps * 0.42;
+      // And shows it upside down: a column of light under each bright thing.
+      vec3 mirror = reflect(view, normal);
+      float under = pow(max(mirror.y, 0.0), 0.35) * smoothstep(0.0, 0.5, -view.y + 0.04);
+      float column = exp(-pow((at.x - ${MOSQUE.x.toFixed(1)}) / 9.0, 2.0)) * smoothstep(${(MOSQUE.z + MOSQUE.hall / 2 + 2).toFixed(1)}, ${(MOSQUE.z + MOSQUE.hall / 2 + 34).toFixed(1)}, at.z + 34.0 * (1.0 - under));
+      lit += vec3(0.8, 0.9, 1.0) * column * gloss * uLamps * 0.05 * under;
+    }
     gl_FragColor = vec4(evoAir(lit), 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -366,12 +1072,17 @@ export function createCity(air: Air, options: CityOptions): Part {
   box.translate(0, 0.5, 0)
   const sizes = new Float32Array(blocks.length * 3)
   const looks = new Float32Array(blocks.length * 4)
+  const more = new Float32Array(blocks.length * 2)
   blocks.forEach((b, i) => {
     sizes.set([b.w, b.h - b.base, b.d], i * 3)
     looks.set([b.seed, b.style, b.delay, b.base], i * 4)
+    more.set([b.yaw, b.shops ? 1 : 0], i * 2)
   })
   box.setAttribute('aSize', new InstancedBufferAttribute(sizes, 3))
   box.setAttribute('aLook', new InstancedBufferAttribute(looks, 4))
+  box.setAttribute('aMore', new InstancedBufferAttribute(more, 2))
+  const signs = makeSigns()
+  disposers.push(() => signs.dispose())
   const wall = inAir(new MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, metalness: 0 }), air, 'city', (shader) => {
     Object.assign(shader.uniforms, shared, {
       uZenith: air.uZenith,
@@ -379,6 +1090,8 @@ export function createCity(air: Air, options: CityOptions): Part {
       uSunColor: air.uSunColor,
       uSunUp: air.uSunUp,
       uBump: { value: options.bump },
+      uSigns: { value: signs },
+      uSignGrid: { value: new Vector2(SIGN_GRID.columns, SIGN_GRID.rows) },
     })
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${BUILDING_VERT_PARS}`)
@@ -390,9 +1103,16 @@ export function createCity(air: Air, options: CityOptions): Part {
         float evoRise = smoothstep(aLook.z, aLook.z + 0.32, uCity * 1.32);
         evoRise = evoRise * evoRise * (3.0 - 2.0 * evoRise);
         vec3 transformed = vec3(position.x, position.y * evoRise, position.z);
+        // The tallest of the towers is drawn in at its top.
+        if (aLook.y > 3.5 && aLook.y < 4.5) {
+          float crown = smoothstep(0.8, 1.0, position.y);
+          transformed.x *= 1.0 - 0.5 * crown;
+          transformed.z *= 1.0 - 0.2 * crown;
+        }
         vFacade = vec3(position.x * aSize.x, aLook.w + position.y * aSize.y * evoRise, position.z * aSize.z);
         vFaceNormal = normal;
         vLook = aLook;
+        vMore = aMore;
         vSize = vec3(aSize.x, aLook.w + aSize.y * evoRise, aSize.z);`,
       )
     shader.fragmentShader = shader.fragmentShader
@@ -412,10 +1132,12 @@ export function createCity(air: Air, options: CityOptions): Part {
   const dummy = new Object3D()
   blocks.forEach((b, i) => {
     dummy.position.set(b.x, b.base, b.z)
+    dummy.rotation.set(0, b.yaw, 0)
     dummy.scale.set(b.w, b.h - b.base, b.d)
     dummy.updateMatrix()
     buildings.setMatrixAt(i, dummy.matrix)
   })
+  dummy.rotation.set(0, 0, 0)
   buildings.instanceMatrix.needsUpdate = true
   buildings.frustumCulled = false
   buildings.castShadow = options.shadows
@@ -461,11 +1183,61 @@ export function createCity(air: Air, options: CityOptions): Part {
     () => streetMaterial.dispose(),
   )
 
+  const poleMaterial = inAir(new MeshStandardMaterial({ color: '#2a2c30', roughness: 0.6, metalness: 0.4 }), air, 'pole')
+
+  // ---- the square ----------------------------------------------------------
+  const ground = (fragment: string): ShaderMaterial =>
+    new ShaderMaterial({
+      uniforms: {
+        ...shared,
+        uHaze: air.uHaze,
+        uGlow: air.uGlow,
+        uSunDir: air.uSunDir,
+        uAir: air.uAir,
+        uLight: streetMaterial.uniforms.uLight!,
+        uAmbient: streetMaterial.uniforms.uAmbient!,
+      },
+      vertexShader: streetMaterial.vertexShader,
+      fragmentShader: `${AIR_PARS}\n${fragment}`,
+    })
+  const plazaGeometry = new PlaneGeometry(PLAZA.x1 - PLAZA.x0, PLAZA.front - PLAZA.back, 1, 1)
+  plazaGeometry.rotateX(-Math.PI / 2)
+  const plazaMaterial = ground(PLAZA_FRAG)
+  const plaza = new Mesh(plazaGeometry, plazaMaterial)
+  plaza.position.set((PLAZA.x0 + PLAZA.x1) / 2, 0.065, (PLAZA.front + PLAZA.back) / 2)
+  plaza.frustumCulled = false
+  root.add(plaza)
+  // Its lanterns: a post, and a globe on it.
+  const postGeometry = new CylinderGeometry(0.05, 0.08, LANTERN_HEIGHT, 6)
+  postGeometry.translate(0, LANTERN_HEIGHT / 2, 0)
+  const globeGeometry = new SphereGeometry(0.26, 12, 10)
+  const globeMaterial = new MeshBasicMaterial({ color: '#ffffff' })
+  const posts = new InstancedMesh(postGeometry, poleMaterial, LANTERNS.length)
+  const globes = new InstancedMesh(globeGeometry, globeMaterial, LANTERNS.length)
+  LANTERNS.forEach(([x, z], i) => {
+    dummy.position.set(x, 0, z)
+    dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    posts.setMatrixAt(i, dummy.matrix)
+    dummy.position.set(x, LANTERN_HEIGHT + 0.2, z)
+    dummy.updateMatrix()
+    globes.setMatrixAt(i, dummy.matrix)
+  })
+  posts.frustumCulled = false
+  globes.frustumCulled = false
+  root.add(posts, globes)
+  disposers.push(
+    () => plazaGeometry.dispose(),
+    () => plazaMaterial.dispose(),
+    () => postGeometry.dispose(),
+    () => globeGeometry.dispose(),
+    () => globeMaterial.dispose(),
+  )
+
   // ---- lamps ---------------------------------------------------------------
   const lampCount = Math.floor(length / LAMP_GAP) * 2
   const poleGeometry = new CylinderGeometry(0.07, 0.1, LAMP_HEIGHT, 6)
   poleGeometry.translate(0, LAMP_HEIGHT / 2, 0)
-  const poleMaterial = inAir(new MeshStandardMaterial({ color: '#2a2c30', roughness: 0.6, metalness: 0.4 }), air, 'pole')
   const poles = new InstancedMesh(poleGeometry, poleMaterial, lampCount)
   const headGeometry = new SphereGeometry(0.2, 10, 8)
   const headMaterial = new MeshBasicMaterial({ color: '#ffffff' })
@@ -534,6 +1306,11 @@ export function createCity(air: Air, options: CityOptions): Part {
     heads.visible = open > 0
     arms.visible = open > 0
     headMaterial.color.setRGB(1, 0.82, 0.55).multiplyScalar(0.25 + 5 * beat.lamps)
+    const square = beat.stage.city > 0.7
+    plaza.visible = beat.stage.city > 0.6
+    posts.visible = square
+    globes.visible = square
+    globeMaterial.color.setRGB(1, 0.88, 0.68).multiplyScalar(0.3 + 4 * beat.lamps)
   }
 
   return {

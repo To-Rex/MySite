@@ -18,6 +18,7 @@ import {
 import type { ValleyQuality } from '@/lib/valley'
 import { EVO_NOISE, PARS_HERE, inAir, type Air } from './evoAir'
 import { LAND, LAND_GRID, PLACE, grassAt, groundAt, prepareLand } from './evoLand'
+import { PAVEMENT, PLAZA, ROAD, STREET_LENGTH, STREET_Z } from './evoStreet'
 import type { Beat, Part } from './evoWalk'
 
 /**
@@ -153,6 +154,13 @@ const GRASS_VERT_PARS = /* glsl */ `
     // Clumps: thick here, thin there, and nothing where nothing grows.
     float clump = evoNoise(root * 0.21) * 0.6 + evoNoise(root * 0.9) * 0.4;
     float grows = land.g * (1.0 - uCity * smoothstep(uCityFrom - 14.0, uCityFrom + 10.0, root.x));
+    // And nothing comes up through a street once it is laid, or through the
+    // square: the rest of the city's ground loses its grass by degrees, but
+    // paving is paving from the day it goes down.
+    float laid = step(root.x, uCityFrom - 18.0 + uCity * ${(1.45 * STREET_LENGTH).toFixed(1)}) * step(abs(root.y - (${STREET_Z.toFixed(2)})), ${(ROAD + PAVEMENT + 0.3).toFixed(2)});
+    float paved = step(${PLAZA.x0.toFixed(1)}, root.x) * step(root.x, ${PLAZA.x1.toFixed(1)}) * step(${PLAZA.back.toFixed(1)}, root.y) * step(root.y, ${PLAZA.front.toFixed(1)});
+    paved *= step(0.62 + 0.25 * clamp((${PLAZA.front.toFixed(1)} - root.y) / 66.0, 0.0, 1.0), uCity);
+    grows *= 1.0 - max(laid, paved);
     float alive = step(h3, grows * (0.35 + 0.9 * clump)) * uGrow;
     // Out of the window by shrinking, never by vanishing.
     vec2 away = abs(root - uFocus.xz) / (uLayer.y * 0.5);

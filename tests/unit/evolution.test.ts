@@ -428,6 +428,8 @@ describe('the city', () => {
     }
     for (const [i, a] of blocks.entries()) {
       for (const b of blocks.slice(i + 1)) {
+        // The hotel is one building made of three boxes, and its wings meet its middle.
+        if (a.part && a.part === b.part) continue
         const apart = Math.abs(a.x - b.x) >= (a.w + b.w) / 2 - 1e-6 || Math.abs(a.z - b.z) >= (a.d + b.d) / 2 - 1e-6
         expect(apart, `${a.x},${a.z} and ${b.x},${b.z}`).toBe(true)
       }
