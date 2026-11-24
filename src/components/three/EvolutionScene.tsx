@@ -1,14 +1,14 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { Object3D, PerspectiveCamera } from 'three'
-import { gpuClass } from '@/hooks/useDeviceTier'
+import { appleGpu, gpuClass } from '@/hooks/useDeviceTier'
 import { walkProgress } from '@/lib/evolution'
 import type { ValleyQuality } from '@/lib/valley'
 import type { Theme } from '@/theme/context'
 import { createPost, type Post } from './evoPost'
 import { DEPTH } from './evoScript'
 import { leanShadowMaps } from './leanShadow'
-import { WALK_QUALITY, createWalk, type Walk } from './evoWalk'
+import { WALK_QUALITY, createWalk, walkDpr, type Walk } from './evoWalk'
 
 /**
  * The long walk's canvas: one pinned, full-bleed scene that the page's scroll
@@ -292,7 +292,8 @@ export default function EvolutionScene({ quality, theme, wrapperRef, active }: E
   const [steps, setSteps] = useState(0)
   const onSlow = useCallback(() => setSteps((n) => Math.min(JUDGE.steps, n + 1)), [])
   const scale = 0.8 ** steps
-  const dpr = typeof q.dpr === 'number' ? q.dpr * scale : ([q.dpr[0] * scale, q.dpr[1] * scale] as [number, number])
+  const base = walkDpr(quality, appleGpu() === 'mobile')
+  const dpr = typeof base === 'number' ? base * scale : ([base[0] * scale, base[1] * scale] as [number, number])
   return (
     <Canvas
       dpr={dpr}

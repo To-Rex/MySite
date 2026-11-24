@@ -11,6 +11,8 @@ interface NavigatorExtras extends Navigator {
 let webglSupport: boolean | null = null
 /** What the card called itself, read off the same context that answered the question above. */
 let rendererName = ''
+/** Whether the card decodes ASTC textures, which only Apple's own graphics do on an Apple device. */
+let astc = false
 
 export function supportsWebGL(): boolean {
   if (webglSupport !== null) return webglSupport
@@ -18,10 +20,11 @@ export function supportsWebGL(): boolean {
     const canvas = document.createElement('canvas')
     const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
     webglSupport = !!gl
-    // One context for both questions: making a second is not free, least of
+    // One context for all the questions: making a second is not free, least of
     // all on the software renderers this is partly here to catch.
     const info = gl?.getExtension('WEBGL_debug_renderer_info')
     if (gl && info) rendererName = String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
+    astc = !!gl?.getExtension('WEBGL_compressed_texture_astc')
   } catch {
     webglSupport = false
   }
@@ -29,20 +32,88 @@ export function supportsWebGL(): boolean {
 }
 
 /**
+ * Apple's own graphics, and on what: an iPhone or iPad (`mobile`) or a Mac.
+ *
+ * Safari will not name the card — every Apple device says "Apple GPU" — nor
+ * give the memory, so every iPhone came out on the lowest tier: no grass, half
+ * a coat on a mammoth, no relief on the tyrannosaur's skin, all of it drawn at
+ * a third of the screen's resolution. What gives Apple's own graphics away is
+ * ASTC: they decode it, and the Intel and AMD cards of older Macs do not. An
+ * iPad says it is a Mac unless asked how many fingers it takes.
+ */
+export type ApplePlatform = 'mobile' | 'mac' | null
+
+export function appleGraphics(renderer: string, astcTextures: boolean, userAgent: string, touchPoints: number): ApplePlatform {
+  if (!astcTextures || !/\bApple\b/.test(renderer)) return null
+  // Every browser on an iPad is WebKit, which says 605; Chrome on a Mac pretending to be a phone says 537.
+  if (/iPhone|iPad|iPod/.test(userAgent) || (/Macintosh/.test(userAgent) && touchPoints > 1 && /AppleWebKit\/605/.test(userAgent))) return 'mobile'
+  if (/Macintosh|Mac OS X/.test(userAgent)) return 'mac'
+  return null
+}
+
+/**
+ * The major version of iOS a browser runs on, 0 where it is not iOS. Safari
+ * froze the system's version in its user agent at 18 and puts its own (which is
+ * the system's) after `Version/`; the other iOS browsers give only the system's.
+ */
+export function iosVersion(userAgent: string): number {
+  const system = /OS (\d+)[_.]\d+(?:[_.]\d+)? like Mac OS X/.exec(userAgent)
+  const safari = /Version\/(\d+)/.exec(userAgent)
+  return Math.max(system ? Number(system[1]) : 0, safari ? Number(safari[1]) : 0)
+}
+
+/** The oldest iOS whose devices all have at least an A12: the iPhone XS and XR, and every iPad since 2018. */
+const IOS_WITH_A12 = 17
+
+export interface DeviceFacts {
+  touch: boolean
+  cores?: number
+  memory?: number
+  saveData?: boolean
+  webgl: boolean
+  apple: ApplePlatform
+  ios: number
+}
+
+/**
  * A coarse capability estimate used to scale 3D quality. Conservative on purpose:
  * it is cheaper to render slightly less than to drop frames.
  */
+export function tierFor(facts: DeviceFacts): DeviceTier {
+  if (facts.saveData || !facts.webgl) return 'low'
+  // An iPhone or iPad tells neither its memory nor what it is. One new enough
+  // for iOS 17 has an A12 or later, whose graphics carry the middle tier with
+  // room to spare, and the scenes judge their own frames and give up
+  // resolution if they must; older ones keep the lowest.
+  if (facts.apple === 'mobile') return facts.ios >= IOS_WITH_A12 ? 'medium' : 'low'
+  const cores = facts.cores ?? 4
+  // Every Mac with Apple's own graphics has 8 GB or more; Safari just never says.
+  const memory = facts.memory ?? (facts.apple === 'mac' ? 8 : 4)
+  if (cores <= 2 || memory <= 2) return 'low'
+  if (facts.touch) return cores >= 8 && memory >= 6 ? 'medium' : 'low'
+  if (cores >= 8 && memory >= 8) return 'high'
+  return 'medium'
+}
+
+/** Apple's own graphics in this browser, if they are (see `appleGraphics`). */
+export function appleGpu(): ApplePlatform {
+  if (typeof navigator === 'undefined' || !supportsWebGL()) return null
+  return appleGraphics(rendererName, astc, navigator.userAgent, navigator.maxTouchPoints ?? 0)
+}
+
 export function estimateDeviceTier(isTouch: boolean): DeviceTier {
   if (typeof navigator === 'undefined') return 'medium'
   const nav = navigator as NavigatorExtras
-  const cores = nav.hardwareConcurrency ?? 4
-  const memory = nav.deviceMemory ?? 4
-  if (nav.connection?.saveData) return 'low'
-  if (!supportsWebGL()) return 'low'
-  if (cores <= 2 || memory <= 2) return 'low'
-  if (isTouch) return cores >= 8 && memory >= 6 ? 'medium' : 'low'
-  if (cores >= 8 && memory >= 8) return 'high'
-  return 'medium'
+  const webgl = supportsWebGL()
+  return tierFor({
+    touch: isTouch,
+    cores: nav.hardwareConcurrency,
+    memory: nav.deviceMemory,
+    saveData: nav.connection?.saveData,
+    webgl,
+    apple: webgl ? appleGpu() : null,
+    ios: iosVersion(nav.userAgent),
+  })
 }
 
 export function useDeviceTier(): DeviceTier {
@@ -81,16 +152,20 @@ const STRONG = /Apple M\d|RTX|GTX ?(9[6-9]0|1[0-9]{3}|16\d0)|Radeon (RX|Pro) ?([
 const SOFTWARE = /SwiftShader|llvmpipe|softpipe|Software|Basic Render|Mesa OffScreen/i
 const MODEST = /Intel|UHD|Iris|Mali|Adreno|PowerVR|Apple GPU|Vega \d\b|Radeon\(TM\) Graphics/i
 
-/** A renderer string, sorted. Strong before modest: Intel's Arc cards say "Intel". */
-export function classifyRenderer(renderer: string): GpuClass {
+/**
+ * A renderer string, sorted. Strong before modest: Intel's Arc cards say
+ * "Intel". A Mac with Apple's own graphics is strong whatever its browser calls
+ * the card: an M-series in Safari is the same M-series it is in Chrome.
+ */
+export function classifyRenderer(renderer: string, apple: ApplePlatform = null): GpuClass {
   if (SOFTWARE.test(renderer)) return 'software'
-  if (STRONG.test(renderer)) return 'strong'
+  if (STRONG.test(renderer) || apple === 'mac') return 'strong'
   if (MODEST.test(renderer)) return 'modest'
   return 'unknown'
 }
 
 export function gpuClass(): GpuClass {
-  gpuCache ??= supportsWebGL() ? classifyRenderer(rendererName) : 'unknown'
+  gpuCache ??= supportsWebGL() ? classifyRenderer(rendererName, appleGpu()) : 'unknown'
   return gpuCache
 }
 

@@ -1027,7 +1027,7 @@ only be compiled again on the frame they were first needed.
 
 | | low | medium | high | ultra |
 | --- | --- | --- | --- | --- |
-| Resolution | 1× | 1× | up to 1.4× | up to 1.6× |
+| Resolution | 1× | 1× (up to 1.5× on an iPhone or iPad) | up to 1.4× | up to 1.6× |
 | Shadows (sun, and the fire's) | — | 1024 | 2048 | 4096 |
 | Glow | — | — | ✓ | ✓ |
 | Grass (fine blades / tufts) | — | 29 000 / 36 000 | 62 000 / 84 000 | 109 000 / 144 000 |
@@ -1516,7 +1516,8 @@ next act. What the scene settled on is on its canvas as `data-quality`
 
 **Quality.** The CPU tier alone would never have known what the card can do in
 the other direction either, so `gpuClass()` reads the renderer string Chrome
-and Edge give (Safari and Firefox mostly decline) and `valleyQuality()` puts a
+and Edge give (Safari and Firefox mostly decline; a Mac with Apple's own
+graphics is told apart there by ASTC, see Performance) and `valleyQuality()` puts a
 desktop with an Apple M-series or a discrete card on `ultra` — and WebGL drawn
 by the CPU (SwiftShader, llvmpipe: a blocklisted driver, a virtual machine, a
 CI runner) on `low` whatever the CPU, after the valley was measured there at
@@ -1889,6 +1890,7 @@ its box and targets too small for a thumb — turned up, and what changed:
 
 - The entire three.js stack loads lazily; the initial JS payload is React + Motion + app code only (~140 kB, 42 kB gzipped).
 - Scenes render only while on screen (`frameloop="never"` off-screen), DPR adapts via `PerformanceMonitor`, and a device-tier estimate (`useDeviceTier`) scales geometry/particles; WebGL-less browsers get a designed 2D fallback.
+- Safari names no graphics card ("Apple GPU", whatever it is) and gives no memory, so every iPhone used to come out on the lowest tier: no grass, half a coat on a mammoth, no relief on the tyrannosaur's skin, and all of it drawn at a third of the screen's resolution. Apple's own graphics are told apart by ASTC, which they decode and the Intel and AMD cards of older Macs do not (`appleGraphics`). An iPhone or iPad on iOS 17 or later — an A12 or newer — gets the middle tier (`tierFor`), and the walk draws it at up to 1.5× (`walkDpr`), still giving resolution up by itself if its frames are slow; one too old for iOS 17 keeps the lowest. A Mac with Apple's graphics gets in Safari what it gets in Chrome.
 - Looping CSS animations rest while their part of the page is more than a screen away (`useRestingAnimations`, `[data-asleep]`): they go on from where they stopped as it comes back within a screen, before it is seen. The hero's scroll hint is a CSS animation, not a motion one the main thread writes out every frame. With the long walk on screen the main thread's frame went from 2.9 ms to 2.3 (style 0.37 → 0.12, layerize 0.32 → 0) on an M2.
 - `prefers-reduced-motion` disables the preloader, parallax, marquees, sparkles and custom cursor, turns the projects row back into a grid, stops the sky from drifting and its sun and moon from travelling, shows the GitHub numbers and graph already arrived, and changes language at once instead of letter by letter.
 

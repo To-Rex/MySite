@@ -57,6 +57,17 @@ export interface WalkQuality {
   leaves: number
 }
 
+/**
+ * The resolution the walk is drawn at. On an iPhone or iPad the middle level's
+ * 1× is a third of the screen's own, stretched three times over: every blade
+ * and every lock went soft. Apple's graphics keep a frame's pixels on the chip
+ * while they draw it, so more of them costs them less than it does other
+ * cards, and the scene still gives resolution up by itself if it has to.
+ */
+export function walkDpr(quality: ValleyQuality, appleMobile: boolean): WalkQuality['dpr'] {
+  return quality === 'medium' && appleMobile ? [1, 1.5] : WALK_QUALITY[quality].dpr
+}
+
 export const WALK_QUALITY: Record<ValleyQuality, WalkQuality> = {
   low: { dpr: 1, shadowMap: 0, bump: 0, glow: false, ...WALK_DETAIL.low, coat: 0.55, cars: 10, leaves: 0.4 },
   medium: { dpr: 1, shadowMap: 1024, bump: 0.025, glow: false, ...WALK_DETAIL.medium, coat: 1, cars: 20, leaves: 0.65 },
